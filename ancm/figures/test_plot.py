@@ -9,6 +9,8 @@ import style
 
 with open('figures/data/means-noise.json') as fp:
     data = json.load(fp)
+with open('figures/data/means-no-noise.json') as fp:
+    data_no_noise = json.load(fp)
 
 rows = defaultdict(list)
 
@@ -17,12 +19,25 @@ for metric in data:
     if metric not in metrics:
         continue
     for max_len in sorted(data[metric], key=lambda x: int(x)):
+        if int(max_len) != 5:
+            continue
         for erasure_pr in data[metric][max_len]:
 
             rows['max_len'].append(max_len)
             rows['erasure_pr'].append(erasure_pr)
+            rows['noise'].append(True)
             rows['metric'].append(metric)
             rows['value'].append(data[metric][max_len][erasure_pr][0])
+
+        for erasure_pr in data_no_noise[metric][max_len]:
+
+            rows['max_len'].append(max_len)
+            rows['erasure_pr'].append(erasure_pr)
+            rows['noise'].append(False)
+            rows['metric'].append(metric)
+            rows['value'].append(data_no_noise[metric][max_len][erasure_pr][0])
+
+
 
 for row in rows:
     print(row, len(rows[row]), rows[row])
@@ -30,13 +45,15 @@ for row in rows:
 df = pd.DataFrame(rows)
 print(df)
 
-df = pd.read_csv('figures/test_long.csv')
+df = pd.read_csv('figures/data/test_long.csv')
 df = df.sort_values('max_len')
 df.max_len = df.max_len.apply(str)
 comp_df = df[(df.metric.isin('accuracy topographic_rho pos_dis bos_dis'.split()))]
 
 #sns.set_palette(sns.color_palette("Set2", 3))
-plot = sns.relplot(comp_df, col='metric', x='erasure_pr', y='value', kind='line', errorbar=('se',2), row='max_len', hue='max_len', facet_kws=dict(margin_titles=True), legend=False)
-plot.savefig("figures/test_plot.png") 
+os.makedirs('figures/img', exist_ok=True)
+plot = sns.relplot(comp_df, col='metric', style='noise', x='erasure_pr', y='value', kind='line', errorbar=('se',2), row='max_len', 
+                   hue='max_len', facet_kws=dict(margin_titles=True), legend=True)
+plot.savefig("figures/img/test_plot.png") 
 
 

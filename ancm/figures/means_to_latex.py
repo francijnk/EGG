@@ -7,7 +7,6 @@ with open('figures/data/means-noise.json') as fp:
 
 key2desc = {
     'accuracy': 'Acc.',
-    'f1': 'F1 (micro)',
     'embedding_alignment': 'Emb. al.',
     'topographic_rho': 'Top. $\\rho$',
     'pos_dis': 'Pos. dis',
@@ -22,7 +21,7 @@ for metric in data:
         continue
     line = [key2desc[metric]]
     for max_len in data[metric]:
-        if max_len != '10':
+        if max_len != '2':
             continue
         if metric == 'f1':
             continue
