@@ -484,8 +484,9 @@ class ErasureChannel(nn.Module):
         self.erased_symbol = vocab_size
         self.is_relative_detach = is_relative_detach
         self.noise = torch.tensor(0).to(device)
-        self.generator = torch.Generator(device=device)
+        self.generator = torch.Generator()
         self.generator.manual_seed(seed)
+        self.device = device
 
     def forward(self, message, message_length=None, apply_noise=False):
         # GS: append 0 vector representing Pr[erased_symbol] for all messages
@@ -497,7 +498,7 @@ class ErasureChannel(nn.Module):
             # Reinforce
             if message.dim() == 2:
                 # sample symbol indices to be erased
-                erase_idx = (torch.rand(*message.size(), generator=self.generator) < self.p) 
+                erase_idx = (torch.rand(*message.size(), generator=self.generator) < self.p).to(self.device) 
 
                 if message_length is None:  # if message length is not provided, compute it
                     message_length = find_lengths(message)
@@ -505,9 +506,9 @@ class ErasureChannel(nn.Module):
                 # True for all message symbols before the 1st EOS symbol
                 not_eosed = (
                     torch.stack(
-                        [torch.arange(0, message.size(1), requires_grad=False)]) 
+                        [torch.arange(0, message.size(1), requires_grad=False).to(self.device)]) 
                     < torch.cat(
-                        [torch.unsqueeze(message_length-1, dim=-1) for _ in range(message.size(1))],
+                        [torch.unsqueeze(message_length-1, dim=-1) for _ in range(message.size(1)).to(self.device)],
                         dim=1))
 
                 message = torch.where(
@@ -518,7 +519,7 @@ class ErasureChannel(nn.Module):
             # GS
             else:
                 # randomply sample symbol indices to erase before EOS
-                erase_idx = (torch.rand(*message.size()[:-1], generator=self.generator) < self.p)
+                erase_idx = (torch.rand(*message.size()[:-1], generator=self.generator) < self.p).to(self.device)
                 erase_idx.requires_grad_(False)
                 not_eosed = (message[:,:,0] != 1.)
    

@@ -31,8 +31,8 @@ def compute_alignment(dataloader, sender, receiver, device, bs):
 
     for batch in [obj_features[bs*y:bs*(y+1),:] for y in range(n_batches)]:
         with torch.no_grad():
-            b_sender_embeddings = sender.fc1(batch).tanh().numpy()
-            b_receiver_embeddings = receiver.fc1(batch).tanh().numpy()
+            b_sender_embeddings = sender.fc1(batch).tanh().cpu().numpy()
+            b_receiver_embeddings = receiver.fc1(batch).tanh().cpu().numpy()
             if sender_embeddings is None:
                 sender_embeddings = b_sender_embeddings
                 receiver_embeddings = b_receiver_embeddings
@@ -79,10 +79,12 @@ def compute_top_sim(sender_inputs, messages, dimensions=None):
 
     onehot = []
     for i, dim in enumerate(dimensions):
-        if dim > 3:
+        if dim == 4:
+            n1 = (np.logical_or(obj_tensor[:,i].int() == 1, obj_tensor[:,i].int() == 2)).int().reshape(obj_tensor.size(0), 1)
+            n2 = (np.logical_or(obj_tensor[:,i].int() == 1, obj_tensor[:,i].int() == 3)).int().reshape(obj_tensor.size(0), 1)
             # one-hot encode categorical dimensions
-            oh = np.eye(dim, dtype='uint8')[obj_tensor[:,i].int()-1]
-            onehot.append(oh)
+            onehot.append(n1)
+            onehot.append(n2)
         else:
             # binary dimensions need not be transformed
             onehot.append(obj_tensor[:,i:i+1])
