@@ -16,7 +16,6 @@ from datetime import timedelta
 from collections import defaultdict
 
 import torch.utils.data
-from sklearn.metrics import f1_score
 
 import egg.core as core
 from egg.core.util import move_to
@@ -289,7 +288,6 @@ def main(params):
             else receiver_outputs
 
         accuracy = torch.mean((preds == labels).float()).item() * 100
-        f1 =  f1_score(labels, preds, average='micro').item() * 100
         alignment = compute_alignment(
             test_data, _receiver, _sender, device, opts.batch_size)
         top_sim = compute_top_sim(sender_inputs, messages, opts.perceptual_dimensions)
@@ -302,7 +300,6 @@ def main(params):
         #bos_dis = bos_dis/len(messages)
     
         output_dict['results']['accuracy'] = accuracy
-        output_dict['results']['f1-micro'] = f1
         output_dict['results']['embedding_alignment'] = alignment
         output_dict['results']['topographic_rho'] = top_sim
         output_dict['results']['pos_dis'] = pos_dis
@@ -345,20 +342,17 @@ def main(params):
             preds2 = receiver_outputs2.argmax(dim=1) if opts.mode.lower() == 'gs' \
                 else receiver_outputs2
             accuracy2 = torch.mean((preds2 == labels2).float()).item() * 100
-            f12 =  f1_score(labels2, preds2, average='micro').item() * 100
             top_sim2 = compute_top_sim(sender_inputs2, messages2, opts.perceptual_dimensions)
             pos_dis2 = compute_posdis(sender_inputs2, messages2)
             bos_dis2 = compute_bosdis(sender_inputs2, messages2, opts.vocab_size)
 
             output_dict['results-no-noise']['accuracy'] = accuracy2
-            output_dict['results-no-noise']['f1-micro'] = f12
             output_dict['results-no-noise']['embedding_alignment'] = alignment
             output_dict['results-no-noise']['topographic_rho'] = top_sim2
             output_dict['results-no-noise']['pos_dis'] = pos_dis2
             output_dict['results-no-noise']['bos_dis'] = bos_dis2
 
             acc_str = f'{accuracy:.2f} / {accuracy2:.2f}'
-            f1_str = f'{f1:.2f} / {f12:.2f}'
             mi_result2 = compute_mi_input_msgs(sender_inputs2, messages2)
             output_dict['results-no-noise'].update(mi_result2)
             entropy_msg += f" / {mi_result2['entropy_msg']:.3f}"
@@ -376,7 +370,6 @@ def main(params):
                 print(f"|\033[1m Results (with noise / without noise)\033[0m\n|")
         else:
             acc_str = f'{accuracy:.2f}'
-            f1_str = f'{f1:.2f}'
             if not opts.silent:
                 print(f"|\n|\033[1m Results\033[0m\n|")
 
@@ -395,7 +388,6 @@ def main(params):
                 print("|" + "I(target objs; msg) =".rjust(align), mi_dim, "(for each dimension)")
             print('|')
             print("|" + "Accuracy:".rjust(align), acc_str)
-            print("|" + "F1 (micro):".rjust(align), f1_str)
             print("|")
             print("|" + "Embedding alignment:".rjust(align) + f" {alignment:.2f}")
             print("|" + "Topographic rho:".rjust(align) + f" {t_rho}")

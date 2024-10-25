@@ -5,7 +5,7 @@ from datetime import timedelta
 import subprocess
 
 seeds = [i+1 for i in range(1)]
-erasure_probs = [0.00, 0.05, 0.10, 0.15, 0.20, 0.25]
+erasure_probs = [0.15, 0.20, 0.25]#[0.00, 0.05, 0.10, 0.15, 0.20, 0.25]
 max_lengths = [5]
 
 slr = round(0.005700638877527014, 5)
