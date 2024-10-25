@@ -334,7 +334,7 @@ class SenderReceiverRnnReinforce(nn.Module):
             seed)
         self.channel = self.mechanics.channel
 
-    def forward(self, sender_input, labels, receiver_input=None, aux_input=None, apply_noise=False):
+    def forward(self, sender_input, labels, receiver_input=None, aux_input=None, apply_noise=True):
         return self.mechanics(
             self.sender,
             self.receiver,
@@ -402,7 +402,7 @@ class CommunicationRnnReinforce(nn.Module):
     ):
         message, log_prob_s, entropy_s = sender(sender_input, aux_input)
         message_length = find_lengths(message)
-        message = self.channel(message, message_length, apply_noise)  # apply noise
+        message = self.channel(message, message_length, apply_noise)
 
         receiver_output, log_prob_r, entropy_r = receiver(
             message, receiver_input, aux_input, message_length
@@ -492,7 +492,7 @@ class ErasureChannel(nn.Module):
         if message.dim() == 3:
             message = torch.cat([message, torch.zeros((message.size(0), message.size(1), 1))], dim=2)
 
-        if self.p != 0 and apply_noise:
+        if self.p != 0. and apply_noise:
 
             # Reinforce
             if message.dim() == 2:

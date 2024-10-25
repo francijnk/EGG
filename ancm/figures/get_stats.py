@@ -3,6 +3,7 @@ import json
 import pandas as pd
 import numpy as np
 from scipy import stats
+import statistics
 from collections import defaultdict
 
 
@@ -29,12 +30,12 @@ for d in os.listdir('runs/'):
                 data = json.load(fp)
 
             r_nn = 'results-no-noise' if 'results-no-noise' in data['results'] else 'results'
-            results[max_len][erasure_pr]['accuracy'].append(data['results']['accuracy']/100)
-            results[max_len][erasure_pr]['f1'].append(data['results']['f1-micro']/100)
-            results[max_len][erasure_pr]['embedding_alignment'].append(data['results']['embedding_alignment']/100)
-            results[max_len][erasure_pr]['topographic_rho'].append(data['results']['topographic_rho'])
-            results[max_len][erasure_pr]['pos_dis'].append(data['results']['pos_dis'])
-            results[max_len][erasure_pr]['bos_dis'].append(data['results']['bos_dis'])
+            results[max_len][erasure_pr]['accuracy'].append(data['results']['accuracy'])
+            results[max_len][erasure_pr]['f1'].append(data['results']['f1-micro'])
+            results[max_len][erasure_pr]['embedding_alignment'].append(data['results']['embedding_alignment'])
+            results[max_len][erasure_pr]['topographic_rho'].append(data['results']['topographic_rho']*100)
+            results[max_len][erasure_pr]['pos_dis'].append(data['results']['pos_dis']*100)
+            results[max_len][erasure_pr]['bos_dis'].append(data['results']['bos_dis']*100)
             results[max_len][erasure_pr]['unique_targets'].append(data['results']['unique_targets'])
             results[max_len][erasure_pr]['unique_msg'].append(data['results']['unique_msg'])
             if 'unique_msg_no_noise' in data['results']:
@@ -69,7 +70,8 @@ for d in os.listdir('runs/'):
             else:
                 data_long['unique_msg_no_noise'].append(data['results']['unique_msg'])
 
-data_long = sorted(data_long, key=lambda x: int(x['max_len']))
+#print(data_long)
+#data_long = sorted(data_long, key=lambda x: int(x['max_len']))
 data_long = pd.melt(
     pd.DataFrame(data_long),
     id_vars='max_len erasure_pr'.split(),
@@ -84,9 +86,13 @@ for max_len in results:
             for k, rd in zip(('noise', 'no_noise'), (results, results_nn)):
                 vals = results[max_len][erasure_pr][metric]
                 mean = np.mean(vals)
-                stde = stats.sem(vals)
-                h = stde * stats.t.ppf((1+confidence) / 2., len(vals)-1)
-                output[k] = (mean, h)
+                if metric.startswith('unique'):
+                    sd = statistics.stdev(vals)
+                    output[k] = (mean, sd)
+                else:
+                    stde = stats.sem(vals)
+                    h = stde * stats.t.ppf((1+confidence) / 2., len(vals)-1)
+                    output[k] = (mean.item(), h.item())
             aggregated[metric][max_len][erasure_pr] = output['noise']
 
 

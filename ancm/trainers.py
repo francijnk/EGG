@@ -163,7 +163,7 @@ class Trainer:
         else:
             self.scaler = None
 
-    def eval(self, data=None, apply_noise=False):
+    def eval(self, data=None, apply_noise=True):
         mean_loss = 0.0
         interactions = []
         n_batches = 0
@@ -292,7 +292,7 @@ class Trainer:
                 # Primary validation
                 for callback in self.callbacks:
                     callback.on_validation_begin(epoch + 1)
-                validation_loss, validation_interaction = self.eval()
+                validation_loss, validation_interaction = self.eval(apply_noise=True)
 
                 for callback in self.callbacks:
                     callback.on_validation_end(
@@ -303,7 +303,7 @@ class Trainer:
                 if second_val:
                     for callback in self.callbacks:
                         callback.on_validation_begin(epoch + 1)
-                    validation_loss_2, validation_interaction_2 = self.eval(apply_noise=True)
+                    validation_loss_2, validation_interaction_2 = self.eval(apply_noise=False)
 
                     for callback in self.callbacks:
                         callback.on_validation_end(

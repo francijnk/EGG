@@ -4,29 +4,28 @@ import time
 from datetime import timedelta
 import subprocess
 
-seeds = [42, 111, 123, 44, 100]
-# erasure_probs = [0.00, 0.10, 0.15, 0.20, 0.25]
-# max_lengths = [2, 5, 10]
-erasure_probs = [0.15, 0.20, 0.25]
+seeds = [i+1 for i in range(2)]
+erasure_probs = [0.00, 0.05, 0.10, 0.15, 0.20, 0.25]
 max_lengths = [5]
 
-slr = round(0.0007491411007735139, 5)
-rlr = round(0.0014182508770318705, 5)
-length_cost = round(0.0007661277251354441, 5)
-vocab_size = 51
-hidden_units = 58
+slr = round(0.005700638877527014, 5)
+rlr = round(0.0043274147176376645, 5)
+length_cost = 0  #round(0.0007661277251354441, 5)
+vocab_size = 31
+hidden_units = 41
 
 
 run_count = 1
 t_start = time.monotonic()
-for pr in erasure_probs:
-    for seed in seeds:
-        for max_len in max_lengths:
+for max_len in max_lengths:
+    for pr in erasure_probs:
+        for seed in seeds:
             print("="*3, f"{run_count} / {len(max_lengths) * len(erasure_probs) * len(seeds)}".center(10), "="*3)
             print(f"erasure_pr: {pr}")
             print(f"seed: {seed}")
             print(f"max_len: {max_len}")
 
+            # results_dir = 'wtf/'
             results_dir = f'runs/erasure_pr_{pr}/'
             filename = f'{max_len}_{seed}'
             opts = [
@@ -43,16 +42,16 @@ for pr in erasure_probs:
                 f'--receiver_hidden {hidden_units}',
                 '--sender_embedding 10',
                 '--receiver_embedding 10',
-                '--n_epochs 10',
+                '--n_epochs 5',
                 '--sender_entropy_coeff 0.01',
                 '--receiver_entropy_coeff 0.001',
                 '--sender_cell lstm',
                 '--receiver_cell lstm',
-                '--mode rf',
+                '--mode gs',
                 '--evaluate',
                 '--validation_freq 1',
                 '--load_data_path ' \
-                    '"data/input_data/[4, 4, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2]_4_' \
+                    '"data/input_data/[4, 4, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2]_4_distractors.npz' \
                     'distractors.npz"']
 
             process = subprocess.Popen(

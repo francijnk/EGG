@@ -277,7 +277,7 @@ def main(params):
         # Standard evaluation – same setting as during training
         sender_inputs, messages, receiver_inputs, receiver_outputs, labels = \
             dump_sender_receiver(
-                game, test_data, opts.mode == 'gs', apply_noise=opts.erasure_pr != 0,
+                game, test_data, opts.mode == 'gs', apply_noise=opts.erasure_pr != 0.,
                 variable_length=True, device=device)
 
         receiver_outputs = move_to(receiver_outputs, device)
@@ -334,7 +334,7 @@ def main(params):
             sender_inputs2, messages2, receiver_inputs2, \
                 receiver_outputs2, labels2 = dump_sender_receiver(
                     game, test_data, opts.mode.lower() == 'gs',
-                    apply_noise=opts.erasure_pr == 0,
+                    apply_noise=opts.erasure_pr == 0.,
                     variable_length=True, device=device)
 
             receiver_outputs2 = move_to(receiver_outputs2, device)

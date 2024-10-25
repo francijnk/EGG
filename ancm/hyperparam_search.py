@@ -25,10 +25,11 @@ pbounds = {
     'hidden_units': (3, 6),      # transformed to (8, 64)
     'length_cost': (1, 6),       # transformed to (10^-1, 10^-6)
     'lc_multiplier': (0, 1),     # transformed to {0, 1}
+    'mode': (0, 1),              # transformed to {0, 1}
 }
 
-init_points = 12
-n_iter = 24
+init_points = 0
+n_iter = 8
 
 run_count = 1
 seed = 42
@@ -47,16 +48,18 @@ def transform(params):
     output_dict['rlr_multiplier'] = math.exp(params['rlr_multiplier'] * math.log(10))
 
     # maps (1, 2) to (10, 100), returns an integer
-    output_dict['vocab_size'] = int(math.exp(params['vocab_size'] * math.log(10)))
+    output_dict['vocab_size'] = round(math.exp(params['vocab_size'] * math.log(10)))
 
     # maps (3, 6) to (8, 64), returns an integer
-    output_dict['hidden_units'] = int(math.exp(params['hidden_units'] * math.log(2)))
+    output_dict['hidden_units'] = round(math.exp(params['hidden_units'] * math.log(2)))
 
     # maps (1, 6) to (10^-1, 10^-6)
     output_dict['length_cost'] = math.exp(-params['length_cost'] * math.log(10))
 
     # maps (0, 1) to {0, 1}
     output_dict['lc_multiplier'] = round(params['lc_multiplier'])
+
+    output_dict['mode'] = 'rf' if round(params['mode']) == 0 else 'gs'
 
     return output_dict
 
@@ -119,12 +122,13 @@ def transform_step_screen(self, instance, colour = Fore.RESET):
     return "| " + " | ".join([x for x in cells if x is not None]) + " |"
 
 
-def game(slr, rlr, vocab_size, hidden_units, length_cost, run_id):
+def game(slr, rlr, vocab_size, hidden_units, length_cost, mode, run_id):
 
     global seed
 
     assert type(vocab_size) == int
     assert type(hidden_units) == int
+    assert mode == 'gs' or mode == 'rf'
 
     random_number = random.randint(0, 1000)
 
@@ -141,19 +145,19 @@ def game(slr, rlr, vocab_size, hidden_units, length_cost, run_id):
         '--sender_embedding 10',
         '--receiver_embedding 10',
         '--dump_results_folder search/',
-        '--n_epochs 10',
+        '--n_epochs 5',
         '--max_len 5',
         '--sender_entropy_coeff 0.01',
         '--receiver_entropy_coeff 0.001',
         '--sender_cell lstm',
         '--receiver_cell lstm',
-        '--mode rf',
+        f'--mode {mode}',
         '--evaluate',
         '--simple_logging',
         '--silent',
         '--validation_freq -1',
         '--load_data_path ' \
-            '"data/input_data/[4, 4, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2]_4_' \
+            '"data/input_data/[2, 2, 2, 2, 2, 2, 2, 2]_4_' \
             'distractors.npz"']
 
     process = subprocess.Popen(
@@ -170,7 +174,7 @@ def game(slr, rlr, vocab_size, hidden_units, length_cost, run_id):
     return results['results']['accuracy']
 
 
-def func(slr, rlr_multiplier, vocab_size, hidden_units, length_cost, lc_multiplier):
+def func(slr, rlr_multiplier, vocab_size, hidden_units, length_cost, lc_multiplier, mode):
     global run_count
     params = {
         'slr': slr,
@@ -178,15 +182,16 @@ def func(slr, rlr_multiplier, vocab_size, hidden_units, length_cost, lc_multipli
         'vocab_size': vocab_size,
         'hidden_units': hidden_units,
         'length_cost': length_cost,
-        'lc_multiplier': lc_multiplier}
+        'lc_multiplier': lc_multiplier,
+        'mode': mode}
     params = transform(params)
-
     acc =  game(
         params['slr'],
         params['slr'] * params['rlr_multiplier'],
         params['vocab_size'],
         params['hidden_units'],
         float(params['length_cost'] * params['lc_multiplier']),
+        params['mode'],
         run_count)
 
     run_count += 1
