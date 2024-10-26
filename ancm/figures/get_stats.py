@@ -36,11 +36,14 @@ for d in os.listdir('runs/'):
             results[max_len][erasure_pr]['pos_dis'].append(data['results']['pos_dis']*100)
             results[max_len][erasure_pr]['bos_dis'].append(data['results']['bos_dis']*100)
             results[max_len][erasure_pr]['unique_targets'].append(data['results']['unique_targets'])
-            results[max_len][erasure_pr]['unique_msg'].append(data['results']['unique_msg'])
             if 'unique_msg_no_noise' in data['results']:
                 results[max_len][erasure_pr]['unique_msg_no_noise'].append(data['results']['unique_msg_no_noise'])
             else:
-                results[max_len][erasure_pr]['unique_msg_no_noise'] = results[max_len][erasure_pr]['unique_msg']
+                results[max_len][erasure_pr]['unique_msg_no_noise'].append(data['results']['unique_msg'])
+            results[max_len][erasure_pr]['unique_msg'].append(data['results']['unique_msg'])
+
+            avg_len = np.mean([m['message'].count(',') + 1 for m in data['messages']]).item()
+            results[max_len][erasure_pr]['avg_len'].append(avg_len)
 
 
             results_nn[max_len][erasure_pr]['accuracy'].append(data[r_nn]['accuracy']/100)
@@ -48,11 +51,12 @@ for d in os.listdir('runs/'):
             results_nn[max_len][erasure_pr]['pos_dis'].append(data[r_nn]['pos_dis'])
             results_nn[max_len][erasure_pr]['bos_dis'].append(data[r_nn]['bos_dis'])
             results_nn[max_len][erasure_pr]['unique_targets'].append(data['results']['unique_targets'])
-            results_nn[max_len][erasure_pr]['unique_msg'].append(data['results']['unique_msg'])
             if 'unique_msg_no_noise' in data['results']:
                 results_nn[max_len][erasure_pr]['unique_msg_no_noise'].append(data['results']['unique_msg_no_noise'])
             else:
-                results_nn[max_len][erasure_pr]['unique_msg_no_noise'] = results[max_len][erasure_pr]['unique_msg']
+                results_nn[max_len][erasure_pr]['unique_msg_no_noise'].append(data['results']['unique_msg'])
+            results_nn[max_len][erasure_pr]['unique_msg'].append(data['results']['unique_msg'])
+            results_nn[max_len][erasure_pr]['avg_len'] = avg_len
 
             data_long['max_len'].append(max_len)
             data_long['erasure_pr'].append(erasure_pr)
@@ -97,7 +101,7 @@ for max_len in results:
                     output[k] = (vals[0], None)
                     continue
                 mean = np.mean(vals)
-                if metric.startswith('unique'):
+                if metric.startswith('unique') or metric == 'avg_len':
                     sd = statistics.stdev(vals)
                     output[k] = (mean, sd)
                 else:

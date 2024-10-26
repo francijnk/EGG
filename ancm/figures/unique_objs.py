@@ -18,6 +18,8 @@ for d in os.listdir('runs/'):
     for file in os.listdir(directory):
         if file.endswith('json'):
             max_len, seed = (int(item.strip('.json')) for item in file[:file.index('-')].split('_'))
+            if max_len==10:
+                continue
             with open(os.path.join(directory, file)) as fp:
                 data = json.load(fp)
 
@@ -27,6 +29,8 @@ for d in os.listdir('runs/'):
                 results[erasure_pr][max_len]['unique_msg_no_noise'].append(data['results']['unique_msg_no_noise'])
             else:
                 results[erasure_pr][max_len]['unique_msg_no_noise'].append(data['results']['unique_msg'])
+            avg_len = np.mean([m['message'].count(',')  for m in data['messages']]).item()
+            results[erasure_pr][max_len]['avg_len'].append(avg_len)
 
 cols = []
 for p in results:
@@ -49,7 +53,7 @@ for p in results:
 
     for ml in sorted(results[p], key=int):
         res = results[p][ml]
-        for key in ('unique_msg_no_noise', 'unique_msg'):
+        for key in ('unique_msg_no_noise', 'unique_msg', 'avg_len'):
             vals = res[key]
             if len(vals) == 0:
                 mean, sd = '--', '--'
