@@ -24,7 +24,6 @@ for d in os.listdir('runs/'):
         else:
             continue
 
-
         fpath = os.path.join(directory, file)
         df = pd.read_csv(fpath)
         if erasure_pr != 0.:
@@ -33,7 +32,6 @@ for d in os.listdir('runs/'):
         else:
             df_noise = df[df.phase == 'val']
             df_no_noise = df[df.phase == 'val']
-            # df_no_noise.phase = 'val (no noise)'
         df_noise = df_noise.assign(noise=['noise' for _ in range(len(df_noise))])
         df_no_noise = df_no_noise.assign(noise=['no noise' for _ in range(len(df_noise))])
         df_noise = df_noise.reset_index(drop=True)
@@ -42,8 +40,6 @@ for d in os.listdir('runs/'):
         df_noise['accuracy'] = df_noise['accuracy'] / 100
         all_dfs[(max_len, erasure_pr)].append(df_noise)
         all_dfs[(max_len, erasure_pr)].append(df_no_noise)
-
-
 
 metrics = 'accuracy length alignment topographic_rho pos_dis bos_dis'.split()
 
