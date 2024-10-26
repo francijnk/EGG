@@ -64,12 +64,3 @@ A sample is a set of target concept + distractor concepts, sampled from the same
 | weapons      | 23                 |
 
 
-## Results
-
-Generated data:
-- BASELINE: 
-  - acc: 96.07
-  - 402 unique messages for 636 unique objects 
-  - MI: 8.22
-  - alignment: 93.91 
-  - training time: ~10 min (cezary)
