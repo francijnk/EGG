@@ -68,9 +68,6 @@ for max_len, erasure_pr in all_dfs:
                     acc_long['accuracy'].append(v)
                     acc_long['noise'].append(n)
 
-            # mean = np.mean(vals) 
-            # stde = stats.sem(vals)
-            # ci = stde * stats.t.ppf((1+confidence) / 2., len(vals)-1)
 
 os.makedirs('figures/img', exist_ok=True)
 hue_order = ['topographic_rho', 'pos_dis', 'bos_dis', 'accuracy']

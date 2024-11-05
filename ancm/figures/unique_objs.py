@@ -18,8 +18,6 @@ for d in os.listdir('runs/'):
     for file in os.listdir(directory):
         if file.endswith('json'):
             max_len, seed = (int(item.strip('.json')) for item in file[:file.index('-')].split('_'))
-            if max_len==10:
-                continue
             with open(os.path.join(directory, file)) as fp:
                 data = json.load(fp)
 

@@ -66,12 +66,6 @@ for d in os.listdir('runs/'):
             data_long['topographic_rho'].append(data['results']['topographic_rho'])
             data_long['pos_dis'].append(data['results']['pos_dis'])
             data_long['bos_dis'].append(data['results']['bos_dis'])
-            #data_long['unique_msg'].append(data['results']['unique_msg'])
-            #data_long['unique_targets'].append(data['results']['unique_targets'])
-            #if 'unique_msg_no_noise' in data['results']:
-            #    data_long['unique_msg_no_noise'].append(data['results']['unique_msg_no_noise'])
-            #else:
-            #    data_long['unique_msg_no_noise'].append(data['results']['unique_msg'])
 
             data_long['max_len'].append(max_len)
             data_long['erasure_pr'].append(erasure_pr)
@@ -81,8 +75,8 @@ for d in os.listdir('runs/'):
             data_long['topographic_rho'].append(data[r_nn]['topographic_rho'])
             data_long['pos_dis'].append(data[r_nn]['pos_dis'])
             data_long['bos_dis'].append(data[r_nn]['bos_dis'])
-#print(data_long)
-#data_long = sorted(data_long, key=lambda x: int(x['max_len']))
+
+
 data_long = pd.melt(
     pd.DataFrame(data_long),
     id_vars='max_len erasure_pr noise'.split(),

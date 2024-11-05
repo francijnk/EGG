@@ -21,7 +21,7 @@ for metric in data:
         continue
     line = [key2desc[metric]]
     for max_len in data[metric]:
-        if max_len != '2':
+        if max_len != '10':
             continue
         if metric == 'f1':
             continue
