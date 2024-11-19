@@ -303,7 +303,7 @@ class PosDisCallback(Callback):
         if -1 in perceptual_dimensions:  # handling datasets loaded from a file
             self.compute_on_validation = len(self.perceptual_dimensions) < WORLD_DIM_THRESHOLD
         else:  # handling generated datasets 
-            world_dim = reduce(lambda: x, y: x * y, perceptual_dimensions)
+            world_dim = reduce(lambda x, y: x * y, perceptual_dimensions)
             self.compute_on_validation = world_dim < 2 ** WORLD_DIM_THRESHOLD
 
     def on_validation_end(self, loss: float, logs: Interaction, epoch: int):
@@ -323,7 +323,7 @@ class BosDisCallback(Callback):
         if -1 in perceptual_dimensions:  # handling datasets loaded from a file
             self.compute_on_validation = len(self.perceptual_dimensions) < WORLD_DIM_THRESHOLD
         else:  # handling generated datasets 
-            world_dim = reduce(lambda: x, y: x * y, perceptual_dimensions)
+            world_dim = reduce(lambda x, y: x * y, perceptual_dimensions)
             self.compute_on_validation = world_dim < 2 ** WORLD_DIM_THRESHOLD
 
     def on_validation_end(self, loss: float, logs: Interaction, epoch: int):

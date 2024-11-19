@@ -384,8 +384,8 @@ def main(params):
                 print("|" + "I(target objs; msg) =".rjust(align), mi_dim, "(with noise)")
                 print("|" + "I(target objs; msg) =".rjust(align), mi_dim2, "(no noise)")
             else:
-                print("|" + "H(target objs) =".rjust(align) + entropy_inp_dim, "(for each dimension)")
-                print("|" + "I(target objs; msg) =".rjust(align), mi_dim, "(for each dimension)")
+                print("|" + "H(target objs) =".rjust(align), entropy_inp_dim)
+                print("|" + "I(target objs; msg) =".rjust(align), mi_dim)
             print('|')
             print("|" + "Accuracy:".rjust(align), acc_str)
             print("|")
