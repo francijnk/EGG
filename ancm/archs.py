@@ -508,7 +508,7 @@ class ErasureChannel(nn.Module):
                     torch.stack(
                         [torch.arange(0, message.size(1), requires_grad=False).to(self.device)]) 
                     < torch.cat(
-                        [torch.unsqueeze(message_length-1, dim=-1) for _ in range(message.size(1)).to(self.device)],
+                        [torch.unsqueeze(message_length-1, dim=-1).to(self.device) for _ in range(message.size(1))],
                         dim=1))
 
                 message = torch.where(

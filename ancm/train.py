@@ -233,8 +233,8 @@ def main(params):
     if not opts.no_compositionality_metrics:
         callbacks.extend([
             TopographicRhoCallback(opts.perceptual_dimensions),
-            PosDisCallback(),
-            BosDisCallback(opts.vocab_size),
+            PosDisCallback(opts.perceptual_dimensions),
+            BosDisCallback(opts.vocab_size, opts.perceptual_dimensions),
         ])
 
     if opts.mode.lower() == "gs":

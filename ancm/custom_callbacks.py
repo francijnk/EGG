@@ -3,6 +3,7 @@ import pandas as pd
 
 from collections import OrderedDict, defaultdict
 from typing import Any, Dict, Iterable, List, NamedTuple, Optional, Union
+from functools import reduce
 
 from rich.live import Live
 from rich.columns import Columns
@@ -22,6 +23,9 @@ from ancm.util import compute_top_sim, compute_alignment, compute_posdis, comput
 
 from egg.core.callbacks import Callback, CustomProgress
 from egg.core.interaction import Interaction
+
+
+WORLD_DIM_THRESHOLD = 16
 
 
 class EpochProgress(Progress):
@@ -295,24 +299,39 @@ class TopographicRhoCallback(Callback):
 
 
 class PosDisCallback(Callback):
-    def __init__(self):
-        pass
+    def __init__(self, perceptual_dimensions):
+        if -1 in perceptual_dimensions:  # handling datasets loaded from a file
+            self.compute_on_validation = len(self.perceptual_dimensions) < WORLD_DIM_THRESHOLD
+        else:  # handling generated datasets 
+            world_dim = reduce(lambda: x, y: x * y, perceptual_dimensions)
+            self.compute_on_validation = world_dim < 2 ** WORLD_DIM_THRESHOLD
 
     def on_validation_end(self, loss: float, logs: Interaction, epoch: int):
         if logs is not None:
-            logs.aux['pos_dis'] = compute_posdis(logs.sender_input, logs.message)
+            if self.compute_on_validation:
+                logs.aux['pos_dis'] = compute_posdis(logs.sender_input, logs.message)
+            else:
+                logs.aux['bos_dis'] = None
 
     def on_epoch_end(self, loss: float, logs: Interaction, epoch: int):
         logs.aux['pos_dis'] = None
 
 
 class BosDisCallback(Callback):
-    def __init__(self, vocab_size):
+    def __init__(self, vocab_size, perceptual_dimensions):
         self.vocab_size = vocab_size
+        if -1 in perceptual_dimensions:  # handling datasets loaded from a file
+            self.compute_on_validation = len(self.perceptual_dimensions) < WORLD_DIM_THRESHOLD
+        else:  # handling generated datasets 
+            world_dim = reduce(lambda: x, y: x * y, perceptual_dimensions)
+            self.compute_on_validation = world_dim < 2 ** WORLD_DIM_THRESHOLD
 
     def on_validation_end(self, loss: float, logs: Interaction, epoch: int):
         if logs is not None:
-            logs.aux['bos_dis'] = compute_bosdis(logs.sender_input, logs.message, self.vocab_size)
+            if self.compute_on_validation:
+                logs.aux['bos_dis'] = compute_bosdis(logs.sender_input, logs.message, self.vocab_size)
+            else:
+                logs.aux['bos_dis'] = None
 
     def on_epoch_end(self, loss: float, logs: Interaction, epoch: int):
         logs.aux['bos_dis'] = None
