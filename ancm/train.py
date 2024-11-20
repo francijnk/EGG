@@ -58,7 +58,8 @@ def get_params(params):
     parser.add_argument("--validation_samples", type=float, default=1e3, help="Number of tuples in validation data (default: 1e4)")
     parser.add_argument("--test_samples", type=float, default=1e3, help="Number of tuples in test data (default: 1e3)")
     parser.add_argument("--data_seed", type=int, default=42, help="Seed for random creation of train, validation and test tuples (default: 42)")
-    parser.add_argument("--erasure_pr", type=float, default=0., help="Probability of erasing a symbol (default: 0.0)")
+    parser.add_argument("--channel", type=str, default=None, help="Communication channel type {erasure, symmetric} (default: None)")
+    parser.add_argument("--error_prob", type=float, default=0., help="Probability of error per symbol (default: 0.0)")
     parser.add_argument("--no_shuffle", action="store_false", default=True, help="Do not shuffle train data before every epoch (default: False)")
     parser.add_argument("--sender_hidden", type=int, default=50, help="Size of the hidden layer of Sender (default: 50)")
     parser.add_argument("--receiver_hidden", type=int, default=50, help="Size of the hidden layer of Receiver (default: 50)")
@@ -70,10 +71,10 @@ def get_params(params):
     parser.add_argument("--receiver_lr", type=float, default=1e-1, help="Learning rate for Receiver's parameters (default: 1e-1)")
     parser.add_argument("--sender_entropy_coeff", type=float, default=0.01)
     parser.add_argument("--receiver_entropy_coeff", type=float, default=0.001)
-    parser.add_argument("--lr_decay", type=float, default=None, help="LR decay (1.0 for no decay)")
+    parser.add_argument("--lr_decay", type=float, default=None, help="LR decay, 1.0 for no decay (default: no decay)")
     parser.add_argument("--length_cost", type=float, default=1e-2, help="Message length cost")
     parser.add_argument("--temperature", type=float, default=1.0, help="GS temperature for the sender (default: 1.0)")
-    parser.add_argument("--mode", type=str, default="gs", help="Selects whether Reinforce or GumbelSoftmax relaxation is used for training {gs only at the moment}" "(default: rf)")
+    parser.add_argument("--mode", type=str, default="gs", help="Selects whether Reinforce or GumbelSoftmax relaxation is used for (default: gs)")
     parser.add_argument("--evaluate", action="store_true", default=False, help="Evaluate trained model on test data")
     parser.add_argument("--dump_data_folder", type=str, default='data/input_data/', help="Folder where file with dumped data will be created")
     parser.add_argument("--dump_results_folder", type=str, default='runs', help="Folder where file with dumped messages will be created")
@@ -119,6 +120,11 @@ def check_args(args):
         pdb.set_trace()
 
     args.n_features = len(args.perceptual_dimensions)
+    
+    args.channel = args.channel.lower()
+    assert (
+        args.channel is None or args.channel in ("erasure", "symmetric")
+    ), 'The only channels implemented are "erasure" and "symmetric"'
 
     # can't set data loading and data dumping at the same time
     if args.load_data_path:
@@ -168,13 +174,17 @@ def main(params):
             temperature=opts.temperature)
         receiver = core.RnnReceiverGS(
             _receiver,
-            opts.vocab_size + 1,
+            opts.vocab_size if opts.channel != 'erasure' else opts.vocab_size + 1,
             opts.receiver_embedding,
             opts.receiver_hidden,
             cell=opts.receiver_cell)
         game = SenderReceiverRnnGS(
-            sender, receiver, loss_gs,
-            opts.max_len, opts.vocab_size, opts.erasure_pr,
+            sender, receiver, 
+            loss=loss_gs,
+            max_len=opts.max_len,
+            vocab_size=opts.vocab_size,
+            channel_type=opts.channel,
+            error_prob=opts.error_prob,
             length_cost=opts.length_cost,
             device=device,
             seed=opts.random_seed)
@@ -195,16 +205,21 @@ def main(params):
             max_len=opts.max_len)
         receiver = core.RnnReceiverReinforce(
             core.ReinforceWrapper(_receiver),
-            opts.vocab_size + 1,
+            opts.vocab_size if opts.channel != 'erasure' \
+                else opts.vocab_size + 1,
             opts.receiver_embedding,
             opts.receiver_hidden,
             cell=opts.receiver_cell)
         game = SenderReceiverRnnReinforce(
-            sender, receiver, loss_reinforce,
-            opts.max_len, opts.vocab_size, opts.erasure_pr,
+            sender, receiver,
+            loss=loss_reinforce,
+            max_len=opts.max_len,
+            vocab_size=opts.vocab_size, 
+            channel_type=opts.channel, 
+            error_prob=opts.error_prob,
+            length_cost=opts.length_cost,
             sender_entropy_coeff=opts.sender_entropy_coeff,
             receiver_entropy_coeff=opts.receiver_entropy_coeff,
-            length_cost=opts.length_cost,
             device=device,
             seed=opts.random_seed)
         optimizer = torch.optim.RMSprop([
@@ -216,7 +231,10 @@ def main(params):
         raise NotImplementedError(f"Unknown training mode, {opts.mode}")
 
     if opts.lr_decay is not None and opts.lr_decay != 1.:
-        scheduler = torch.optim.lr_scheduler.LinearLR(optimizer, start_factor=1., end_factor=opts.lr_decay, total_iters=opts.n_epochs)
+        scheduler = torch.optim.lr_scheduler.LinearLR(
+            optimizer, start_factor=1.,
+            end_factor=opts.lr_decay,
+            total_iters=opts.n_epochs)
     else:
         scheduler = None
 
@@ -249,7 +267,7 @@ def main(params):
             step=opts.validation_freq,
             dump_results_folder=opts.dump_results_folder,
             filename=opts.filename))
- 
+
     trainer = Trainer(
         game=game,
         optimizer=optimizer,
@@ -259,7 +277,7 @@ def main(params):
         callbacks=callbacks)
 
     t_start = time.monotonic()
-    if opts.silent or opts.simple_logging or opts.erasure_pr == 0.:
+    if opts.silent or opts.simple_logging or opts.error_prob == 0. or not opts.channel:
         trainer.train(n_epochs=opts.n_epochs, second_val=False)
     else:
         trainer.train(n_epochs=opts.n_epochs, second_val=True)
@@ -291,14 +309,11 @@ def main(params):
         alignment = compute_alignment(
             test_data, _receiver, _sender, device, opts.batch_size)
         top_sim = compute_top_sim(sender_inputs, messages, opts.perceptual_dimensions)
-        #pos_dis = 0
-        #bos_dis = 0
-        #for message in messages:
         pos_dis = compute_posdis(sender_inputs, messages)
         bos_dis = compute_bosdis(sender_inputs, messages, opts.vocab_size)
-        #pos_dis = pos_dis/len(messages)
-        #bos_dis = bos_dis/len(messages)
-    
+        # pos_dis = pos_dis/len(messages)
+        # bos_dis = bos_dis/len(messages)
+
         output_dict['results']['accuracy'] = accuracy
         output_dict['results']['embedding_alignment'] = alignment
         output_dict['results']['topographic_rho'] = top_sim
@@ -327,11 +342,11 @@ def main(params):
 
         # If we applied noise during training,
         # compute results after disabling noise in the test phase as well
-        if opts.erasure_pr != 0:
+        if opts.error_prob != 0:
             sender_inputs2, messages2, receiver_inputs2, \
                 receiver_outputs2, labels2 = dump_sender_receiver(
                     game, test_data, opts.mode.lower() == 'gs',
-                    apply_noise=opts.erasure_pr == 0.,
+                    apply_noise=opts.error_prob == 0.,
                     variable_length=True, device=device)
 
             receiver_outputs2 = move_to(receiver_outputs2, device)
@@ -379,7 +394,7 @@ def main(params):
             print("|" + "H(target objs) =".rjust(align), entropy_inp)
             print("|" + "I(target objs; msg) =".rjust(align), mi)
             print("|\n| Separately for each object vector dimension")
-            if opts.erasure_pr != 0:
+            if opts.error_prob != 0:
                 print("|" + "H(target objs) =".rjust(align), entropy_inp_dim)
                 print("|" + "I(target objs; msg) =".rjust(align), mi_dim, "(with noise)")
                 print("|" + "I(target objs; msg) =".rjust(align), mi_dim2, "(no noise)")
@@ -410,7 +425,7 @@ def main(params):
                     'target_vec': target_vec,
                     'candidate_vex': candidate_vex,
                     'message': message}
-                if opts.erasure_pr != 0:
+                if opts.error_prob != 0:
                     message_log['message_no_noise'] = None
                 message_log['label'] = label.item()
 
@@ -420,7 +435,7 @@ def main(params):
 
             sorted_msgs = sorted(msg_dict.items(), key=operator.itemgetter(1), reverse=True)
 
-            if opts.erasure_pr != 0.:
+            if opts.error_prob != 0.:
                 msg_dict2 = defaultdict(int)
                 for sender_input, message, receiver_input, receiver_output, label \
                         in zip(sender_inputs2, messages2, receiver_inputs2, receiver_outputs2, labels2):
@@ -435,7 +450,7 @@ def main(params):
 
                 sorted_msgs2 = sorted(msg_dict2.items(), key=operator.itemgetter(1), reverse=True)
 
-            lexicon_size = str(len(msg_dict.keys())) if opts.erasure_pr == 0 \
+            lexicon_size = str(len(msg_dict.keys())) if opts.error_prob == 0 \
                 else f'{len(msg_dict.keys())} / {len(msg_dict2.keys())}'
             if not opts.silent:
                 print("|")
@@ -444,12 +459,12 @@ def main(params):
 
             output_dict['results']['unique_targets'] = len(unique_dict.keys())
             output_dict['results']['unique_msg'] = len(msg_dict.keys())
-            if opts.erasure_pr != 0:
+            if opts.error_prob != 0:
                 output_dict['results']['unique_msg_no_noise'] = len(msg_dict2.keys())
             output_dict['results']['embedding_alignment'] = alignment
             output_dict['messages'] = [v for v in messages_dict.values()]
             output_dict['message_counts'] = sorted_msgs
-            if opts.erasure_pr != 0:
+            if opts.error_prob != 0:
                 output_dict['message_counts_no_noise'] = sorted_msgs2
                 output_dict['erased_symbol'] = opts.vocab_size
             opts_dict = {k: v for k, v in vars(opts).items() if is_jsonable(v)}
