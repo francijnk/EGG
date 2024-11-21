@@ -12,7 +12,6 @@ from typing import Optional
 
 from egg.core.util import move_to
 from egg.zoo.objects_game.util import mutual_info, entropy
-from egg.zoo.language_bottleneck.intervention import entropy as entropy1, mutual_info as mutual_info1
 
 def is_jsonable(x):
     try:
@@ -32,8 +31,8 @@ def compute_alignment(dataloader, sender, receiver, device, bs):
 
     for batch in [obj_features[bs*y:bs*(y+1),:] for y in range(n_batches)]:
         with torch.no_grad():
-            b_sender_embeddings = sender.fc1(batch).tanh().numpy()
-            b_receiver_embeddings = receiver.fc1(batch).tanh().numpy()
+            b_sender_embeddings = sender.fc1(batch).tanh().cpu().numpy()
+            b_receiver_embeddings = receiver.fc1(batch).tanh().cpu().numpy()
             if sender_embeddings is None:
                 sender_embeddings = b_sender_embeddings
                 receiver_embeddings = b_receiver_embeddings
@@ -66,6 +65,55 @@ def compute_mi_input_msgs(sender_inputs, messages):
         'mi_dim': result,
     }
 
+def compute_redundancy(messages, max_len, vocab_size):
+    # still need to figure this out
+    max_entr = 1
+
+    freq_table = []
+    for i in range(max_len + 1):
+        freq_table.append({})
+
+    for message in messages:
+        # im not sure if it is a string or not/how the messages look rn
+        message = str(message)
+        string = ''
+        for symbol in message:
+            string = string + symbol
+            index = len(string)
+            if string in freq_table[index].keys():
+                freq_table[index][string] += 1
+            else:
+                freq_table[index][string] = 1
+
+    redundancy_dict = {}
+
+    # both a dict and a list since the dict will not keep track of duplicates and thus alters the average redundancy measure
+    entropy_dict = {}
+    entropies = []
+
+    for message in messages:
+        H = 0
+        string = ''
+        for symbol in message:
+            string = string + symbol
+            index = len(string)
+            # rn probability is based on frequency of the partial string and frequency of all other options of the same length
+            p = freq_table[index][string]/len(freq_table[index].values())
+            H += p * math.log(1/p)
+        H = H / math.log(2)
+        
+        entropies.append(H)
+        entropy_dict[string] = H
+
+        for entropy in entropies:
+            redundancy = 1 - entropy/max_entr
+            redundancies.append(redundancy)
+
+        # could also update the dictionary to get more insight into the actual messages and their entropy
+
+    redundancies = []
+
+    return redundancies
 
 
 def compute_top_sim(sender_inputs, messages, dimensions=None):
@@ -80,10 +128,12 @@ def compute_top_sim(sender_inputs, messages, dimensions=None):
 
     onehot = []
     for i, dim in enumerate(dimensions):
-        if dim > 3:
+        if dim == 4:
+            n1 = (np.logical_or(obj_tensor[:,i].int() == 1, obj_tensor[:,i].int() == 2)).int().reshape(obj_tensor.size(0), 1)
+            n2 = (np.logical_or(obj_tensor[:,i].int() == 1, obj_tensor[:,i].int() == 3)).int().reshape(obj_tensor.size(0), 1)
             # one-hot encode categorical dimensions
-            oh = np.eye(dim, dtype='uint8')[obj_tensor[:,i].int()-1]
-            onehot.append(oh)
+            onehot.append(n1)
+            onehot.append(n2)
         else:
             # binary dimensions need not be transformed
             onehot.append(obj_tensor[:,i:i+1])
@@ -129,11 +179,11 @@ def compute_posdis(sender_inputs, messages):
         h_j = None
         for i in range(attributes.size(1)):
             x, y = attributes[:, i], strings[:, j]
-            info = mutual_info1(x, y)
+            info = mutual_info(x, y)
             symbol_mi.append(info)
 
             if h_j is None:
-                h_j = entropy1(y)
+                h_j = entropy(y)
                 
 
         symbol_mi.sort(reverse=True)
@@ -145,6 +195,7 @@ def compute_posdis(sender_inputs, messages):
     score = gaps.sum() / non_constant_positions
     return score.item()
 
+
 def histogram(messages, vocab_size):
     messages = [msg.argmax(dim=1) if msg.dim() == 2
                 else msg for msg in messages]
@@ -152,11 +203,15 @@ def histogram(messages, vocab_size):
     messages = torch.stack(messages) \
         if isinstance(messages, list) else messages
 
+    # Handle messages with added noise
+    if vocab_size in messages:
+        vocab_size += 1
+
     # Create a histogram with size [batch_size, vocab_size] initialized with zeros
     histogram = torch.zeros(messages.size(0), vocab_size)
 
     if messages.dim() > 2:
-        messages = messages.view(messages.size(0), -1)
+       messages = messages.view(messages.size(0), -1)
     
     # Count occurrences of each value in strings and store them in histogram
     histogram.scatter_add_(1, messages.long(), torch.ones_like(messages, dtype=torch.float))
