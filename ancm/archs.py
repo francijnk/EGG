@@ -102,14 +102,28 @@ class SenderReceiverRnnGS(nn.Module):
         self.loss = loss
         self.length_cost = length_cost
 
-        if channel_type == 'erasure':
-            self.channel = ErasureChannel(error_prob, vocab_size, device, False, seed)
-        elif channel_type == 'symmetric':
-            self.channel = SymmetricChannel(error_prob, vocab_size, device, False, seed)
-        elif channel_type == 'deletion':
-            self.channel = DeletionChannel(error_prob, vocab_size, device, False, seed)
+        channels = {
+            'erasure': ErasureChannel,
+            'symmetric': SymmetricChannel,
+            'deletion': DeletionChannel,
+            'truncation': TruncationChannel,
+        }
+
+        if channel_type in channels.keys():
+            self.channel = channels[channel_type](error_prob, vocab_size, device, False, seed)
         else:
             self.channel = None
+
+        # if channel_type == 'erasure':
+        #     self.channel = ErasureChannel(error_prob, vocab_size, device, False, seed)
+        # elif channel_type == 'symmetric':
+        #     self.channel = SymmetricChannel(error_prob, vocab_size, device, False, seed)
+        # elif channel_type == 'deletion':
+        #     self.channel = DeletionChannel(error_prob, vocab_size, device, False, seed)
+        # elif channel_type == 'truncation':
+        #     self.channel = TruncationChannel(error_prob, vocab_size, device, False, seed)
+        # else:
+        #     self.channel = None
 
         self.train_logging_strategy = (
             LoggingStrategy()
@@ -679,16 +693,17 @@ class DeletionChannel(Channel):
     def forward(self, message, message_length=None, apply_noise=False):
         if self.p != 0. and apply_noise: 
             msg = message if message.dim() == 2 else message.argmax(dim=-1)
+            msg = msg.detach()
 
             if message_length is None:
                 message_length = find_lengths(msg)
             
             # True for all message symbols before the 1st EOS symbol
-            not_eosed = (
+                not_eosed = (
                 torch.stack(
-                    [torch.arange(0, message.size(1), requires_grad=False).to(self.device)])
+                    [torch.arange(0, msg.size(1)).to(self.device)])
                 < torch.cat(
-                    [torch.unsqueeze(message_length-1, dim=-1).to(self.device) for _ in range(message.size(1))],
+                    [torch.unsqueeze(message_length-1, dim=-1).to(self.device) for _ in range(msg.size(1))],
                     dim=1))
 
             # sample symbol indices to be erased
@@ -722,3 +737,13 @@ class DeletionChannel(Channel):
                 ])
 
         return message
+
+
+class TruncationChannel(Channel):
+
+    def __init__(self, error_prob, vocab_size, device, is_relative_detach=True, seed=42):
+        super().__init__(error_prob, vocab_size, device, is_relative_detach, seed)
+        self.p = error_prob
+
+    def forward(self, message, message_length=None, apply_noise=False):
+        pass

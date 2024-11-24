@@ -41,9 +41,10 @@ from ancm.custom_callbacks import (
     CustomProgressBarLogger,
     LexiconSizeCallback,
     AlignmentCallback,
+    RedundancyCallback,
     TopographicRhoCallback,
     PosDisCallback,
-    BosDisCallback
+    BosDisCallback,
 )
 
 
@@ -124,8 +125,8 @@ def check_args(args):
     args.channel = args.channel.lower()
     assert (
         args.channel is None
-        or args.channel in ("erasure", "symmetric", "deletion")
-    ), 'The only channels implemented are "erasure", "symmetric" and "deletion"'
+        or args.channel in ("erasure", "symmetric", "deletion", "truncation")
+    ), 'The only channels implemented are "erasure", "symmetric", "deletion" and "truncation"'
 
     # can't set data loading and data dumping at the same time
     if args.load_data_path:
@@ -162,6 +163,8 @@ def main(params):
 
     data_loader.upd_cl_options(opts)
 
+    receiver_vocab_size = opts.vocab_size if opts.channel != 'erasure' else opts.vocab_size + 1
+
     if opts.mode.lower() == "gs":
         _sender = SenderGS(n_features=data_loader.n_features, n_hidden=opts.sender_hidden)
         _receiver = ReceiverGS(n_features=data_loader.n_features, linear_units=opts.receiver_hidden)
@@ -170,15 +173,15 @@ def main(params):
             opts.vocab_size,
             opts.sender_embedding,
             opts.sender_hidden,
-            cell=opts.sender_cell,
-            max_len=opts.max_len,
-            temperature=opts.temperature)
+            opts.max_len,
+            opts.temperature,
+            opts.sender_cell)
         receiver = core.RnnReceiverGS(
             _receiver,
-            opts.vocab_size if opts.channel != 'erasure' else opts.vocab_size + 1,
+            receiver_vocab_size,
             opts.receiver_embedding,
             opts.receiver_hidden,
-            cell=opts.receiver_cell)
+            opts.receiver_cell)
         game = SenderReceiverRnnGS(
             sender, receiver, 
             loss=loss_gs,
@@ -201,12 +204,11 @@ def main(params):
             opts.vocab_size,
             opts.sender_embedding,
             opts.sender_hidden,
-            cell=opts.sender_cell,
-            max_len=opts.max_len)
+            opts.max_len,
+            cell=opts.sender_cell)
         receiver = core.RnnReceiverReinforce(
             core.ReinforceWrapper(_receiver),
-            opts.vocab_size if opts.channel != 'erasure' \
-                else opts.vocab_size + 1,
+            receiver_vocab_size,
             opts.receiver_embedding,
             opts.receiver_hidden,
             cell=opts.receiver_cell)
@@ -224,7 +226,7 @@ def main(params):
         optimizer = torch.optim.RMSprop([
             {"params": game.sender.parameters(), "lr": opts.sender_lr},
             {"params": game.receiver.parameters(), "lr": opts.receiver_lr},
-        ])
+        ])  # change!!
 
     else:
         raise NotImplementedError(f"Unknown training mode, {opts.mode}")
@@ -244,7 +246,8 @@ def main(params):
     else:
         callbacks = [
             LexiconSizeCallback(),
-            AlignmentCallback(_sender, _receiver, test_data, device, opts.validation_freq, opts.batch_size),
+            AlignmentCallback(_sender, _receiver, test_data, device, opts.batch_size),
+            RedundancyCallback(opts.vocab_size, opts.max_len)
        ]
 
     if not opts.no_compositionality_metrics:
@@ -263,7 +266,7 @@ def main(params):
             print_train_metrics=True,
             train_data_len=len(train_data),
             test_data_len=len(validation_data),
-            step=opts.validation_freq,
+            validation_freq=opts.validation_freq,
             dump_results_folder=opts.dump_results_folder,
             filename=opts.filename))
 
@@ -307,6 +310,7 @@ def main(params):
         accuracy = torch.mean((preds == labels).float()).item() * 100
         alignment = compute_alignment(
             test_data, _receiver, _sender, device, opts.batch_size)
+        redundancy = compute_redundancy(messages, receiver_vocab_size, opts.max_len)
         top_sim = compute_top_sim(sender_inputs, messages, opts.perceptual_dimensions)
         pos_dis = compute_posdis(sender_inputs, messages)
         bos_dis = compute_bosdis(sender_inputs, messages, opts.vocab_size)
@@ -315,6 +319,7 @@ def main(params):
 
         output_dict['results']['accuracy'] = accuracy
         output_dict['results']['embedding_alignment'] = alignment
+        output_dict['results']['redundancy'] = redundancy
         output_dict['results']['topographic_rho'] = top_sim
         output_dict['results']['pos_dis'] = pos_dis
         output_dict['results']['bos_dis'] = bos_dis
@@ -356,12 +361,14 @@ def main(params):
             preds2 = receiver_outputs2.argmax(dim=1) if opts.mode.lower() == 'gs' \
                 else receiver_outputs2
             accuracy2 = torch.mean((preds2 == labels2).float()).item() * 100
+            redundancy2 = compute_redundancy(messages2, opts.vocab_size, opts.max_len)
             top_sim2 = compute_top_sim(sender_inputs2, messages2, opts.perceptual_dimensions)
             pos_dis2 = compute_posdis(sender_inputs2, messages2)
             bos_dis2 = compute_bosdis(sender_inputs2, messages2, opts.vocab_size)
 
             output_dict['results-no-noise']['accuracy'] = accuracy2
             output_dict['results-no-noise']['embedding_alignment'] = alignment
+            output_dict['results-no-noise']['redundancy'] = redundancy2
             output_dict['results-no-noise']['topographic_rho'] = top_sim2
             output_dict['results-no-noise']['pos_dis'] = pos_dis2
             output_dict['results-no-noise']['bos_dis'] = bos_dis2
