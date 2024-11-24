@@ -12,6 +12,7 @@ import pathlib
 import json
 import uuid
 import time
+import numpy as np
 from datetime import timedelta
 from collections import defaultdict
 
@@ -158,6 +159,14 @@ def main(params):
 
     data_loader.upd_cl_options(opts)
 
+    # To be able to calculate rendundancy later on
+    n_possible_messages = 0
+    vocab_size_without_eos = opts.vocab_size - 1
+    for i in range(opts.max_len):
+        n_possible_messages += vocab_size_without_eos**i
+
+    max_entropy = np.log(n_possible_messages) / np.log(2)
+
     if opts.mode.lower() == "gs":
         _sender = SenderGS(n_features=data_loader.n_features, n_hidden=opts.sender_hidden)
         _receiver = ReceiverGS(n_features=data_loader.n_features, linear_units=opts.receiver_hidden)
@@ -280,7 +289,8 @@ def main(params):
         sender_inputs, messages, receiver_inputs, receiver_outputs, labels = \
             dump_sender_receiver(
                 game, test_data, opts.mode == 'gs', apply_noise=opts.erasure_pr != 0,
-                variable_length=True, device=device)
+                variable_length=True, device=device, max_entropy=max_entropy,
+                max_len=opts.max_len)
 
         receiver_outputs = move_to(receiver_outputs, device)
         receiver_outputs = torch.stack(receiver_outputs)
@@ -337,7 +347,8 @@ def main(params):
                 receiver_outputs2, labels2 = dump_sender_receiver(
                     game, test_data, opts.mode.lower() == 'gs',
                     apply_noise=opts.erasure_pr == 0,
-                    variable_length=True, device=device)
+                    variable_length=True, device=device, max_entropy=max_entropy,
+                    max_len=opts.max_len)
 
             receiver_outputs2 = move_to(receiver_outputs2, device)
             receiver_outputs2 = torch.stack(receiver_outputs2)
@@ -403,7 +414,8 @@ def main(params):
             print("|" + "Topographic rho:".rjust(align) + f" {t_rho}")
             print("|" + "PosDis:".rjust(align) + f" {p_dis}")
             print("|" + "BosDis:".rjust(align) + f" {b_dis}")
-
+        
+            
         if opts.dump_results_folder:
             opts.dump_results_folder.mkdir(exist_ok=True)
 
@@ -416,10 +428,12 @@ def main(params):
                 message = ','.join([str(int(x)) for x in message.tolist()])
                 candidate_vex = [','.join([str(int(x)) for x in candidate])
                                  for candidate in receiver_input.tolist()]
+                redundancy = 1 - entropy_per_symbol/max_entropy
                 message_log = {
                     'target_vec': target_vec,
                     'candidate_vex': candidate_vex,
-                    'message': message}
+                    'message': message,
+                    'redundancy': redundancy}
                 if opts.erasure_pr != 0:
                     message_log['message_no_noise'] = None
                 message_log['label'] = label.item()

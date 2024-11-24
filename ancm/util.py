@@ -65,9 +65,7 @@ def compute_mi_input_msgs(sender_inputs, messages):
         'mi_dim': result,
     }
 
-def compute_redundancy(messages, max_len, vocab_size):
-    # still need to figure this out
-    max_entr = 1
+def compute_redundancy(messages, max_entropy, max_len):
 
     freq_table = []
     for i in range(max_len + 1):
@@ -86,9 +84,6 @@ def compute_redundancy(messages, max_len, vocab_size):
                 freq_table[index][string] = 1
 
     redundancy_dict = {}
-
-    # both a dict and a list since the dict will not keep track of duplicates and thus alters the average redundancy measure
-    entropy_dict = {}
     entropies = []
 
     for message in messages:
@@ -98,20 +93,19 @@ def compute_redundancy(messages, max_len, vocab_size):
             string = string + symbol
             index = len(string)
             # rn probability is based on frequency of the partial string and frequency of all other options of the same length
+            # prbably want to change this to have actual conditional probabilities 
             p = freq_table[index][string]/len(freq_table[index].values())
             H += p * math.log(1/p)
         H = H / math.log(2)
         
         entropies.append(H)
-        entropy_dict[string] = H
 
+        redundancies = []
         for entropy in entropies:
-            redundancy = 1 - entropy/max_entr
+            redundancy = 1 - entropy/max_entropy
             redundancies.append(redundancy)
 
         # could also update the dictionary to get more insight into the actual messages and their entropy
-
-    redundancies = []
 
     return redundancies
 
@@ -230,6 +224,8 @@ def dump_sender_receiver(
     gs: bool,
     apply_noise: bool,
     variable_length: bool,
+    max_entropy: float,
+    max_len: int,
     device: Optional[torch.device] = None,
 ):
     """
@@ -238,6 +234,8 @@ def dump_sender_receiver(
     :param dataset: Dataset of inputs to be used when analyzing the communication
     :param gs: whether Gumbel-Softmax relaxation was used during training
     :param variable_length: whether variable-length communication is used
+    :param max_entropy: needed to calculate redundancy of the message
+    :param max_len: max message length
     :param device: device (e.g. 'cuda') to be used
     :return:
     """
@@ -248,6 +246,7 @@ def dump_sender_receiver(
 
     sender_inputs, messages, receiver_inputs, receiver_outputs = [], [], [], []
     labels = []
+    redundancy = []
 
     with torch.no_grad():
         for batch in dataset:
@@ -308,7 +307,11 @@ def dump_sender_receiver(
                         receiver_outputs.append(output[i, message_end, ...])
                     else:
                         receiver_outputs.append(output[i, ...])
+                        
+        redundancy = compute_redundancy(messages, max_entropy, max_len)
 
     game.train(mode=train_state)
 
-    return sender_inputs, messages, receiver_inputs, receiver_outputs, labels
+
+
+    return sender_inputs, messages, receiver_inputs, receiver_outputs, labels, redundancy
