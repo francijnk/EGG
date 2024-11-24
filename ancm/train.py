@@ -58,7 +58,7 @@ def get_params(params):
     parser.add_argument("--validation_samples", type=float, default=1e3, help="Number of tuples in validation data (default: 1e4)")
     parser.add_argument("--test_samples", type=float, default=1e3, help="Number of tuples in test data (default: 1e3)")
     parser.add_argument("--data_seed", type=int, default=42, help="Seed for random creation of train, validation and test tuples (default: 42)")
-    parser.add_argument("--channel", type=str, default=None, help="Communication channel type {erasure, symmetric} (default: None)")
+    parser.add_argument("--channel", type=str, default=None, help="Communication channel type {erasure, symmetric, deletion} (default: None)")
     parser.add_argument("--error_prob", type=float, default=0., help="Probability of error per symbol (default: 0.0)")
     parser.add_argument("--no_shuffle", action="store_false", default=True, help="Do not shuffle train data before every epoch (default: False)")
     parser.add_argument("--sender_hidden", type=int, default=50, help="Size of the hidden layer of Sender (default: 50)")
@@ -123,8 +123,9 @@ def check_args(args):
     
     args.channel = args.channel.lower()
     assert (
-        args.channel is None or args.channel in ("erasure", "symmetric")
-    ), 'The only channels implemented are "erasure" and "symmetric"'
+        args.channel is None
+        or args.channel in ("erasure", "symmetric", "deletion")
+    ), 'The only channels implemented are "erasure", "symmetric" and "deletion"'
 
     # can't set data loading and data dumping at the same time
     if args.load_data_path:
@@ -181,7 +182,6 @@ def main(params):
         game = SenderReceiverRnnGS(
             sender, receiver, 
             loss=loss_gs,
-            max_len=opts.max_len,
             vocab_size=opts.vocab_size,
             channel_type=opts.channel,
             error_prob=opts.error_prob,
@@ -213,7 +213,6 @@ def main(params):
         game = SenderReceiverRnnReinforce(
             sender, receiver,
             loss=loss_reinforce,
-            max_len=opts.max_len,
             vocab_size=opts.vocab_size, 
             channel_type=opts.channel, 
             error_prob=opts.error_prob,
