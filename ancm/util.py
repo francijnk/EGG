@@ -222,7 +222,7 @@ def dump_sender_receiver(
             if gs:
                 log_prob, entropy = None, None
             else:
-                message, log_prob, entropy = message[0]
+                message, log_prob, entropy = message
 
             # Add noise to the message
             if game.channel:
