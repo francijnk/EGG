@@ -122,7 +122,7 @@ def check_args(args):
 
     args.n_features = len(args.perceptual_dimensions)
     
-    args.channel = args.channel.lower()
+    args.channel = args.channel.lower() if args.channel else args.channel
     assert (
         args.channel is None
         or args.channel in ("erasure", "symmetric", "deletion", "truncation")

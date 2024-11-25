@@ -275,13 +275,11 @@ class CustomProgressBarLogger(Callback):
 
 class LexiconSizeCallback(Callback):
     def on_validation_end(self, loss: float, logs: Interaction, epoch: int):
-        print("lexicon size")
         if logs.message is not None:
             lexicon_size = torch.unique(logs.message, dim=0).shape[0]
             logs.aux['lexicon_size'] = int(lexicon_size)
 
     def on_epoch_end(self, loss: float, logs: Interaction, epoch: int):
-        print("lexicon size 2")
         if logs.message is not None:
             if logs.message.dim() == 3:
                 message = logs.message.argmax(-1)
@@ -296,7 +294,6 @@ class TopographicRhoCallback(Callback):
         self.perceptual_dimensions = perceptual_dimensions
 
     def on_validation_end(self, loss: float, logs: Interaction, epoch: int):
-        print("top rho 1")
         if logs is not None:
             logs.aux['topographic_rho'] = compute_top_sim(logs.sender_input, logs.message)
 
@@ -313,7 +310,6 @@ class PosDisCallback(Callback):
             self.compute_on_validation = world_dim < 2 ** WORLD_DIM_THRESHOLD
 
     def on_validation_end(self, loss: float, logs: Interaction, epoch: int):
-        print("posdis")
         if logs is not None:
             if self.compute_on_validation:
                 logs.aux['pos_dis'] = compute_posdis(logs.sender_input, logs.message)
@@ -334,7 +330,6 @@ class BosDisCallback(Callback):
             self.compute_on_validation = world_dim < 2 ** WORLD_DIM_THRESHOLD
 
     def on_validation_end(self, loss: float, logs: Interaction, epoch: int):
-        print("bosdis")
         if logs is not None:
             if self.compute_on_validation:
                 logs.aux['bos_dis'] = compute_bosdis(logs.sender_input, logs.message, self.vocab_size)
@@ -354,7 +349,6 @@ class AlignmentCallback(Callback):
         self.bs = bs
 
     def on_validation_end(self, loss: float, logs: Interaction, epoch: int):
-        print("alignment")
         logs.aux['alignment'] = compute_alignment(self.dataloader, self.sender, self.receiver, self.device, self.bs)
 
     def on_epoch_end(self, loss: float, logs: Interaction, epoch: int):
@@ -367,15 +361,11 @@ class RedundancyCallback(Callback):
         self.max_len = max_len
 
     def on_validation_end(self, loss: float, logs: Interaction, epoch: int):
-        print("redundancy 3")
         logs.aux['redundancy'] = compute_redundancy(logs.message, self.vocab_size, self.max_len)
 
     def on_secondary_validation_end(self, loss: float, logs: Interaction, epoch: int):
-        print("redundancy 2")
         # excludes the erased symbol from vocab size
         logs.aux['redundancy'] = compute_redundancy(logs.message, self.vocab_size-1, self.max_len)
 
     def on_epoch_end(self, loss: float, logs: Interaction, epoch: int):
         pass
-        # print("redundancy 1")
-        # logs.aux['redundancy'] = compute_redundancy(logs.message, self.vocab_size, self.max_len)
