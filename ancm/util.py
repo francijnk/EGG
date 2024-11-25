@@ -9,6 +9,7 @@ from scipy.stats import pearsonr, spearmanr
 from ancm.archs import ErasureChannel
 
 from typing import Optional
+from collections import defaultdict
 
 from egg.core.util import move_to
 from egg.zoo.objects_game.util import mutual_info, entropy
@@ -65,18 +66,28 @@ def compute_mi_input_msgs(sender_inputs, messages):
         'mi_dim': result,
     }
 
-def compute_redundancy(messages, max_entropy, max_len):
+def compute_redundancy_smb_lvl(messages, max_len, vocab_size):
+
+    # To be able to calculate rendundancy
+    n_possible_messages = 0
+    vocab_size_without_eos = vocab_size - 1
+    for i in range(max_len):
+        n_possible_messages += vocab_size_without_eos**i
+
+    max_entropy = math.log(n_possible_messages) / math.log(2)
 
     freq_table = []
     for i in range(max_len + 1): # +1 because of EOS 
         freq_table.append({})
     
-    print(freq_table)
+    # print(freq_table)
+    messages = [msg.argmax(dim=1) if msg.dim() == 2
+                else msg for msg in messages]
     for message in messages:
         # im not sure if it is a string or not/how the messages look rn
         message = ','.join([str(int(x)) for x in message.tolist()])
         string = ''
-        print(f' the message is {message} and the max_len is {max_len}')
+        # print(f' the message is {message} and the max_len is {max_len}')
         index = 0
         for symbol in message:
             if symbol != ',':
@@ -116,6 +127,15 @@ def compute_redundancy(messages, max_entropy, max_len):
 
     return redundancies
 
+def compute_redundancy_msg_lvl(messages,  max_len):
+    messages = [msg.argmax(dim=1) if msg.dim() == 2
+                else msg for msg in messages]
+
+    actual_entropy = entropy(messages)
+    maximal_entropy = math.log(len(messages), 2)
+
+    return 1 - actual_entropy / maximal_entropy
+
 
 def compute_top_sim(sender_inputs, messages, dimensions=None):
     obj_tensor = torch.stack(sender_inputs) \
@@ -130,9 +150,9 @@ def compute_top_sim(sender_inputs, messages, dimensions=None):
     onehot = []
     for i, dim in enumerate(dimensions):
         if dim == 4:
+            # one-hot encode categorical dimensions
             n1 = (np.logical_or(obj_tensor[:,i].int() == 1, obj_tensor[:,i].int() == 2)).int().reshape(obj_tensor.size(0), 1)
             n2 = (np.logical_or(obj_tensor[:,i].int() == 1, obj_tensor[:,i].int() == 3)).int().reshape(obj_tensor.size(0), 1)
-            # one-hot encode categorical dimensions
             onehot.append(n1)
             onehot.append(n2)
         else:
@@ -143,10 +163,10 @@ def compute_top_sim(sender_inputs, messages, dimensions=None):
     messages = [msg.argmax(dim=1).tolist() if msg.dim() == 2
                 else msg.tolist() for msg in messages]
 
-    # Pairwise cosine similarity between object vectors
+    # pairwise cosine similarity between object vectors
     cos_sims = cosine_similarity(onehot)
 
-    # Pairwise Levenshtein distance between messages
+    # pairwise Levenshtein distance between messages
     lev_dists = np.ones((len(messages), len(messages)), dtype='int')
     for i, msg_i in enumerate(messages):
         for j, msg_j in enumerate(messages):
@@ -161,7 +181,7 @@ def compute_top_sim(sender_inputs, messages, dimensions=None):
                 lev_dists[i][j] = dist
                 lev_dists[j][i] = dist
 
-    rho = spearmanr(cos_sims, lev_dists, axis=None).statistic * -1 
+    rho = spearmanr(cos_sims, lev_dists, axis=None).statistic * -1
     return rho
 
 
@@ -185,7 +205,6 @@ def compute_posdis(sender_inputs, messages):
 
             if h_j is None:
                 h_j = entropy(y)
-                
 
         symbol_mi.sort(reverse=True)
 
@@ -213,7 +232,7 @@ def histogram(messages, vocab_size):
 
     if messages.dim() > 2:
        messages = messages.view(messages.size(0), -1)
-    
+
     # Count occurrences of each value in strings and store them in histogram
     histogram.scatter_add_(1, messages.long(), torch.ones_like(messages, dtype=torch.float))
 
@@ -231,8 +250,8 @@ def dump_sender_receiver(
     gs: bool,
     apply_noise: bool,
     variable_length: bool,
-    max_entropy: float,
     max_len: int,
+    vocab_size: int,
     device: Optional[torch.device] = None,
 ):
     """
@@ -265,11 +284,14 @@ def dump_sender_receiver(
 
             # Under GS, the only output is a message; under Reinforce, two additional tensors are returned.
             # We don't need them.
-            if not gs:
-                message = message[0]
+            if gs:
+                log_prob, entropy = None, None
+            else:
+                message, log_prob, entropy = message
 
             # Add noise to the message
-            message = game.channel(message, apply_noise=apply_noise)
+            if game.channel:
+                message = game.channel(message, apply_noise=apply_noise)
 
             output = game.receiver(message, receiver_input)
             if not gs:
@@ -315,10 +337,8 @@ def dump_sender_receiver(
                     else:
                         receiver_outputs.append(output[i, ...])
                         
-        redundancies = compute_redundancy(messages, max_entropy, max_len)
+        redundancies = compute_redundancy_smb_lvl(messages, max_len, vocab_size)
 
     game.train(mode=train_state)
 
-
-
-    return sender_inputs, messages, receiver_inputs, receiver_outputs, labels, redundancies
+    return sender_inputs, messages, receiver_inputs, receiver_outputs, labels, redundancies  # log_prob, entropy

@@ -30,6 +30,9 @@ from egg.core.distributed import get_preemptive_checkpoint_dir
 from egg.core.interaction import Interaction
 from egg.core.util import get_opts, move_to
 
+from ancm.custom_callbacks import RedundancyCallback
+from ancm.archs import ErasureChannel
+
 try:
     from torch.cuda.amp import GradScaler, autocast
 except ImportError:
@@ -303,12 +306,18 @@ class Trainer:
                 if second_val:
                     for callback in self.callbacks:
                         callback.on_validation_begin(epoch + 1)
-                    validation_loss_2, validation_interaction_2 = self.eval(apply_noise=False)
+                    validation_loss, validation_interaction = self.eval(apply_noise=False)
 
                     for callback in self.callbacks:
-                        callback.on_validation_end(
-                            validation_loss_2, validation_interaction_2, epoch + 1
-                        )
+
+                        if isinstance(callback, RedundancyCallback) \
+                                and isinstance(self.game.channel, ErasureChannel):
+                            # to exclude erased symbol
+                            callback.on_secondary_validation_end(
+                                validation_loss, validation_interaction, epoch + 1)
+                        else:
+                            callback.on_validation_end(
+                                validation_loss, validation_interaction, epoch + 1)
 
             if self.should_stop:
                 for callback in self.callbacks:

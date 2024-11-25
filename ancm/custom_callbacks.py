@@ -19,7 +19,14 @@ from rich.progress import (
 from rich.table import Table, Column
 from rich.text import Text
 
-from ancm.util import compute_top_sim, compute_alignment, compute_posdis, compute_bosdis
+from ancm.util import (
+    compute_top_sim,
+    compute_alignment,
+    compute_posdis,
+    compute_bosdis,
+    compute_redundancy_msg_lvl,
+    compute_redundancy_smb_lvl,
+)
 
 from egg.core.callbacks import Callback, CustomProgress
 from egg.core.interaction import Interaction
@@ -60,8 +67,8 @@ class CustomProgressBarLogger(Callback):
         n_epochs: int,
         train_data_len: int = 0,
         test_data_len: int = 0,
-        print_train_metrics = True,
-        step=1,
+        print_train_metrics: bool = True,
+        validation_freq: int = 1,
         dump_results_folder=None,
         filename=None,
     ):
@@ -78,7 +85,7 @@ class CustomProgressBarLogger(Callback):
         self.print_train_metrics = print_train_metrics
         self.dump_results_folder = dump_results_folder
         self.filename = filename
-        self.step = step
+        self.step = validation_freq
         self.history = defaultdict(lambda: defaultdict(dict))
 
         self.progress = CustomProgress(
@@ -128,8 +135,9 @@ class CustomProgressBarLogger(Callback):
         row = Table(expand=True, box=None, show_header=header,
                     show_footer=False, padding=(0,1), pad_edge=True)
         for colname in od.keys():
+            print_name = colname if not colname.startswith('actual_vocab_size') else 'vocab_size'
             row.add_column(
-                colname,
+                print_name,
                 justify='left' if colname in ('phase', 'epoch')  else 'right',
                 ratio=0.5 if colname == 'epoch' else 1)
         if not header:
@@ -268,9 +276,6 @@ class CustomProgressBarLogger(Callback):
 
 
 class LexiconSizeCallback(Callback):
-    def __init__(self):
-        pass
-
     def on_validation_end(self, loss: float, logs: Interaction, epoch: int):
         if logs.message is not None:
             lexicon_size = torch.unique(logs.message, dim=0).shape[0]
@@ -291,11 +296,10 @@ class TopographicRhoCallback(Callback):
         self.perceptual_dimensions = perceptual_dimensions
 
     def on_validation_end(self, loss: float, logs: Interaction, epoch: int):
-        if logs is not None:
-            logs.aux['topographic_rho'] = compute_top_sim(logs.sender_input, logs.message)
+        logs.aux['top_sim'] = compute_top_sim(logs.sender_input, logs.message)
 
     def on_epoch_end(self, loss: float, logs: Interaction, epoch: int):
-        logs.aux['topographic_rho'] = None
+        logs.aux['top_sim'] = None
 
 
 class PosDisCallback(Callback):
@@ -303,16 +307,15 @@ class PosDisCallback(Callback):
         self.perceptual_dimensions = perceptual_dimensions
         if -1 in perceptual_dimensions:  # handling datasets loaded from a file
             self.compute_on_validation = len(self.perceptual_dimensions) < WORLD_DIM_THRESHOLD
-        else:  # handling generated datasets 
+        else:  # handling generated datasets
             world_dim = reduce(lambda x, y: x * y, perceptual_dimensions)
             self.compute_on_validation = world_dim < 2 ** WORLD_DIM_THRESHOLD
 
     def on_validation_end(self, loss: float, logs: Interaction, epoch: int):
-        if logs is not None:
-            if self.compute_on_validation:
-                logs.aux['pos_dis'] = compute_posdis(logs.sender_input, logs.message)
-            else:
-                logs.aux['bos_dis'] = None
+        if self.compute_on_validation:
+            logs.aux['pos_dis'] = compute_posdis(logs.sender_input, logs.message)
+        else:
+            logs.aux['bos_dis'] = None
 
     def on_epoch_end(self, loss: float, logs: Interaction, epoch: int):
         logs.aux['pos_dis'] = None
@@ -324,28 +327,26 @@ class BosDisCallback(Callback):
         self.vocab_size = vocab_size
         if -1 in perceptual_dimensions:  # handling datasets loaded from a file
             self.compute_on_validation = len(self.perceptual_dimensions) < WORLD_DIM_THRESHOLD
-        else:  # handling generated datasets 
+        else:  # handling generated datasets
             world_dim = reduce(lambda x, y: x * y, perceptual_dimensions)
             self.compute_on_validation = world_dim < 2 ** WORLD_DIM_THRESHOLD
 
     def on_validation_end(self, loss: float, logs: Interaction, epoch: int):
-        if logs is not None:
-            if self.compute_on_validation:
-                logs.aux['bos_dis'] = compute_bosdis(logs.sender_input, logs.message, self.vocab_size)
-            else:
-                logs.aux['bos_dis'] = None
+        if self.compute_on_validation:
+            logs.aux['bos_dis'] = compute_bosdis(logs.sender_input, logs.message, self.vocab_size)
+        else:
+            logs.aux['bos_dis'] = None
 
     def on_epoch_end(self, loss: float, logs: Interaction, epoch: int):
         logs.aux['bos_dis'] = None
 
 
 class AlignmentCallback(Callback):
-    def __init__(self, sender, receiver, dataloader, device, step, bs=32):
+    def __init__(self, sender, receiver, dataloader, device, bs=32):
         self.sender = sender
         self.receiver = receiver
         self.dataloader = dataloader
         self.device = device
-        self.step = step
         self.bs = bs
 
     def on_validation_end(self, loss: float, logs: Interaction, epoch: int):
@@ -353,3 +354,47 @@ class AlignmentCallback(Callback):
 
     def on_epoch_end(self, loss: float, logs: Interaction, epoch: int):
         logs.aux['alignment'] = None
+
+
+class RedundancyCallback(Callback):
+    def __init__(self, max_len, vocab_size):
+        self.max_len = max_len
+        self.vocab_size = vocab_size
+
+    def on_validation_end(self, loss: float, logs: Interaction, epoch: int):
+        logs.aux['redund_msg'] = compute_redundancy_msg_lvl(logs.message, self.max_len)
+        redund_per_msg = compute_redundancy_smb_lvl(logs.message, self.max_len, self.vocab_size)
+        logs.aux['redund_smb'] = sum(redund_per_msg) / len(redund_per_msg) 
+
+    def on_secondary_validation_end(self, loss: float, logs: Interaction, epoch: int):
+        logs.aux['redund_msg'] = compute_redundancy_msg_lvl(logs.message, self.max_len)
+        redund_per_msg = compute_redundancy_smb_lvl(logs.message, self.max_len, self.vocab_size-1)
+        logs.aux['redund_smb'] = sum(redund_per_msg) / len(redund_per_msg) 
+
+    def on_epoch_end(self, loss: float, logs: Interaction, epoch: int):
+        logs.aux['redund_msg'] = None
+        logs.aux['redund_smb'] = None
+
+
+class ActualVocabSizeCallback(Callback):
+    def __init(self, vocab_size):
+        self.vocab_size = vocab_size
+
+    def on_validation_end(self, loss: float, logs: Interaction, epoch: int):
+        if logs.message is not None:
+            if logs.message.dim() == 3:
+                message = logs.message.argmax(-1)
+            else:
+                message = logs.message
+            actual_vocab_size = torch.unique(torch.flatten(message), dim=0).shape[0]
+            logs.aux['actual_vocab_size'] = int(actual_vocab_size)
+
+    def on_epoch_end(self, loss: float, logs: Interaction, epoch: int):
+        if logs.message is not None:
+            if logs.message.dim() == 3:
+                message = logs.message.argmax(-1)
+            else:
+                message = logs.message
+            actual_vocab_size = torch.unique(torch.flatten(message), dim=0).shape[0]
+            logs.aux['actual_vocab_size'] = int(actual_vocab_size)
+
