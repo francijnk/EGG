@@ -12,10 +12,12 @@ import pathlib
 import json
 import uuid
 import time
+import math
 from datetime import timedelta
 from collections import defaultdict
 
 import torch.utils.data
+from sklearn.metrics import f1_score
 
 import egg.core as core
 from egg.core.util import move_to
@@ -58,6 +60,7 @@ def get_params(params):
     parser.add_argument("--validation_samples", type=float, default=1e3, help="Number of tuples in validation data (default: 1e4)")
     parser.add_argument("--test_samples", type=float, default=1e3, help="Number of tuples in test data (default: 1e3)")
     parser.add_argument("--data_seed", type=int, default=42, help="Seed for random creation of train, validation and test tuples (default: 42)")
+    parser.add_argument("--seed", type=int, default=42, help="Seed for training reproducibility (default: 42)")
     parser.add_argument("--erasure_pr", type=float, default=0., help="Probability of erasing a symbol (default: 0.0)")
     parser.add_argument("--no_shuffle", action="store_false", default=True, help="Do not shuffle train data before every epoch (default: False)")
     parser.add_argument("--sender_hidden", type=int, default=50, help="Size of the hidden layer of Sender (default: 50)")
@@ -85,6 +88,7 @@ def get_params(params):
 
     args = core.init(parser, params)
 
+    args.random_seed = args.seed
     check_args(args)
     if not args.silent:
         print(args)
@@ -155,6 +159,14 @@ def main(params):
 
     data_loader.upd_cl_options(opts)
 
+    # To be able to calculate rendundancy later on
+    n_possible_messages = 0
+    vocab_size_without_eos = opts.vocab_size - 1
+    for i in range(opts.max_len):
+        n_possible_messages += vocab_size_without_eos**i
+
+    max_entropy = math.log(n_possible_messages) / math.log(2)
+
     if opts.mode.lower() == "gs":
         _sender = SenderGS(n_features=data_loader.n_features, n_hidden=opts.sender_hidden)
         _receiver = ReceiverGS(n_features=data_loader.n_features, linear_units=opts.receiver_hidden)
@@ -177,7 +189,7 @@ def main(params):
             opts.max_len, opts.vocab_size, opts.erasure_pr,
             length_cost=opts.length_cost,
             device=device,
-            seed=opts.random_seed)
+            seed=opts.seed)
         optimizer = torch.optim.Adam([
             {"params": game.sender.parameters(), "lr": opts.sender_lr},
             {"params": game.receiver.parameters(), "lr": opts.receiver_lr},
@@ -206,7 +218,7 @@ def main(params):
             receiver_entropy_coeff=opts.receiver_entropy_coeff,
             length_cost=opts.length_cost,
             device=device,
-            seed=opts.random_seed)
+            seed=opts.seed)
         optimizer = torch.optim.RMSprop([
             {"params": game.sender.parameters(), "lr": opts.sender_lr},
             {"params": game.receiver.parameters(), "lr": opts.receiver_lr},
@@ -274,10 +286,11 @@ def main(params):
         output_dict = defaultdict(dict)
 
         # Standard evaluation – same setting as during training
-        sender_inputs, messages, receiver_inputs, receiver_outputs, labels = \
+        sender_inputs, messages, receiver_inputs, receiver_outputs, labels, redundancies = \
             dump_sender_receiver(
-                game, test_data, opts.mode == 'gs', apply_noise=opts.erasure_pr != 0.,
-                variable_length=True, device=device)
+                game, test_data, opts.mode == 'gs', apply_noise=opts.erasure_pr != 0,
+                variable_length=True, device=device, max_entropy=max_entropy,
+                max_len=opts.max_len)
 
         receiver_outputs = move_to(receiver_outputs, device)
         receiver_outputs = torch.stack(receiver_outputs)
@@ -288,6 +301,7 @@ def main(params):
             else receiver_outputs
 
         accuracy = torch.mean((preds == labels).float()).item() * 100
+        f1 =  f1_score(labels, preds, average='micro').item() * 100
         alignment = compute_alignment(
             test_data, _receiver, _sender, device, opts.batch_size)
         top_sim = compute_top_sim(sender_inputs, messages, opts.perceptual_dimensions)
@@ -300,6 +314,7 @@ def main(params):
         #bos_dis = bos_dis/len(messages)
     
         output_dict['results']['accuracy'] = accuracy
+        output_dict['results']['f1-micro'] = f1
         output_dict['results']['embedding_alignment'] = alignment
         output_dict['results']['topographic_rho'] = top_sim
         output_dict['results']['pos_dis'] = pos_dis
@@ -329,10 +344,11 @@ def main(params):
         # compute results after disabling noise in the test phase as well
         if opts.erasure_pr != 0:
             sender_inputs2, messages2, receiver_inputs2, \
-                receiver_outputs2, labels2 = dump_sender_receiver(
+                receiver_outputs2, labels2, redundancies2 = dump_sender_receiver(
                     game, test_data, opts.mode.lower() == 'gs',
-                    apply_noise=opts.erasure_pr == 0.,
-                    variable_length=True, device=device)
+                    apply_noise=opts.erasure_pr == 0,
+                    variable_length=True, device=device, max_entropy=max_entropy,
+                    max_len=opts.max_len)
 
             receiver_outputs2 = move_to(receiver_outputs2, device)
             receiver_outputs2 = torch.stack(receiver_outputs2)
@@ -342,17 +358,20 @@ def main(params):
             preds2 = receiver_outputs2.argmax(dim=1) if opts.mode.lower() == 'gs' \
                 else receiver_outputs2
             accuracy2 = torch.mean((preds2 == labels2).float()).item() * 100
+            f12 =  f1_score(labels2, preds2, average='micro').item() * 100
             top_sim2 = compute_top_sim(sender_inputs2, messages2, opts.perceptual_dimensions)
             pos_dis2 = compute_posdis(sender_inputs2, messages2)
             bos_dis2 = compute_bosdis(sender_inputs2, messages2, opts.vocab_size)
 
             output_dict['results-no-noise']['accuracy'] = accuracy2
+            output_dict['results-no-noise']['f1-micro'] = f12
             output_dict['results-no-noise']['embedding_alignment'] = alignment
             output_dict['results-no-noise']['topographic_rho'] = top_sim2
             output_dict['results-no-noise']['pos_dis'] = pos_dis2
             output_dict['results-no-noise']['bos_dis'] = bos_dis2
 
             acc_str = f'{accuracy:.2f} / {accuracy2:.2f}'
+            f1_str = f'{f1:.2f} / {f12:.2f}'
             mi_result2 = compute_mi_input_msgs(sender_inputs2, messages2)
             output_dict['results-no-noise'].update(mi_result2)
             entropy_msg += f" / {mi_result2['entropy_msg']:.3f}"
@@ -360,8 +379,8 @@ def main(params):
             mi += f" / {mi_result2['mi']:.3f}"
             mi_dim2 = f"{[round(x, 3) for x in mi_result2['mi_dim']]}"
             t_rho += f" / {top_sim2:.3f}"
-            p_dis += f' / {pos_dis2:.3f}'
-            b_dis += f' / {bos_dis2:.3f}'
+            p_dis = f'{pos_dis2:.3f}'
+            b_dis = f'{bos_dis2:.3f}'
 
 
             if not opts.silent:
@@ -370,6 +389,7 @@ def main(params):
                 print(f"|\033[1m Results (with noise / without noise)\033[0m\n|")
         else:
             acc_str = f'{accuracy:.2f}'
+            f1_str = f'{f1:.2f}'
             if not opts.silent:
                 print(f"|\n|\033[1m Results\033[0m\n|")
 
@@ -384,32 +404,36 @@ def main(params):
                 print("|" + "I(target objs; msg) =".rjust(align), mi_dim, "(with noise)")
                 print("|" + "I(target objs; msg) =".rjust(align), mi_dim2, "(no noise)")
             else:
-                print("|" + "H(target objs) =".rjust(align), entropy_inp_dim)
-                print("|" + "I(target objs; msg) =".rjust(align), mi_dim)
+                print("|" + "H(target objs) =".rjust(align) + entropy_inp_dim, "(for each dimension)")
+                print("|" + "I(target objs; msg) =".rjust(align), mi_dim, "(for each dimension)")
             print('|')
             print("|" + "Accuracy:".rjust(align), acc_str)
+            print("|" + "F1 (micro):".rjust(align), f1_str)
             print("|")
             print("|" + "Embedding alignment:".rjust(align) + f" {alignment:.2f}")
             print("|" + "Topographic rho:".rjust(align) + f" {t_rho}")
             print("|" + "PosDis:".rjust(align) + f" {p_dis}")
             print("|" + "BosDis:".rjust(align) + f" {b_dis}")
-
+        
+            
         if opts.dump_results_folder:
             opts.dump_results_folder.mkdir(exist_ok=True)
 
             messages_dict = {}
 
             msg_dict = defaultdict(int)
-            for sender_input, message, receiver_input, receiver_output, label \
-                    in zip(sender_inputs, messages, receiver_inputs, receiver_outputs, labels):
+            for sender_input, message, receiver_input, receiver_output, label, redundancy \
+                    in zip(sender_inputs, messages, receiver_inputs, receiver_outputs, labels, redundancies):
                 target_vec = ','.join([str(int(x)) for x in sender_input.tolist()])
                 message = ','.join([str(int(x)) for x in message.tolist()])
                 candidate_vex = [','.join([str(int(x)) for x in candidate])
                                  for candidate in receiver_input.tolist()]
+                redundancy = redundancy
                 message_log = {
                     'target_vec': target_vec,
                     'candidate_vex': candidate_vex,
-                    'message': message}
+                    'message': message,
+                    'redundancy': redundancy}
                 if opts.erasure_pr != 0:
                     message_log['message_no_noise'] = None
                 message_log['label'] = label.item()
@@ -420,10 +444,10 @@ def main(params):
 
             sorted_msgs = sorted(msg_dict.items(), key=operator.itemgetter(1), reverse=True)
 
-            if opts.erasure_pr != 0.:
+            if opts.erasure_pr != 0:
                 msg_dict2 = defaultdict(int)
-                for sender_input, message, receiver_input, receiver_output, label \
-                        in zip(sender_inputs2, messages2, receiver_inputs2, receiver_outputs2, labels2):
+                for sender_input, message, receiver_input, receiver_output, label, redundancy2 \
+                        in zip(sender_inputs2, messages2, receiver_inputs2, receiver_outputs2, labels2, redundancies2):
                     target_vec = ','.join([str(int(x)) for x in sender_input.tolist()])
                     candidate_vex = [','.join([str(int(c)) for c in candidate])
                                      for candidate in receiver_input.tolist()]
@@ -432,15 +456,20 @@ def main(params):
                     m_key = f'{target_vec}#' + ';'.join(candidate_vex)
                     messages_dict[m_key]['message_no_noise'] = message
                     msg_dict2[message] += 1
+                    messages_dict[m_key]['redundancy2'] = redundancy2
 
                 sorted_msgs2 = sorted(msg_dict2.items(), key=operator.itemgetter(1), reverse=True)
 
-            lexicon_size = str(len(msg_dict.keys())) if opts.erasure_pr == 0 \
+            lexicon_size = str(len(msg_dict.keys())) if opts.erasure_pr != 0 \
                 else f'{len(msg_dict.keys())} / {len(msg_dict2.keys())}'
             if not opts.silent:
                 print("|")
                 print("|" + "Unique target objects:".rjust(align), len(unique_dict.keys()))
                 print("|" + "Lexicon size:".rjust(align), lexicon_size)
+                print("|")
+                print("|" + "Topographic rho:".rjust(align) + f" {t_rho}")
+                print("|" + "PosDis:".rjust(align) + f" {p_dis}")
+                print("|" + "BosDis:".rjust(align) + f" {b_dis}")
 
             output_dict['results']['unique_targets'] = len(unique_dict.keys())
             output_dict['results']['unique_msg'] = len(msg_dict.keys())

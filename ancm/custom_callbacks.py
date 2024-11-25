@@ -300,6 +300,7 @@ class TopographicRhoCallback(Callback):
 
 class PosDisCallback(Callback):
     def __init__(self, perceptual_dimensions):
+        self.perceptual_dimensions = perceptual_dimensions
         if -1 in perceptual_dimensions:  # handling datasets loaded from a file
             self.compute_on_validation = len(self.perceptual_dimensions) < WORLD_DIM_THRESHOLD
         else:  # handling generated datasets 
@@ -319,6 +320,7 @@ class PosDisCallback(Callback):
 
 class BosDisCallback(Callback):
     def __init__(self, vocab_size, perceptual_dimensions):
+        self.perceptual_dimensions = perceptual_dimensions
         self.vocab_size = vocab_size
         if -1 in perceptual_dimensions:  # handling datasets loaded from a file
             self.compute_on_validation = len(self.perceptual_dimensions) < WORLD_DIM_THRESHOLD

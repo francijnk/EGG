@@ -1,17 +1,17 @@
-from train import main
+from ancm.train import main
 from egg.core import init
 import time
 from datetime import timedelta
 import subprocess
 
 seeds = [i+1 for i in range(1)]
-erasure_probs = [0.15, 0.20, 0.25]#[0.00, 0.05, 0.10, 0.15, 0.20, 0.25]
+erasure_probs = [0.15] #0.20, 0.25]#[0.00, 0.05, 0.10, 0.15, 0.20, 0.25]
 max_lengths = [5]
 
 slr = round(0.005700638877527014, 5)
 rlr = round(0.0043274147176376645, 5)
 length_cost = 0  #round(0.0007661277251354441, 5)
-vocab_size = 31
+vocab_size = 10
 hidden_units = 41
 
 
@@ -42,7 +42,7 @@ for max_len in max_lengths:
                 f'--receiver_hidden {hidden_units}',
                 '--sender_embedding 10',
                 '--receiver_embedding 10',
-                '--n_epochs 5',
+                '--n_epochs 10',
                 '--sender_entropy_coeff 0.01',
                 '--receiver_entropy_coeff 0.001',
                 '--sender_cell lstm',
@@ -55,7 +55,7 @@ for max_len in max_lengths:
                     'distractors.npz"']
 
             process = subprocess.Popen(
-                ['python3', 'train.py']
+                ['python3', '-m' 'ancm.train']
                 + [o for opt in opts[:-1] for o in opt.split()]
                 + ['--load_data_path', 
                    'data/input_data/[4, 4, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2]_4_' \

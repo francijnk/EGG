@@ -65,6 +65,56 @@ def compute_mi_input_msgs(sender_inputs, messages):
         'mi_dim': result,
     }
 
+def compute_redundancy(messages, max_entropy, max_len):
+
+    freq_table = []
+    for i in range(max_len + 1): # +1 because of EOS 
+        freq_table.append({})
+    
+    print(freq_table)
+    for message in messages:
+        # im not sure if it is a string or not/how the messages look rn
+        message = ','.join([str(int(x)) for x in message.tolist()])
+        string = ''
+        print(f' the message is {message} and the max_len is {max_len}')
+        index = 0
+        for symbol in message:
+            if symbol != ',':
+                string = string + symbol
+            else:
+                if string in freq_table[index].keys():
+                    freq_table[index][string] += 1
+                else:
+                    freq_table[index][string] = 1
+                index += 1
+                string = ''
+    entropies = []
+
+    for message in messages:
+        message = ','.join([str(int(x)) for x in message.tolist()])
+        H = 0
+        string = ''
+        index = 0
+        for symbol in message:
+            if symbol != ',':
+                string = string + symbol
+            else:
+                # rn probability is based on frequency of the partial string and frequency of all other options of the same length
+                # prbably want to change this to have actual conditional probabilities 
+                p = freq_table[index][string]/len(freq_table[index].values())
+                H += p * math.log(1/p)
+                index += 1
+                string = ''
+        H = H / math.log(2)
+        
+        entropies.append(H)
+
+        redundancies = []
+        for entropy in entropies:
+            redundancy = 1 - entropy/max_entropy
+            redundancies.append(redundancy)
+
+    return redundancies
 
 
 def compute_top_sim(sender_inputs, messages, dimensions=None):
@@ -181,6 +231,8 @@ def dump_sender_receiver(
     gs: bool,
     apply_noise: bool,
     variable_length: bool,
+    max_entropy: float,
+    max_len: int,
     device: Optional[torch.device] = None,
 ):
     """
@@ -189,6 +241,8 @@ def dump_sender_receiver(
     :param dataset: Dataset of inputs to be used when analyzing the communication
     :param gs: whether Gumbel-Softmax relaxation was used during training
     :param variable_length: whether variable-length communication is used
+    :param max_entropy: needed to calculate redundancy of the message
+    :param max_len: max message length
     :param device: device (e.g. 'cuda') to be used
     :return:
     """
@@ -199,6 +253,7 @@ def dump_sender_receiver(
 
     sender_inputs, messages, receiver_inputs, receiver_outputs = [], [], [], []
     labels = []
+    redundancy = []
 
     with torch.no_grad():
         for batch in dataset:
@@ -259,7 +314,11 @@ def dump_sender_receiver(
                         receiver_outputs.append(output[i, message_end, ...])
                     else:
                         receiver_outputs.append(output[i, ...])
+                        
+        redundancies = compute_redundancy(messages, max_entropy, max_len)
 
     game.train(mode=train_state)
 
-    return sender_inputs, messages, receiver_inputs, receiver_outputs, labels
+
+
+    return sender_inputs, messages, receiver_inputs, receiver_outputs, labels, redundancies
