@@ -306,13 +306,8 @@ class Trainer:
                     validation_loss, validation_interaction = self.eval(apply_noise=False)
 
                     for callback in self.callbacks:
-                        if isinstance(callback, RedundancyCallback):
-                            # excluding the erased symbol from the vocabulary size
-                            callback.on_secondary_validation_end(
-                                validation_loss, validation_interaction, epoch + 1)
-                        else:
-                            callback.on_validation_end(
-                                validation_loss, validation_interaction, epoch + 1)
+                        callback.on_validation_end(
+                            validation_loss, validation_interaction, epoch + 1)
 
             if self.should_stop:
                 for callback in self.callbacks:

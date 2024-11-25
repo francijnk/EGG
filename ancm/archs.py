@@ -110,7 +110,7 @@ class SenderReceiverRnnGS(nn.Module):
         }
 
         if channel_type in channels.keys():
-            self.channel = channels[channel_type](error_prob, vocab_size, device, False, seed)
+            self.channel = channels[channel_type](error_prob, vocab_size, device, seed)
         else:
             self.channel = None
 
@@ -127,7 +127,6 @@ class SenderReceiverRnnGS(nn.Module):
 
     def forward(self, sender_input, labels, receiver_input=None, aux_input=None, apply_noise=True):
         message = self.sender(sender_input, aux_input)
-
         if self.channel:
             message = self.channel(message, message_length=None, apply_noise=apply_noise)
         receiver_output = self.receiver(message, receiver_input, aux_input)
@@ -390,11 +389,11 @@ class CommunicationRnnReinforce(nn.Module):
         self.length_cost = length_cost
 
         if channel_type == 'erasure':
-            self.channel = ErasureChannel(error_prob, vocab_size, device, False, seed)
+            self.channel = ErasureChannel(error_prob, vocab_size, device, seed)
         elif channel_type == 'symmetric':
-            self.channel = SymmetricChannel(error_prob, vocab_size, device, False, seed)
+            self.channel = SymmetricChannel(error_prob, vocab_size, device, seed)
         elif channel_type == 'deletion':
-            self.channel = DeletionChannel(error_prob, vocab_size, device, False, seed)
+            self.channel = DeletionChannel(error_prob, vocab_size, device, seed)
         else:
             self.channel = None
 
@@ -495,11 +494,10 @@ class CommunicationRnnReinforce(nn.Module):
 
 # Noisy channel classes
 class Channel(nn.Module):
-    def __init__(self, error_prob, vocab_size, device, is_relative_detach=True, seed=42):
+    def __init__(self, error_prob, vocab_size, device, seed=42):
         super().__init__()
         self.p = error_prob
         self.vocab_size = vocab_size
-        self.is_relative_detach = is_relative_detach
         self.generator = torch.Generator()
         self.generator.manual_seed(seed)
         self.device = device
@@ -512,18 +510,17 @@ class ErasureChannel(Channel):
 
     def forward(self, message, message_length=None, apply_noise=False):
         # GS: append 0 vector representing Pr[erased_symbol] for all messages
-        if message.dim() == 3:
+        if message.dim() == 3 and self.p != 0:
             message = torch.cat([message, torch.zeros((message.size(0), message.size(1), 1)).to(self.device)], dim=2)
 
         if self.p != 0. and apply_noise:
             msg = message if message.dim() == 2 else message.argmax(dim=-1)
 
+
             # sample symbol indices to be erased
             target_ids = (torch.rand(*msg.size(), generator=self.generator) < self.p).to(self.device)
 
             if message.dim() == 2: # REINFORCE
-                erase_idx = (torch.rand(*message.size(), generator=self.generator) < self.p).to(self.device)
-
                 # if message length is not provided, compute it
                 if message_length is None:
                     message_length = find_lengths(message)
@@ -543,8 +540,8 @@ class ErasureChannel(Channel):
                     message)
 
             else:  # GS
-                # select target incides before the 1st EOS
-                not_eosed = (message[:,:,0] != 1.)
+                # make sure EOS is not erased
+                not_eosed = (msg != 0)
                 combined = torch.logical_and(target_ids, not_eosed)
                 combined = combined[:,:,None]
                 combined = combined.expand(*message.size())
@@ -566,7 +563,6 @@ class DeletionChannel(Channel):
     """
 
     def forward(self, message, message_length=None, apply_noise=False):
-        print(message.requires_grad)
         if self.p != 0. and apply_noise: 
             msg = message if message.dim() == 2 else message.argmax(dim=-1)
             msg = msg.detach()
@@ -591,7 +587,7 @@ class DeletionChannel(Channel):
             if message.dim() == 2:  # REINFORCE 
                 message = torch.stack([
                     torch.cat(
-                        [message[i][keep_ids[i]], torch.zeros(num_deleted[i])])
+                        [message[i][keep_ids[i]], torch.zeros(num_deleted[i], dtype=torch.int)])
                     for i in range(message.size(0))
                 ])
 
@@ -675,7 +671,7 @@ class SymmetricChannel(Channel):
 
             else:  # GS
                 # randomply sample symbol indices to erase before EOS
-                not_eosed = (message[:,:,0] != 1.)
+                not_eosed = (msg != 0)
 
                 combined = torch.logical_and(target_ids, not_eosed)
                 combined = combined[:,:,None]
@@ -734,7 +730,6 @@ class TruncationChannel(Channel):
                 for i in range(message_length.size(0))
             ])
             print(num_truncated)
-
             # truncated = torch.stack([
             #    message[]
             #])

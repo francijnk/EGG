@@ -67,25 +67,12 @@ def compute_mi_input_msgs(sender_inputs, messages):
     }
 
 
-def compute_redundancy(messages, vocab_size, max_len):
+def compute_redundancy(messages,  max_len):
     messages = [msg.argmax(dim=1) if msg.dim() == 2
                 else msg for msg in messages]
 
     actual_entropy = entropy(messages)
-    print(messages)
-    print(messages[0], type(messages[0]))
-
-    # compute the number of all possible sequences
-    counts = defaultdict(dict)
-    for i in range(max_len-1):
-        length = i+1
-        eos = counts[i-1]['non_eos'] if length != 1 else 1
-        counts[i]['eos'] = eos
-        counts[i]['non_eos'] = eos * (vocab_size - 1)
-    counts[max_len]['eos'] = counts[max_len - 2]['non_eos']
-    num_sequences = sum(item['eos'] for item in counts.values())
-
-    maximal_entropy = math.log(num_sequences, 2)
+    maximal_entropy = math.log(len(messages), 2)
 
     return 1 - actual_entropy / maximal_entropy
 
@@ -232,11 +219,14 @@ def dump_sender_receiver(
 
             # Under GS, the only output is a message; under Reinforce, two additional tensors are returned.
             # We don't need them.
-            if not gs:
-                message = message[0]
+            if gs:
+                log_prob, entropy = None, None
+            else:
+                message, log_prob, entropy = message[0]
 
             # Add noise to the message
-            message = game.channel(message, apply_noise=apply_noise)
+            if game.channel:
+                message = game.channel(message, apply_noise=apply_noise)
 
             output = game.receiver(message, receiver_input)
             if not gs:
@@ -284,4 +274,4 @@ def dump_sender_receiver(
 
     game.train(mode=train_state)
 
-    return sender_inputs, messages, receiver_inputs, receiver_outputs, labels
+    return sender_inputs, messages, receiver_inputs, receiver_outputs, labels  # log_prob, entropy

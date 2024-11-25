@@ -25,6 +25,7 @@ from ancm.trainers import Trainer
 from ancm.util import (
     dump_sender_receiver,
     compute_alignment,
+    compute_redundancy,
     compute_mi_input_msgs,
     compute_top_sim,
     compute_posdis,
@@ -40,6 +41,7 @@ from ancm.archs import (
 from ancm.custom_callbacks import (
     CustomProgressBarLogger,
     LexiconSizeCallback,
+    ActualVocabSizeCallback,
     AlignmentCallback,
     RedundancyCallback,
     TopographicRhoCallback,
@@ -163,7 +165,10 @@ def main(params):
 
     data_loader.upd_cl_options(opts)
 
-    receiver_vocab_size = opts.vocab_size if opts.channel != 'erasure' else opts.vocab_size + 1
+    if opts.channel == 'erasure' and opts.error_prob != 0:
+        receiver_vocab_size = opts.vocab_size + 1
+    else:
+        receiver_vocab_size = opts.vocab_size
 
     if opts.mode.lower() == "gs":
         _sender = SenderGS(n_features=data_loader.n_features, n_hidden=opts.sender_hidden)
@@ -246,8 +251,9 @@ def main(params):
     else:
         callbacks = [
             LexiconSizeCallback(),
+            ActualVocabSizeCallback(),
             AlignmentCallback(_sender, _receiver, test_data, device, opts.batch_size),
-            RedundancyCallback(opts.vocab_size, opts.max_len)
+            RedundancyCallback(opts.max_len)
        ]
 
     if not opts.no_compositionality_metrics:
@@ -268,7 +274,8 @@ def main(params):
             test_data_len=len(validation_data),
             validation_freq=opts.validation_freq,
             dump_results_folder=opts.dump_results_folder,
-            filename=opts.filename))
+            filename=opts.filename,
+        ))
 
     trainer = Trainer(
         game=game,
@@ -296,8 +303,11 @@ def main(params):
         # Standard evaluation – same setting as during training
         sender_inputs, messages, receiver_inputs, receiver_outputs, labels = \
             dump_sender_receiver(
-                game, test_data, opts.mode == 'gs', apply_noise=opts.erasure_pr != 0.,
+                game, test_data, opts.mode == 'gs', apply_noise=opts.error_prob != 0.,
                 variable_length=True, device=device)
+
+        all_symbols = set(int(s) for m in messages for s in m.tolist())
+        actual_vocab_size = len(all_symbols) 
 
         receiver_outputs = move_to(receiver_outputs, device)
         receiver_outputs = torch.stack(receiver_outputs)
@@ -310,7 +320,7 @@ def main(params):
         accuracy = torch.mean((preds == labels).float()).item() * 100
         alignment = compute_alignment(
             test_data, _receiver, _sender, device, opts.batch_size)
-        redundancy = compute_redundancy(messages, receiver_vocab_size, opts.max_len)
+        redundancy = compute_redundancy(messages, opts.max_len)
         top_sim = compute_top_sim(sender_inputs, messages, opts.perceptual_dimensions)
         pos_dis = compute_posdis(sender_inputs, messages)
         bos_dis = compute_bosdis(sender_inputs, messages, opts.vocab_size)
@@ -323,6 +333,7 @@ def main(params):
         output_dict['results']['topographic_rho'] = top_sim
         output_dict['results']['pos_dis'] = pos_dis
         output_dict['results']['bos_dis'] = bos_dis
+        output_dict['results']['actual_vocab_size'] = actual_vocab_size
 
         unique_dict = {}
         for elem in sender_inputs:
@@ -361,10 +372,13 @@ def main(params):
             preds2 = receiver_outputs2.argmax(dim=1) if opts.mode.lower() == 'gs' \
                 else receiver_outputs2
             accuracy2 = torch.mean((preds2 == labels2).float()).item() * 100
-            redundancy2 = compute_redundancy(messages2, opts.vocab_size, opts.max_len)
+            redundancy2 = compute_redundancy(messages2, opts.max_len)
             top_sim2 = compute_top_sim(sender_inputs2, messages2, opts.perceptual_dimensions)
             pos_dis2 = compute_posdis(sender_inputs2, messages2)
             bos_dis2 = compute_bosdis(sender_inputs2, messages2, opts.vocab_size)
+
+            all_symbols = set(int(s) for m in messages for s in m.tolist())
+            actual_vocab_size2 = len(all_symbols) 
 
             output_dict['results-no-noise']['accuracy'] = accuracy2
             output_dict['results-no-noise']['embedding_alignment'] = alignment
@@ -372,6 +386,7 @@ def main(params):
             output_dict['results-no-noise']['topographic_rho'] = top_sim2
             output_dict['results-no-noise']['pos_dis'] = pos_dis2
             output_dict['results-no-noise']['bos_dis'] = bos_dis2
+            output_dict['results-no-noise']['actual_vocab_size'] = actual_vocab_size2
 
             acc_str = f'{accuracy:.2f} / {accuracy2:.2f}'
             mi_result2 = compute_mi_input_msgs(sender_inputs2, messages2)
@@ -458,10 +473,18 @@ def main(params):
 
             lexicon_size = str(len(msg_dict.keys())) if opts.error_prob == 0 \
                 else f'{len(msg_dict.keys())} / {len(msg_dict2.keys())}'
-            if not opts.silent:
+            if not opts.silent and opts.error_prob == 0:
                 print("|")
                 print("|" + "Unique target objects:".rjust(align), len(unique_dict.keys()))
                 print("|" + "Lexicon size:".rjust(align), lexicon_size)
+                print("|" + "Vocab size:".rjust(align), f"{actual_vocab_size}/{opts.vocab_size}")
+            elif not opts.silent and opts.error_prob == 0:
+                print("|")
+                print("|" + "Unique target objects:".rjust(align), len(unique_dict.keys()))
+                print("|" + "Lexicon size:".rjust(align), lexicon_size, "(no noise)")
+                print("|" + "Lexicon size:".rjust(align), lexicon_size2, "(with noise)")
+                print("|" + "Vocab size:".rjust(align), f"{actual_vocab_size}/{opts.vocab_size} (no noise)")
+                print("|" + "Vocab size:".rjust(align), f"{actual_vocab_size2}/{opts.vocab_size} (with noise)")
 
             output_dict['results']['unique_targets'] = len(unique_dict.keys())
             output_dict['results']['unique_msg'] = len(msg_dict.keys())
@@ -472,7 +495,8 @@ def main(params):
             output_dict['message_counts'] = sorted_msgs
             if opts.error_prob != 0:
                 output_dict['message_counts_no_noise'] = sorted_msgs2
-                output_dict['erased_symbol'] = opts.vocab_size
+                if opts.channel == 'erasure':
+                    output_dict['erased_symbol'] = opts.vocab_size
             opts_dict = {k: v for k, v in vars(opts).items() if is_jsonable(v)}
             output_dict['opts'] = opts_dict
             output_dict['training_time'] = {
