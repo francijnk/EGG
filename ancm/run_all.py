@@ -108,13 +108,20 @@ random.shuffle(processes)
 
 print('Running', len(processes), 'jobs...')
 
+num_batches = math.ceil(len(processes/args.batch_size))
 if __name__ == '__main__':
     for i in range(0, len(processes), args.batch_size):
-        batch = processes[i:i+args.batch_size]
+        batch = processes[i*batch_size:(i+1)*args.batch_size]
         for process in batch:
             process.start()
         for process in batch:
             process.join()
+        elapsed = timedelta(seconds=time.monotonic()-t_start)
+        elapsed_per_batch = elapsed / (i+1)
+        minutes, seconds = divmod(elapsed_per_run, 60)
+        elapsed = str(elapsed).split('.', maxsplit=1)[0]
+        elapsed_per_batch = f'{int(minutes):02}:{int(seconds):02}'
+        print(f'batch {i+1}/{num_batches} completed! Elapsed time: {elapsed} ({elapsed_per_batch} per batch)')
 
     training_time = timedelta(seconds=time.monotonic()-t_start)
     sec_per_run = training_time.seconds / num_runs
