@@ -9,7 +9,6 @@ cycler==0.12.1
 dataclasses==0.6
 docker-pycreds==0.4.0
 editdistance==0.8.1
--e git+ssh://git@github.com/francijnk/EGG.git@3c7f9271c50c0a5daace85501cdcb0260a0bdd79#egg=EGG
 exceptiongroup==1.2.2
 filelock==3.16.1
 fonttools==4.54.1

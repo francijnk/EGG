@@ -1,22 +1,38 @@
-from ancm.train import main
-from egg.core import init
-import time
-from datetime import timedelta
+import os
+import random
 import subprocess
 import shutil
+import argparse
+from uuid import uuid4
 from distutils.dir_util import copy_tree
+from multiprocessing import Process, get_context
+
+import time
+from datetime import timedelta
+
+from ancm.train import main
+from egg.core import init
+
 
 random_seeds = [i+1 for i in range(5)]
 data_seeds = [42]
 error_probs = [0.00, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30]
-max_lengths = [2, 3, 5, 10]
 channels = 'erasure deletion symmetric'.split()
+max_lengths = [2, 3, 5, 10]
 
 slr = 5e-3
 rlr = 1e-3
 length_cost = 1e-3
 vocab_size = 10
 hidden_units = 50
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--output_dir', type=str, required=True)
+parser.add_argument('--max_len', type=int, default=None)
+parser.add_argument('--batch_size', type=int, default=4)
+args = parser.parse_args()
+
+max_lengths = [args.max_len] if args.max_len else max_lengths
 
 def get_opts(error_prob, channel, max_len, random_seed, data_seed, filename, results_dir):
     opts = [
@@ -48,73 +64,72 @@ def get_opts(error_prob, channel, max_len, random_seed, data_seed, filename, res
         opts.append(f'--channel {channel}')
     return opts
 
-num_runs = (len(max_lengths) * len(random_seeds) * len(data_seeds)
-    + (len(channels) * len(max_lengths) * len(error_probs[1:])
-        * len(random_seeds) * len(data_seeds)))
-run_count = 1
+def task(channel, error_prob, max_len, rs, ds):
+    if channel:
+        results_dir = f'channel_{channel}/error_prob_{error_prob}'
+    else:
+        results_dir = 'baseline'
+    output_dir = os.path.join(args.output_dir, results_dir)
+    filename = f'{max_len}_{ds}_{rs}'
+    opts = get_opts(0.0, channel, max_len, rs, ds, filename, output_dir)
+    process = subprocess.Popen(
+        ['python3', '-m' 'ancm.train']
+        + [o for opt in opts for o in opt.split()])
+    exitcode = process.wait()
+
+num_runs = (
+    len(random_seeds) * len(data_seeds)
+    + (len(channels) * len(error_probs[1:])
+       * len(random_seeds) * len(data_seeds)))
 t_start = time.monotonic()
 
-print(">>>", "baseline".center(10), "<<<")
+processes = []
 for max_len in max_lengths:
     for rs in random_seeds:
         for ds in data_seeds:
-            print("="*3, f"{run_count} / {num_runs}".center(10), "="*3)
-            results_dir = f'runs/baseline/'
-            filename = f'{max_len}_{ds}_{rs}'
-            opts = get_opts(0.0, None, max_len, rs, ds, filename, results_dir)
-            process = subprocess.Popen(
-                ['python3', 'ancm/train.py']
-                + [o for opt in opts for o in opt.split()])
-            exitcode = process.wait()
+            get_context('fork')
+            processes.append(
+                Process(
+                    target=task,
+                    args=(None, 0.0, max_len, rs, ds)))
 
-            elapsed = timedelta(seconds=time.monotonic()-t_start)
-            elapsed_per_run = elapsed.seconds / run_count
-            minutes, seconds = divmod(elapsed_per_run, 60)
-            elapsed = str(elapsed).split('.', maxsplit=1)[0]
-            elapsed_per_run = f'{int(minutes):02}:{int(seconds):02}'
-            print(f"elapsed time: {elapsed} ({elapsed_per_run} per run)")
-            print('')
-            run_count += 1
- 
-for channel in channels:
-    print(">>>", f"{channel}".center(10), "<<<")
-    for max_len in max_lengths:
+for max_len in max_lengths:
+    for channel in channels:
         for pr in error_probs[1:]:
             for rs in random_seeds:
                 for ds in data_seeds:
-                    print("="*3, f"{run_count} / {num_runs}".center(10), "="*3)
-                    print(f"error prob: {pr}")
-                    print(f"seed: {rs} / {ds}")
-                    print(f"max_len: {max_len}")
+                    get_context('fork')
+                    processes.append(
+                        Process(
+                            target=task,
+                            args=(channel, pr, max_len, rs, ds)))
 
-                    results_dir = f'runs/channel_{channel}/error_prob_{pr}/'
-                    filename = f'{max_len}_{ds}_{rs}'
-                    opts = get_opts(pr, channel, max_len, rs, ds, filename, results_dir)
+random.shuffle(processes)
 
-                    process = subprocess.Popen(
-                        ['python3', 'ancm/train.py']
-                        + [o for opt in opts for o in opt.split()])
-                    exitcode = process.wait()
+print('Running', len(processes), 'jobs...')
 
-                    elapsed = timedelta(seconds=time.monotonic()-t_start)
-                    elapsed_per_run = elapsed.seconds / run_count
-                    minutes, seconds = divmod(elapsed_per_run, 60)
-                    elapsed = str(elapsed).split('.', maxsplit=1)[0]
-                    elapsed_per_run = f'{int(minutes):02}:{int(seconds):02}'
-                    print(f"elapsed time: {elapsed} ({elapsed_per_run} per run)")
-                    print('')
-                    run_count += 1
- 
-training_time = timedelta(seconds=time.monotonic()-t_start)
-sec_per_run = training_time.seconds / run_count 
-minutes, seconds = divmod(sec_per_run, 60)
+if __name__ == '__main__':
+    for i in range(0, len(processes), args.batch_size):
+        batch = processes[i:i+args.batch_size]
+        for process in batch:
+            process.start()
+        for process in batch:
+            process.join()
 
-time_total = str(training_time).split('.', maxsplit=1)[0]
-time_per_run = f'{int(minutes):02}:{int(seconds):02}'
+    training_time = timedelta(seconds=time.monotonic()-t_start)
+    sec_per_run = training_time.seconds / num_runs
+    minutes, seconds = divmod(sec_per_run, 60)
 
-print("Total training time:", time_total)
-print("       Time per run:", time_per_run)
+    time_total = str(training_time).split('.', maxsplit=1)[0]
+    time_per_run = f'{int(minutes):02}:{int(seconds):02}'
 
-for channel in channels:
-    copy_tree("runs/baseline", f"runs/channel_{channel}/error_pr_0.0")
-shutil.rmtree("runs/baseline")
+    with open(os.path.join(args.output_dir, f'training_time_{uuid4()}.txt'), 'w') as fp:
+        fp.write('max lengths:', ', '.join(max_lengths) + '\n')
+        fp.write(time_total + '\n')
+        fp.write(time_per_run)
+
+    baseline_dir = os.path.join(args.output_dir, 'baseline')
+    for channel in channels:
+        channel_baseline_dir = os.path.join(args.output_dir, f'channel_{channel}', 'error_pr_0.0')
+        copy_tree(baseline_dir, channel_baseline_dir)
+    shutil.rmtree(baseline_dir)
