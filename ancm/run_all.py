@@ -109,7 +109,7 @@ random.shuffle(processes)
 
 print('Running', len(processes), 'jobs...')
 
-num_batches = math.ceil(len(processes/args.batch_size))
+num_batches = math.ceil(len(processes)/args.batch_size)
 if __name__ == '__main__':
     for i in range(0, len(processes), args.batch_size):
         batch = processes[i*batch_size:(i+1)*args.batch_size]
