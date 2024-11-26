@@ -4,6 +4,7 @@ import random
 import subprocess
 import shutil
 import argparse
+from collections import defaultdict
 from uuid import uuid4
 from distutils.dir_util import copy_tree
 from multiprocessing import Process, get_context
@@ -34,6 +35,7 @@ parser.add_argument('--batch_size', type=int, default=4)
 args = parser.parse_args()
 
 max_lengths = [args.max_len] if args.max_len else max_lengths
+
 
 def get_opts(error_prob, channel, max_len, random_seed, data_seed, filename, results_dir):
     opts = [
@@ -78,18 +80,19 @@ def task(channel, error_prob, max_len, rs, ds):
         + [o for opt in opts for o in opt.split()])
     exitcode = process.wait()
 
+
 num_runs = (
     len(random_seeds) * len(data_seeds)
     + (len(channels) * len(error_probs[1:])
        * len(random_seeds) * len(data_seeds)))
 t_start = time.monotonic()
 
-processes = []
+processes = defaultdict(list)
 for max_len in max_lengths:
     for rs in random_seeds:
         for ds in data_seeds:
             get_context('fork')
-            processes.append(
+            processes[max_len].append(
                 Process(
                     target=task,
                     args=(None, 0.0, max_len, rs, ds)))
@@ -100,29 +103,41 @@ for max_len in max_lengths:
             for rs in random_seeds:
                 for ds in data_seeds:
                     get_context('fork')
-                    processes.append(
+                    processes[max_len].append(
                         Process(
                             target=task,
                             args=(channel, pr, max_len, rs, ds)))
 
-random.shuffle(processes)
+for max_len in processes:
+    random.shuffle(processes[max_len])
 
-print('Running', len(processes), 'jobs...')
+all_processes = [p for max_len in processes for p in processes[max_len]]
+num_processes = len(all_processes)
+print('Running', num_processes, 'jobs')
 
-num_batches = math.ceil(len(processes)/args.batch_size)
+num_baches = 0
+for max_len in processes:
+    n_batches = math.ceil(len(processes[max_len]) / args.batch_size)
+    num_baches += n_batches
+batch_count = 1
+
 if __name__ == '__main__':
-    for i in range(0, len(processes), args.batch_size):
-        batch = processes[i:i+args.batch_size]
-        for process in batch:
-            process.start()
-        for process in batch:
-            process.join()
-        elapsed = timedelta(seconds=time.monotonic()-t_start)
-        elapsed_per_batch = elapsed / (i+1)
-        minutes, seconds = divmod(elapsed_per_run, 60)
-        elapsed = str(elapsed).split('.', maxsplit=1)[0]
-        elapsed_per_batch = f'{int(minutes):02}:{int(seconds):02}'
-        print(f'batch {i+1}/{num_batches} completed! Elapsed time: {elapsed} ({elapsed_per_batch} per batch)')
+    for max_len in processes:
+        print('=== max len:', max_len, '===')
+        t_start_max_len = time.monotonic()
+        for j, batch_start in enumerate(range(0, len(processes[max_len]), args.batch_size)):
+            batch = processes[max_len][batch_start:batch_start+args.batch_size]
+            for process in batch:
+                process.start()
+            for process in batch:
+                process.join()
+            elapsed = timedelta(seconds=time.monotonic()-t_start)
+            elapsed_max_len = timedelta(seconds=time.monotonic()-t_start_max_len)
+            elapsed_per_batch = elapsed_max_len / (i+1)
+            minutes, seconds = divmod(elapsed_per_batch, 60)
+            elapsed = str(elapsed).split('.', maxsplit=1)[0]
+            elapsed_per_batch = f'{int(minutes):02}:{int(seconds):02}'
+            print(f'batch {batch_count}/{num_batches} completed! Elapsed time: {elapsed} ({elapsed_per_batch} per batch)')
 
     training_time = timedelta(seconds=time.monotonic()-t_start)
     sec_per_run = training_time.seconds / num_runs
