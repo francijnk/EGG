@@ -27,6 +27,7 @@ rlr = 1e-3
 length_cost = 1e-3
 vocab_size = 10
 hidden_units = 50
+n_epochs = 10
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--output_dir', type=str, required=True)
@@ -51,10 +52,10 @@ def get_opts(error_prob, channel, max_len, random_seed, data_seed, filename, res
         f'--data_seed {data_seed}',
         f'--filename {filename}',
         f'--dump_results_folder {results_dir}',
+        f'--n_epochs {n_epochs}',
         '--perceptual_dimensions [2]*8',
         '--sender_embedding 10',
         '--receiver_embedding 10',
-        '--n_epochs 20',
         '--sender_entropy_coeff 0.01',
         '--receiver_entropy_coeff 0.001',
         '--sender_cell lstm',
