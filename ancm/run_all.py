@@ -4,6 +4,7 @@ import random
 import subprocess
 import shutil
 import argparse
+from tqdm import tqdm
 from collections import defaultdict
 from uuid import uuid4
 from distutils.dir_util import copy_tree
@@ -20,7 +21,7 @@ random_seeds = [i+1 for i in range(5)]
 data_seeds = [42]
 error_probs = [0.00, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30]
 channels = 'erasure deletion symmetric'.split()
-max_lengths = [2, 3, 5, 10]
+max_lengths = [2,3]
 
 slr = 5e-3
 rlr = 1e-3
@@ -54,6 +55,7 @@ def get_opts(error_prob, channel, max_len, random_seed, data_seed, filename, res
         f'--dump_results_folder {results_dir}',
         f'--n_epochs {n_epochs}',
         '--perceptual_dimensions [2]*8',
+        #'--n_distractors 4',
         '--sender_embedding 10',
         '--receiver_embedding 10',
         '--sender_entropy_coeff 0.01',
@@ -70,12 +72,12 @@ def get_opts(error_prob, channel, max_len, random_seed, data_seed, filename, res
 
 def task(channel, error_prob, max_len, rs, ds):
     if channel:
-        results_dir = f'channel_{channel}/error_prob_{error_prob}'
+        results_dir = f'channel_{channel}/error_prob_{error_prob:.2f}'
     else:
         results_dir = 'baseline'
     output_dir = os.path.join(args.output_dir, results_dir)
     os.makedirs(output_dir, exist_ok=True)
-    filename = f'{max_len}_{ds}_{rs}'
+    filename = f'{max_len}_{rs}'
     opts = get_opts(0.0, channel, max_len, rs, ds, filename, output_dir)
     process = subprocess.Popen(
         ['python3', '-m' 'ancm.train']
@@ -84,63 +86,68 @@ def task(channel, error_prob, max_len, rs, ds):
 
 if __name__ == '__main__':
 
-    num_runs = (
+    num_runs = len(max_lengths) * (
         len(random_seeds) * len(data_seeds)
         + (len(channels) * len(error_probs[1:])
            * len(random_seeds) * len(data_seeds)))
     t_start = time.monotonic()
 
     processes = defaultdict(list)
+    count = 1
     for max_len in max_lengths:
         for rs in random_seeds:
             for ds in data_seeds:
-                get_context('fork')
-                processes[max_len].append(
-                    Process(
-                        target=task,
-                        args=(None, 0.0, max_len, rs, ds)))
+                print('---', f'{count}/{num_runs}', '---')
+                count += 1
+                task(None, 0.0, max_len, rs, ds)
+                # ctx = get_context('spawn')
+                # processes[max_len].append(
+                #     ctx.Process(
+                #         target=task,
+                #         args=(None, 0.0, max_len, rs, ds)))
 
     for max_len in max_lengths:
         for channel in channels:
             for pr in error_probs[1:]:
                 for rs in random_seeds:
                     for ds in data_seeds:
-                        get_context('fork')
-                        processes[max_len].append(
-                            Process(
-                                target=task,
-                                args=(channel, pr, max_len, rs, ds)))
+                        task(channel, pr, max_len, rs, ds)
+                        # ctx = get_context('spawn')
+                        # processes[max_len].append(
+                        #    ctx.Process(
+                        #        target=task,
+                        #        args=(channel, pr, max_len, rs, ds)))
 
-    for max_len in processes:
-        random.shuffle(processes[max_len])
+    #for max_len in processes:
+    #    random.shuffle(processes[max_len])
 
     all_processes = [p for max_len in processes for p in processes[max_len]]
     num_processes = len(all_processes)
     print('Running', num_processes, 'jobs')
 
-    num_batches = 0
-    for max_len in processes:
-        n_batches = math.ceil(len(processes[max_len]) / args.batch_size)
-        num_batches += n_batches
-    batch_count = 1
+    #num_batches = 0
+    #for max_len in processes:
+    #    n_batches = math.ceil(len(processes[max_len]) / args.batch_size)
+    #    num_batches += n_batches
+    #batch_count = 1
 
-    for max_len in processes:
-        print('=== max len:', max_len, '===')
-        t_start_max_len = time.monotonic()
-        for j, batch_start in enumerate(range(0, len(processes[max_len]), args.batch_size)):
-            batch = processes[max_len][batch_start:batch_start+args.batch_size]
-            for process in batch:
-                process.start()
-            for process in batch:
-                process.join()
-            elapsed = timedelta(seconds=time.monotonic()-t_start)
-            elapsed_max_len = timedelta(seconds=time.monotonic()-t_start_max_len)
-            elapsed_per_batch = elapsed_max_len.seconds / (j+1)
-            minutes, seconds = divmod(elapsed_per_batch, 60)
-            elapsed = str(elapsed).split('.', maxsplit=1)[0]
-            elapsed_per_batch = f'{int(minutes):02}:{int(seconds):02}'
-            print(f'batch {batch_count}/{num_batches} completed! Elapsed time: {elapsed} ({elapsed_per_batch} per batch)')
-            batch_count += 1
+    #for max_len in processes:
+    #    print('=== max len:', max_len, '===')
+    #    t_start_max_len = time.monotonic()
+    #    for j, batch_start in enumerate(range(0, len(processes[max_len]), args.batch_size)):
+    #        batch = processes[max_len][batch_start:batch_start+args.batch_size]
+    #        for process in batch:
+    #            process.start()
+    #        for process in batch:
+    #            process.join()
+    #        elapsed = timedelta(seconds=time.monotonic()-t_start)
+    #        elapsed_max_len = timedelta(seconds=time.monotonic()-t_start_max_len)
+    #        elapsed_per_batch = elapsed_max_len.seconds / (j+1)
+    #        minutes, seconds = divmod(elapsed_per_batch, 60)
+    #        elapsed = str(elapsed).split('.', maxsplit=1)[0]
+    #        elapsed_per_batch = f'{int(minutes):02}:{int(seconds):02}'
+    #        print(f'batch {batch_count}/{num_batches} completed! Elapsed time: {elapsed} ({elapsed_per_batch} per batch)')
+    #        batch_count += 1
 
     training_time = timedelta(seconds=time.monotonic()-t_start)
     sec_per_run = training_time.seconds / num_runs
@@ -156,6 +163,6 @@ if __name__ == '__main__':
 
     baseline_dir = os.path.join(args.output_dir, 'baseline')
     for channel in channels:
-        channel_baseline_dir = os.path.join(args.output_dir, f'channel_{channel}', 'error_pr_0.0')
+        channel_baseline_dir = os.path.join(args.output_dir, f'channel_{channel}', 'error_prob_0.0')
         copy_tree(baseline_dir, channel_baseline_dir)
     shutil.rmtree(baseline_dir)

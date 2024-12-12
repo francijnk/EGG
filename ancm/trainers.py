@@ -30,8 +30,9 @@ from egg.core.distributed import get_preemptive_checkpoint_dir
 from egg.core.interaction import Interaction
 from egg.core.util import get_opts, move_to
 
-from ancm.custom_callbacks import RedundancyCallback
+from ancm.custom_callbacks import MetricsOnTrainingCallback  #RedundancyCallback, CompositionalityMeasuresCallback
 from ancm.archs import ErasureChannel
+from ancm.util import crop_messages
 
 try:
     from torch.cuda.amp import GradScaler, autocast
@@ -186,6 +187,7 @@ class Trainer:
                         interaction
                     )
                 interaction = interaction.to("cpu")
+                crop_messages(interaction)  # remove symbols after EOS
                 mean_loss += optimized_loss
 
                 for callback in self.callbacks:
@@ -253,6 +255,7 @@ class Trainer:
             ):
                 interaction = Interaction.gather_distributed_interactions(interaction)
             interaction = interaction.to("cpu")
+            crop_messages(interaction)  # remove symbols after EOS
 
             for callback in self.callbacks:
                 callback.on_batch_end(interaction, optimized_loss, batch_id)
@@ -310,8 +313,8 @@ class Trainer:
 
                     for callback in self.callbacks:
 
-                        if isinstance(callback, RedundancyCallback) \
-                                and isinstance(self.game.channel, ErasureChannel):
+                        if (isinstance(callback, MetricsOnTrainingCallback) 
+                                and isinstance(self.game.channel, ErasureChannel)):
                             # to exclude erased symbol
                             callback.on_secondary_validation_end(
                                 validation_loss, validation_interaction, epoch + 1)

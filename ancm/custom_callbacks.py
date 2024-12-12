@@ -1,4 +1,5 @@
 import torch
+import numpy as np # REmove
 import pandas as pd
 
 from collections import OrderedDict, defaultdict
@@ -20,14 +21,17 @@ from rich.table import Table, Column
 from rich.text import Text
 
 from ancm.util import (
-    compute_top_sim,
+    crop_messages,
     compute_alignment,
+    compute_max_rep,
+    compute_redundancy_msg,
+    compute_redundancy_smb,
+    compute_top_sim,
     compute_posdis,
     compute_bosdis,
-    compute_redundancy_msg_lvl,
-    compute_redundancy_smb_lvl,
 )
 
+from egg.core.util import find_lengths
 from egg.core.callbacks import Callback, CustomProgress
 from egg.core.interaction import Interaction
 
@@ -67,7 +71,6 @@ class CustomProgressBarLogger(Callback):
         n_epochs: int,
         train_data_len: int = 0,
         test_data_len: int = 0,
-        print_train_metrics: bool = True,
         validation_freq: int = 1,
         dump_results_folder=None,
         filename=None,
@@ -82,11 +85,11 @@ class CustomProgressBarLogger(Callback):
         self.n_epochs = n_epochs
         self.train_data_len = train_data_len
         self.test_data_len = test_data_len
-        self.print_train_metrics = print_train_metrics
         self.dump_results_folder = dump_results_folder
         self.filename = filename
         self.step = validation_freq
         self.history = defaultdict(lambda: defaultdict(dict))
+        self.hide_cols = 'receiver_entropy sender_entropy'.split()
 
         self.progress = CustomProgress(
             TextColumn(
@@ -127,7 +130,13 @@ class CustomProgressBarLogger(Callback):
         od["epoch"] = epoch
         od['phase'] = phase
         od["loss"] = loss
-        aux = {k: float(torch.mean(v)) if isinstance(v, torch.Tensor) else v for k, v in logs.aux.items()}
+        aux = logs.aux
+        for k, v in aux.items():
+            if isinstance(v, torch.Tensor):
+                aux[k] = v.to(torch.float16).mean().item()
+            elif isinstance(v, list):
+                aux[k] = sum(v) / len(v)
+        # aux = {k: float(torch.mean(v.to(torch.float16))) if isinstance(v, torch.Tensor) else v for k, v in logs.aux.items()}
         od.update(aux)
         return od
 
@@ -135,15 +144,24 @@ class CustomProgressBarLogger(Callback):
         row = Table(expand=True, box=None, show_header=header,
                     show_footer=False, padding=(0,1), pad_edge=True)
         for colname in od.keys():
+            if colname in self.hide_cols:
+                continue
             print_name = colname if not colname.startswith('actual_vocab_size') else 'vocab_size'
+            if colname == 'phase':
+                ratio = 1.25
+            elif colname == 'epoch':
+                ratio = 0.25
+            else:
+                ratio = 1
             row.add_column(
                 print_name,
                 justify='left' if colname in ('phase', 'epoch')  else 'right',
-                ratio=0.5 if colname == 'epoch' else 1)
+                ratio=ratio)
         if not header:
             row.add_row(
                 str(od.pop('epoch')),
-                *list(self.format_metric_val(v) for v in od.values()),
+                *[self.format_metric_val(v)  for k, v in od.items()
+                  if k not in self.hide_cols],
                 style=self.style[od['phase']])
         return row
 
@@ -187,12 +205,12 @@ class CustomProgressBarLogger(Callback):
 
     def on_epoch_end(self, loss: float, logs: Interaction, epoch: int):
         od = self.build_od(logs, loss, epoch, 'train')
-        if self.print_train_metrics and (epoch == self.step or self.step == 1):
+        if epoch == self.step or self.step == 1:
             self.live.update(self.generate_live_table(od))
         if epoch % self.step == 0:
+            self.history['train'][epoch] = od
             row = self.get_row(od)
             self.console.print(row)
-            self.history['train'][epoch] = od
 
         self.progress.stop_task(self.train_p)
         self.progress.update(self.train_p, visible=False)
@@ -248,11 +266,9 @@ class CustomProgressBarLogger(Callback):
             p_key = 'val-no-noise'
 
         od = self.build_od(logs, loss, epoch, phase)
-        if not self.print_train_metrics and epoch == 1:
-            self.live.update(self.generate_live_table(od))
+        self.history[p_key][epoch] = od
         row = self.get_row(od)
         self.console.print(row)
-        self.history[p_key][epoch] = od
 
     def on_train_end(self):
         self.progress.stop()
@@ -275,74 +291,13 @@ class CustomProgressBarLogger(Callback):
                 print(f"| Training history saved to {self.dump_results_folder/self.filename}-training-history.csv")
 
 
-class LexiconSizeCallback(Callback):
-    def on_validation_end(self, loss: float, logs: Interaction, epoch: int):
-        if logs.message is not None:
-            lexicon_size = torch.unique(logs.message, dim=0).shape[0]
-            logs.aux['lexicon_size'] = int(lexicon_size)
-
-    def on_epoch_end(self, loss: float, logs: Interaction, epoch: int):
-        if logs.message is not None:
-            if logs.message.dim() == 3:
-                message = logs.message.argmax(-1)
-            else:
-                message = logs.message
-            lexicon_size = torch.unique(message, dim=0).shape[0]
-            logs.aux['lexicon_size'] = int(lexicon_size)
-
-
-class TopographicRhoCallback(Callback):
-    def __init__(self, perceptual_dimensions):
-        self.perceptual_dimensions = perceptual_dimensions
-
-    def on_validation_end(self, loss: float, logs: Interaction, epoch: int):
-        logs.aux['top_sim'] = compute_top_sim(logs.sender_input, logs.message)
-
-    def on_epoch_end(self, loss: float, logs: Interaction, epoch: int):
-        logs.aux['top_sim'] = None
-
-
-class PosDisCallback(Callback):
-    def __init__(self, perceptual_dimensions):
-        self.perceptual_dimensions = perceptual_dimensions
-        if -1 in perceptual_dimensions:  # handling datasets loaded from a file
-            self.compute_on_validation = len(self.perceptual_dimensions) < WORLD_DIM_THRESHOLD
-        else:  # handling generated datasets
-            world_dim = reduce(lambda x, y: x * y, perceptual_dimensions)
-            self.compute_on_validation = world_dim < 2 ** WORLD_DIM_THRESHOLD
-
-    def on_validation_end(self, loss: float, logs: Interaction, epoch: int):
-        if self.compute_on_validation:
-            logs.aux['pos_dis'] = compute_posdis(logs.sender_input, logs.message)
-        else:
-            logs.aux['bos_dis'] = None
-
-    def on_epoch_end(self, loss: float, logs: Interaction, epoch: int):
-        logs.aux['pos_dis'] = None
-
-
-class BosDisCallback(Callback):
-    def __init__(self, vocab_size, perceptual_dimensions):
-        self.perceptual_dimensions = perceptual_dimensions
+class MetricsOnTrainingCallback(Callback):
+    def __init__(self, vocab_size, max_len, channel_type, sender, receiver, dataloader, device, bs=32):
         self.vocab_size = vocab_size
-        if -1 in perceptual_dimensions:  # handling datasets loaded from a file
-            self.compute_on_validation = len(self.perceptual_dimensions) < WORLD_DIM_THRESHOLD
-        else:  # handling generated datasets
-            world_dim = reduce(lambda x, y: x * y, perceptual_dimensions)
-            self.compute_on_validation = world_dim < 2 ** WORLD_DIM_THRESHOLD
+        self.max_len = max_len
+        self.channel_type = channel_type
 
-    def on_validation_end(self, loss: float, logs: Interaction, epoch: int):
-        if self.compute_on_validation:
-            logs.aux['bos_dis'] = compute_bosdis(logs.sender_input, logs.message, self.vocab_size)
-        else:
-            logs.aux['bos_dis'] = None
-
-    def on_epoch_end(self, loss: float, logs: Interaction, epoch: int):
-        logs.aux['bos_dis'] = None
-
-
-class AlignmentCallback(Callback):
-    def __init__(self, sender, receiver, dataloader, device, bs=32):
+        # to compute speaker-listener alignment
         self.sender = sender
         self.receiver = receiver
         self.dataloader = dataloader
@@ -350,44 +305,59 @@ class AlignmentCallback(Callback):
         self.bs = bs
 
     def on_validation_end(self, loss: float, logs: Interaction, epoch: int):
-        logs.aux['alignment'] = compute_alignment(self.dataloader, self.sender, self.receiver, self.device, self.bs)
+        if logs.message is not None:
+            if logs.message.dim() == 3:
+                message = logs.message.argmax(-1)
+            else:
+                message = logs.message
 
-    def on_epoch_end(self, loss: float, logs: Interaction, epoch: int):
-        logs.aux['alignment'] = None
+            lexicon_size = torch.unique(logs.message, dim=0).shape[0]
+            actual_vocab_size = torch.unique(torch.flatten(message), dim=0).size(0)
 
+            logs.aux['lexicon_size'] = int(lexicon_size)
+            logs.aux['actual_vocab_size'] = int(actual_vocab_size)
 
-class RedundancyCallback(Callback):
-    def __init__(self, max_len, vocab_size):
-        self.max_len = max_len
-        self.vocab_size = vocab_size
+            # redundancy
+            logs.aux['max_rep'] = compute_max_rep(message)
+            logs.aux['redund_msg'] = compute_redundancy_msg(logs.message, self.max_len)
+            logs.aux['redund_smb'] = compute_redundancy_smb(logs.message, self.max_len, self.vocab_size)
 
-    def on_validation_end(self, loss: float, logs: Interaction, epoch: int):
-        logs.aux['redund_msg'] = compute_redundancy_msg_lvl(logs.message, self.max_len)
-        redund_per_msg = compute_redundancy_smb_lvl(logs.message, self.max_len, self.vocab_size)
-        logs.aux['redund_smb'] = sum(redund_per_msg) / len(redund_per_msg) 
+            logs.aux['alignment'] = compute_alignment(self.dataloader, self.sender, self.receiver, self.device, self.bs)
+
+            # compositinoality
+            logs.aux['top_sim'] = compute_top_sim(logs.sender_input, logs.message)
+            logs.aux['pos_dis'] = compute_posdis(logs.sender_input, logs.message)
+            logs.aux['bos_dis'] = compute_bosdis(logs.sender_input, logs.message, self.vocab_size)
+
 
     def on_secondary_validation_end(self, loss: float, logs: Interaction, epoch: int):
-        logs.aux['redund_msg'] = compute_redundancy_msg_lvl(logs.message, self.max_len)
-        redund_per_msg = compute_redundancy_smb_lvl(logs.message, self.max_len, self.vocab_size-1)
-        logs.aux['redund_smb'] = sum(redund_per_msg) / len(redund_per_msg) 
-
-    def on_epoch_end(self, loss: float, logs: Interaction, epoch: int):
-        logs.aux['redund_msg'] = None
-        logs.aux['redund_smb'] = None
-
-
-class ActualVocabSizeCallback(Callback):
-    def __init(self, vocab_size):
-        self.vocab_size = vocab_size
-
-    def on_validation_end(self, loss: float, logs: Interaction, epoch: int):
         if logs.message is not None:
             if logs.message.dim() == 3:
                 message = logs.message.argmax(-1)
             else:
                 message = logs.message
-            actual_vocab_size = torch.unique(torch.flatten(message), dim=0).shape[0]
+
+            # for erasure channel, use vocab size without the special symbol
+            vocab_size = self.vocab_size - 1 if self.channel_type == 'erasure' \
+                else self.vocab_size
+
+            lexicon_size = torch.unique(logs.message, dim=0).shape[0]
+            actual_vocab_size = torch.unique(torch.flatten(message), dim=0).size(0)
+
+            logs.aux['lexicon_size'] = int(lexicon_size)
             logs.aux['actual_vocab_size'] = int(actual_vocab_size)
+
+            # redundancy
+            logs.aux['max_rep'] = compute_max_rep(message)
+            logs.aux['redund_msg'] = compute_redundancy_msg(logs.message, self.max_len)
+            logs.aux['redund_smb'] = compute_redundancy_smb(logs.message, self.max_len, vocab_size)
+
+            logs.aux['alignment'] = compute_alignment(self.dataloader, self.sender, self.receiver, self.device, self.bs)
+
+            logs.aux['top_sim'] = compute_top_sim(logs.sender_input, logs.message)
+            logs.aux['pos_dis'] = compute_posdis(logs.sender_input, logs.message)
+            logs.aux['bos_dis'] = compute_bosdis(logs.sender_input, logs.message, vocab_size)
+
 
     def on_epoch_end(self, loss: float, logs: Interaction, epoch: int):
         if logs.message is not None:
@@ -395,6 +365,22 @@ class ActualVocabSizeCallback(Callback):
                 message = logs.message.argmax(-1)
             else:
                 message = logs.message
-            actual_vocab_size = torch.unique(torch.flatten(message), dim=0).shape[0]
+
+            lexicon_size = torch.unique(logs.message, dim=0).shape[0]
+            actual_vocab_size = torch.unique(torch.flatten(message), dim=0).size(0)
+
+            logs.aux['lexicon_size'] = int(lexicon_size)
             logs.aux['actual_vocab_size'] = int(actual_vocab_size)
+
+            # redundancy
+            logs.aux['max_rep'] = compute_max_rep(message)
+            logs.aux['redund_msg'] = None  # compute_redundancy_msg(logs.message, self.max_len)
+            logs.aux['redund_smb'] = None  # compute_redundancy_smb(logs.message, self.max_len, self.vocab_size)
+
+            logs.aux['alignment'] = None  # compute_alignment(self.dataloader, self.sender, self.receiver, self.device, self.bs)
+
+            # compositinoality
+            logs.aux['top_sim'] = None  # compute_top_sim(logs.sender_input, logs.message)
+            logs.aux['pos_dis'] = None  # compute_posdis(logs.sender_input, logs.message)
+            logs.aux['bos_dis'] = None  # compute_bosdis(logs.sender_input, logs.message, self.vocab_size)
 

@@ -21,7 +21,31 @@ def is_jsonable(x):
     except (TypeError, OverflowError):
         return False
 
+
+def compute_mi_input_msgs(sender_inputs, messages):
+    num_dimensions = len(sender_inputs[0])
+    each_dim = [[] for _ in range(num_dimensions)]
+    result = []
+    for i, _ in enumerate(each_dim):
+        for vector in sender_inputs:
+            each_dim[i].append(vector[i])  # only works for 1-D sender inputs
+
+    for i, dim_list in enumerate(each_dim):
+        result.append(round(mutual_info(messages, dim_list), 4))
+
+    return {
+        'entropy_msg': entropy(messages),
+        'entropy_inp': entropy(sender_inputs),
+        'mi': mutual_info(messages, sender_inputs),
+        'entropy_inp_dim': [entropy(elem) for elem in each_dim],
+        'mi_dim': result,
+    }
+
+
 def compute_alignment(dataloader, sender, receiver, device, bs):
+    """
+    Computes speaker-listener alignment.
+    """
     all_features = dataloader.dataset.list_of_tuples
     targets = dataloader.dataset.target_idxs
     obj_features = np.unique(all_features[:,targets[0],:], axis=0)
@@ -44,29 +68,32 @@ def compute_alignment(dataloader, sender, receiver, device, bs):
     sender_sims = cosine_similarity(sender_embeddings)
     receiver_sims = cosine_similarity(receiver_embeddings)
     r = pearsonr(sender_sims.ravel(), receiver_sims.ravel())
-    return r.statistic * 100
+    return r.statistic
 
 
-def compute_mi_input_msgs(sender_inputs, messages):
-    num_dimensions = len(sender_inputs[0])
-    each_dim = [[] for _ in range(num_dimensions)]
-    result = []
-    for i, _ in enumerate(each_dim):
-        for vector in sender_inputs:
-            each_dim[i].append(vector[i])  # only works for 1-D sender inputs
+def compute_max_rep(messages):
+    """
+    Computes the number of occurrences of the most frequent symbol in each
+    message (0 for messages that consist of EOS symbols only).
+    """
+    if isinstance(messages, list):
+        messages = [msg.argmax(dim=1) if msg.dim() == 2
+                    else msg for msg in messages]
+        messages = torch.nn.utils.rnn.pad_sequence(messages, batch_first=True)
+        messages = torch.stack(messages)
 
-    for i, dim_list in enumerate(each_dim):
-        result.append(round(mutual_info(messages, dim_list), 4))
+    messages = messages.to(torch.float16)
+    messages[messages == 0] = float('nan')
+    mode = torch.mode(messages, dim=1).values
+    is_rep = (messages == torch.unsqueeze(mode, dim=-1).expand(*messages.size()))
+    max_rep = (is_rep.to(torch.int16).sum(dim=1))
+    return max_rep
 
-    return {
-        'entropy_msg': entropy(messages),
-        'entropy_inp': entropy(sender_inputs),
-        'mi': mutual_info(messages, sender_inputs),
-        'entropy_inp_dim': [entropy(elem) for elem in each_dim],
-        'mi_dim': result,
-    }
 
-def compute_redundancy_smb_lvl(messages, max_len, vocab_size):
+def compute_redundancy_smb(messages, max_len, vocab_size):
+    """
+    Computes redundancy at the symbol level, treating messages as sequences.
+    """
 
     # To be able to calculate rendundancy
     n_possible_messages = 0
@@ -77,9 +104,9 @@ def compute_redundancy_smb_lvl(messages, max_len, vocab_size):
     max_entropy = math.log(n_possible_messages) / math.log(2)
 
     freq_table = []
-    for i in range(max_len + 1): # +1 because of EOS 
+    for i in range(max_len + 1): # +1 because of EOS
         freq_table.append({})
-    
+
     # print(freq_table)
     messages = [msg.argmax(dim=1) if msg.dim() == 2
                 else msg for msg in messages]
@@ -111,13 +138,13 @@ def compute_redundancy_smb_lvl(messages, max_len, vocab_size):
                 string = string + symbol
             else:
                 # rn probability is based on frequency of the partial string and frequency of all other options of the same length
-                # prbably want to change this to have actual conditional probabilities 
+                # prbably want to change this to have actual conditional probabilities
                 p = freq_table[index][string]/len(freq_table[index].values())
                 H += p * math.log(1/p)
                 index += 1
                 string = ''
         H = H / math.log(2)
-        
+
         entropies.append(H)
 
         redundancies = []
@@ -127,7 +154,11 @@ def compute_redundancy_smb_lvl(messages, max_len, vocab_size):
 
     return redundancies
 
-def compute_redundancy_msg_lvl(messages,  max_len):
+
+def compute_redundancy_msg(messages,  max_len):
+    """
+    Computes redundancy at the message level.
+    """
     messages = [msg.argmax(dim=1) if msg.dim() == 2
                 else msg for msg in messages]
 
@@ -138,6 +169,9 @@ def compute_redundancy_msg_lvl(messages,  max_len):
 
 
 def compute_top_sim(sender_inputs, messages, dimensions=None):
+    """
+    Computes topographic rho.
+    """
     obj_tensor = torch.stack(sender_inputs) \
         if isinstance(sender_inputs, list) else sender_inputs
 
@@ -186,6 +220,9 @@ def compute_top_sim(sender_inputs, messages, dimensions=None):
 
 
 def compute_posdis(sender_inputs, messages):
+    """
+    Computes PosDis.
+    """
     messages = [msg.argmax(dim=1) if msg.dim() == 2
                 else msg for msg in messages]
     strings = torch.nn.utils.rnn.pad_sequence(messages, batch_first=True)
@@ -240,6 +277,9 @@ def histogram(messages, vocab_size):
 
 
 def compute_bosdis(sender_inputs, messages, vocab_size):
+    """
+    Computes BosDis.
+    """
     histograms = histogram(messages, vocab_size)
     return compute_posdis(sender_inputs, histograms[:, 1:])
 
@@ -336,9 +376,19 @@ def dump_sender_receiver(
                         receiver_outputs.append(output[i, message_end, ...])
                     else:
                         receiver_outputs.append(output[i, ...])
-                        
-        redundancies = compute_redundancy_smb_lvl(messages, max_len, vocab_size)
+
+        redundancies = compute_redundancy_smb(messages, max_len, vocab_size)
 
     game.train(mode=train_state)
 
     return sender_inputs, messages, receiver_inputs, receiver_outputs, labels, redundancies  # log_prob, entropy
+
+
+def crop_messages(interaction):
+    """
+    Given an Interaction object, removes non EOS symbols after the first EOS.
+    """
+    assert interaction.message_length is not None
+    for i in range(interaction.size):
+        length = interaction.message_length[i].long().item()
+        interaction.message[i, length:] = 0  # 0 is always EOS

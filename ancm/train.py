@@ -26,8 +26,8 @@ from ancm.trainers import Trainer
 from ancm.util import (
     dump_sender_receiver,
     compute_alignment,
-    compute_redundancy_msg_lvl,
-    compute_redundancy_smb_lvl,
+    compute_redundancy_msg,
+    compute_redundancy_smb,
     compute_mi_input_msgs,
     compute_top_sim,
     compute_posdis,
@@ -42,13 +42,7 @@ from ancm.archs import (
 )
 from ancm.custom_callbacks import (
     CustomProgressBarLogger,
-    LexiconSizeCallback,
-    ActualVocabSizeCallback,
-    AlignmentCallback,
-    RedundancyCallback,
-    TopographicRhoCallback,
-    PosDisCallback,
-    BosDisCallback,
+    MetricsOnTrainingCallback,
 )
 
 
@@ -86,7 +80,6 @@ def get_params(params):
     parser.add_argument("--filename", type=str, default=None, help="Filename (no extension)")
     parser.add_argument("--debug", action="store_true", default=False, help="Run egg/objects_game with pdb enabled")
     parser.add_argument("--simple_logging", action="store_true", default=False, help="Use console logger instead of progress bar")
-    parser.add_argument("--no_compositionality_metrics", action="store_true", default=False, help="Disable computing topographic rho during training")
     parser.add_argument("--silent", action="store_true", default=False, help="Do not print eval stats during training")
 
     args = core.init(parser, params)
@@ -230,10 +223,11 @@ def main(params):
             receiver_entropy_coeff=opts.receiver_entropy_coeff,
             device=device,
             seed=opts.random_seed)
+        ### CHANGE
         optimizer = torch.optim.RMSprop([
             {"params": game.sender.parameters(), "lr": opts.sender_lr},
             {"params": game.receiver.parameters(), "lr": opts.receiver_lr},
-        ])  # change!!
+        ])
 
     else:
         raise NotImplementedError(f"Unknown training mode, {opts.mode}")
@@ -246,32 +240,26 @@ def main(params):
     else:
         scheduler = None
 
-    if opts.silent:
-        callbacks = []
-    elif opts.simple_logging:
-        callbacks = [core.ConsoleLogger(as_json=True)]
-    else:
-        callbacks = [
-            LexiconSizeCallback(),
-            ActualVocabSizeCallback(),
-            AlignmentCallback(_sender, _receiver, test_data, device, opts.batch_size),
-            RedundancyCallback(opts.max_len, receiver_vocab_size),
-       ]
-
-    if not opts.no_compositionality_metrics:
-        callbacks.extend([
-            TopographicRhoCallback(opts.perceptual_dimensions),
-            PosDisCallback(opts.perceptual_dimensions),
-            BosDisCallback(opts.vocab_size, opts.perceptual_dimensions),
-        ])
+    callbacks = [
+        MetricsOnTrainingCallback(
+            vocab_size=receiver_vocab_size,
+            max_len=opts.max_len,
+            channel_type=opts.channel,
+            sender=_sender,
+            receiver=_receiver,
+            dataloader=validation_data,
+            device=device,
+            bs=opts.batch_size),
+    ]
 
     if opts.mode.lower() == "gs":
         callbacks.append(core.TemperatureUpdater(agent=sender, decay=0.9, minimum=0.1))
 
-    if not opts.silent and not opts.simple_logging:
+    if opts.simple_logging:
+        callbacks.append(core.ConsoleLogger(as_json=True))
+    else:
         callbacks.append(CustomProgressBarLogger(
             n_epochs=opts.n_epochs,
-            print_train_metrics=True,
             train_data_len=len(train_data),
             test_data_len=len(validation_data),
             validation_freq=opts.validation_freq,
@@ -320,10 +308,10 @@ def main(params):
         preds = receiver_outputs.argmax(dim=1) if opts.mode.lower() == 'gs' \
             else receiver_outputs
 
-        accuracy = torch.mean((preds == labels).float()).item() * 100
+        accuracy = torch.mean((preds == labels).float()).item()
         alignment = compute_alignment(
             test_data, _receiver, _sender, device, opts.batch_size)
-        redundancy_msg_lvl = compute_redundancy_msg_lvl(messages, opts.max_len)
+        redundancy_msg_lvl = compute_redundancy_msg(messages, opts.max_len)
         redundancy_smb_lvl = sum(redundancies_per_msg) / len(redundancies_per_msg)
         top_sim = compute_top_sim(sender_inputs, messages, opts.perceptual_dimensions)
         pos_dis = compute_posdis(sender_inputs, messages)
@@ -368,7 +356,7 @@ def main(params):
             sender_inputs2, messages2, receiver_inputs2, \
                 receiver_outputs2, labels2, redundancies_per_msg2 = dump_sender_receiver(
                     game, test_data, opts.mode.lower() == 'gs',
-                    apply_noise=opts.error_prob == 0,
+                    apply_noise=False,
                     variable_length=True, max_len=opts.max_len,
                     vocab_size=opts.vocab_size, device=device)
 
@@ -379,8 +367,8 @@ def main(params):
 
             preds2 = receiver_outputs2.argmax(dim=1) if opts.mode.lower() == 'gs' \
                 else receiver_outputs2
-            accuracy2 = torch.mean((preds2 == labels2).float()).item() * 100
-            redundancy_msg_lvl2 = compute_redundancy_msg_lvl(messages2, opts.max_len)
+            accuracy2 = torch.mean((preds2 == labels2).float()).item()
+            redundancy_msg_lvl2 = compute_redundancy_msg(messages2, opts.max_len)
             redundancy_smb_lvl2 = sum(redundancies_per_msg2) / len(redundancies_per_msg2)
             top_sim2 = compute_top_sim(sender_inputs2, messages2, opts.perceptual_dimensions)
             pos_dis2 = compute_posdis(sender_inputs2, messages2)

@@ -527,11 +527,9 @@ class ErasureChannel(Channel):
 
                 # True for all message symbols before the 1st EOS symbol
                 not_eosed = (
-                    torch.stack(
-                        [torch.arange(0, message.size(1)).to(self.device)])
-                    < torch.cat(
-                        [torch.unsqueeze(message_length-1, dim=-1).to(self.device) for _ in range(message.size(1))],
-                        dim=1))
+                    torch.unsqueeze(torch.arange(0, message.size(1)), dim=0).expand(message.size(0), message.size(1)).to(self.device)
+                    < torch.unsqueeze(message_length-1, dim=-1).expand(message.size(0), message.size(1))
+                )
 
                 # erase
                 message = torch.where(
@@ -541,8 +539,8 @@ class ErasureChannel(Channel):
 
             else:  # GS
                 # make sure EOS is not erased
-                not_eosed = (msg != 0)
-                combined = torch.logical_and(target_ids, not_eosed)
+                not_eos = (msg != 0)
+                combined = torch.logical_and(target_ids, not_eos)
                 combined = combined[:,:,None]
                 combined = combined.expand(*message.size())
 
@@ -571,12 +569,17 @@ class DeletionChannel(Channel):
                 message_length = find_lengths(msg)
             
             # True for all message symbols before the 1st EOS symbol
+            #not_eosed = (
+            #    torch.stack(
+            #        [torch.arange(0, msg.size(1)).to(self.device)])
+            #    < torch.cat(
+            #        [torch.unsqueeze(message_length-1, dim=-1).to(self.device) for _ in range(msg.size(1))],
+            #        dim=1))
+
             not_eosed = (
-                torch.stack(
-                    [torch.arange(0, msg.size(1)).to(self.device)])
-                < torch.cat(
-                    [torch.unsqueeze(message_length-1, dim=-1).to(self.device) for _ in range(msg.size(1))],
-                    dim=1))
+                torch.unsqueeze(torch.arange(0, message.size(1)), dim=0).expand(message.size(0), message.size(1)).to(self.device)
+                < torch.unsqueeze(message_length-1, dim=-1).expand(message.size(0), message.size(1))
+            )
 
             # sample symbol indices to be erased
             target_ids = (torch.rand(*msg.size(), generator=self.generator) < self.p).to(self.device)
@@ -657,23 +660,30 @@ class SymmetricChannel(Channel):
                     message_length = find_lengths(message)
                 
                 # True for all message symbols before the 1st EOS symbol
+                #not_eosed = (
+                #    torch.stack(
+                #        [torch.arange(0, message.size(1)).to(self.device)])  # FIX! 
+                #    < torch.cat(
+                #        [torch.unsqueeze(message_length-1, dim=-1).to(self.device) for _ in range(message.size(1))],
+                #        dim=1))
                 not_eosed = (
-                    torch.stack(
-                        [torch.arange(0, message.size(1)).to(self.device)]) 
-                    < torch.cat(
-                        [torch.unsqueeze(message_length-1, dim=-1).to(self.device) for _ in range(message.size(1))],
-                        dim=1))
-               
+                    torch.unsqueeze(torch.arange(0, message.size(1)), dim=0).expand(message.size(0), message.size(1)).to(self.device)
+                    < torch.unsqueeze(message_length-1, dim=-1).expand(message.size(0), message.size(1))
+                )
+                #not_eosed = (
+                #    torch.arange(0, message.size(1)).expand(message.size(0), -1).to(self.device)
+                #    < (message_length-1).expand(message.size(1), -1).permute(1, 0))
+
                 message = torch.where(
                     torch.logical_and(target_ids, not_eosed),
                     replacement_symbols,
                     message)
 
             else:  # GS
-                # randomply sample symbol indices to erase before EOS
-                not_eosed = (msg != 0)
+                # make sure EOS is not erased
+                not_eos = (msg != 0)
 
-                combined = torch.logical_and(target_ids, not_eosed)
+                combined = torch.logical_and(target_ids, not_eos)
                 combined = combined[:,:,None]
                 combined = combined.expand(*message.size())
 
