@@ -12,7 +12,7 @@ from typing import Optional
 from collections import defaultdict
 
 from egg.core.util import move_to
-from egg.zoo.objects_game.util import mutual_info, entropy
+from egg.zoo.objects_game.util import mutual_info, entropy, _hashable_tensor
 
 def is_jsonable(x):
     try:
@@ -40,6 +40,39 @@ def compute_mi_input_msgs(sender_inputs, messages):
         'entropy_inp_dim': [entropy(elem) for elem in each_dim],
         'mi_dim': result,
     }
+
+def entropy_per_symbol(messages, freq_table):
+    entropies = []
+    n = sum(v for v in freq_table.values())
+
+    for i, m in enumerate(messages):
+        H = 0
+        for symbol in m:
+            p = freq_table[symbol]/n
+            H += -p * np.log(p)
+        entropies.append(H)
+
+    return entropies
+
+
+
+
+def compute_redundancy(messages, max_len, vocab_size):
+    from collections import defaultdict
+    freq_table = defaultdict(float)
+    for m in messages:
+        m = _hashable_tensor(m)
+        for symbol in m:
+            freq_table[symbol] += 1.0
+    print(freq_table)
+    entrps = entropy_per_symbol(messages, freq_table)
+    max_entr = (max_len * (np.log(vocab_size)))/ np.log(2)
+    redundancies = []
+    for entr in entrps:
+        redundancies.append(1 - entr / max_entr)
+
+    avg_redundancy = sum(redundancies)/len(redundancies)
+    return avg_redundancy
 
 
 def compute_alignment(dataloader, sender, receiver, device, bs):

@@ -32,6 +32,7 @@ from ancm.util import (
     compute_top_sim,
     compute_posdis,
     compute_bosdis,
+    compute_redundancy,
     is_jsonable,
 )
 from ancm.archs import (
@@ -476,7 +477,7 @@ def main(params):
 
                 sorted_msgs2 = sorted(msg_dict2.items(), key=operator.itemgetter(1), reverse=True)
 
-            lexicon_size = str(len(msg_dict.keys())) if opts.error_prob == 0 \
+            lexicon_size2 = str(len(msg_dict.keys())) if opts.error_prob == 0 \
                 else f'{len(msg_dict.keys())} / {len(msg_dict2.keys())}'
             if not opts.silent and opts.error_prob == 0:
                 print("|")
