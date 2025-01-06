@@ -139,7 +139,7 @@ def compute_redundancy_smb(messages, max_len, vocab_size):
             else:
                 # rn probability is based on frequency of the partial string and frequency of all other options of the same length
                 # prbably want to change this to have actual conditional probabilities
-                p = freq_table[index][string]/len(freq_table[index].values())
+                p = freq_table[index][string]/sum(freq_table[index].values())
                 H += p * math.log(1/p)
                 index += 1
                 string = ''
