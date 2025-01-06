@@ -30,7 +30,7 @@ from egg.core.distributed import get_preemptive_checkpoint_dir
 from egg.core.interaction import Interaction
 from egg.core.util import get_opts, move_to
 
-from ancm.custom_callbacks import MetricsOnTrainingCallback  #RedundancyCallback, CompositionalityMeasuresCallback
+from ancm.callbacks import TrainingMetricsCallback
 from ancm.archs import ErasureChannel
 from ancm.util import crop_messages
 
@@ -313,7 +313,7 @@ class Trainer:
 
                     for callback in self.callbacks:
 
-                        if (isinstance(callback, MetricsOnTrainingCallback) 
+                        if (isinstance(callback, TrainingMetricsCallback) 
                                 and isinstance(self.game.channel, ErasureChannel)):
                             # to exclude erased symbol
                             callback.on_secondary_validation_end(

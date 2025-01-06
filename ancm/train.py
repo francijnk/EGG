@@ -40,9 +40,9 @@ from ancm.archs import (
     SenderReinforce, ReceiverReinforce,
     loss_reinforce, SenderReceiverRnnReinforce
 )
-from ancm.custom_callbacks import (
+from ancm.callbacks import (
     CustomProgressBarLogger,
-    MetricsOnTrainingCallback,
+    TrainingMetricsCallback,
 )
 
 
@@ -241,7 +241,7 @@ def main(params):
         scheduler = None
 
     callbacks = [
-        MetricsOnTrainingCallback(
+        TrainingMetricsCallback(
             vocab_size=receiver_vocab_size,
             max_len=opts.max_len,
             channel_type=opts.channel,

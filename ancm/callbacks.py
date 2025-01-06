@@ -291,7 +291,7 @@ class CustomProgressBarLogger(Callback):
                 print(f"| Training history saved to {self.dump_results_folder/self.filename}-training-history.csv")
 
 
-class MetricsOnTrainingCallback(Callback):
+class TrainingMetricsCallback(Callback):
     def __init__(self, vocab_size, max_len, channel_type, sender, receiver, dataloader, device, bs=32):
         self.vocab_size = vocab_size
         self.max_len = max_len
