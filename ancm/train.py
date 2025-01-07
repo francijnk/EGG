@@ -394,8 +394,8 @@ def main(params):
             mi += f" / {mi_result2['mi']:.3f}"
             mi_dim2 = f"{[round(x, 3) for x in mi_result2['mi_dim']]}"
             t_rho += f" / {top_sim2:.3f}"
-            p_dis += f'{pos_dis2:.3f}'
-            b_dis += f'{bos_dis2:.3f}'
+            p_dis += f'/ {pos_dis2:.3f}'
+            b_dis += f'/ {bos_dis2:.3f}'
             redund_msg += f' / {redundancy_msg_lvl2:.3f}'
             redund_smb += f' / {redundancy_smb_lvl2:.3f}'
 

@@ -59,7 +59,7 @@ def maybe_init_distributed(args) -> DistributedContext:
             backend="nccl", init_method=init_method, world_size=world_size, rank=rank
         )
     # is it slurm?
-    elif all(key in os.environ for key in slurm_keys):
+    elif False:  # all(key in os.environ for key in slurm_keys):
         init_method = "env://"
         local_rank = int(os.environ["SLURM_LOCALID"])
         rank = int(os.environ["SLURM_PROCID"])

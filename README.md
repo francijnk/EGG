@@ -5,9 +5,16 @@
 
 ## Setup
 ```bash
-python3 -m pip install -r requirements.txt
+python3 -m pip install -r ancm/requirements.txt
 cd .. && python3 -m pip install --editable egg/ && cd ancm/
 ```
+
+## Snellius
+
+1. Set the desired hyperparameter values in `ancm/jobs/get_params.py`
+2. Export the parameter file `python3 -m ancm.jobs.get_params`
+3. Edit the training script `ancm/jobs/job.sh`
+4. Add the job `sbatch ancm/jobs/job.sh`
 
 ## Training
 

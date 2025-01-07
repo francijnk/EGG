@@ -320,7 +320,7 @@ class TrainingMetricsCallback(Callback):
             # redundancy
             logs.aux['max_rep'] = compute_max_rep(message)
             logs.aux['redund_msg'] = compute_redundancy_msg(logs.message, self.max_len)
-            logs.aux['redund_smb'] = compute_redundancy_smb(logs.message, self.max_len, self.vocab_size)
+            # logs.aux['redund_smb'] = compute_redundancy_smb(logs.message, self.max_len, self.vocab_size)
 
             logs.aux['alignment'] = compute_alignment(self.dataloader, self.sender, self.receiver, self.device, self.bs)
 
@@ -350,7 +350,7 @@ class TrainingMetricsCallback(Callback):
             # redundancy
             logs.aux['max_rep'] = compute_max_rep(message)
             logs.aux['redund_msg'] = compute_redundancy_msg(logs.message, self.max_len)
-            logs.aux['redund_smb'] = compute_redundancy_smb(logs.message, self.max_len, vocab_size)
+            # logs.aux['redund_smb'] = compute_redundancy_smb(logs.message, self.max_len, vocab_size)
 
             logs.aux['alignment'] = compute_alignment(self.dataloader, self.sender, self.receiver, self.device, self.bs)
 
@@ -375,7 +375,7 @@ class TrainingMetricsCallback(Callback):
             # redundancy
             logs.aux['max_rep'] = compute_max_rep(message)
             logs.aux['redund_msg'] = None  # compute_redundancy_msg(logs.message, self.max_len)
-            logs.aux['redund_smb'] = None  # compute_redundancy_smb(logs.message, self.max_len, self.vocab_size)
+            # logs.aux['redund_smb'] = None  # compute_redundancy_smb(logs.message, self.max_len, self.vocab_size)
 
             logs.aux['alignment'] = None  # compute_alignment(self.dataloader, self.sender, self.receiver, self.device, self.bs)
 
