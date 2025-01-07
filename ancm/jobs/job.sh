@@ -30,7 +30,7 @@ rsync $HPARAMS_FILE $OUTPUT_DIR/job/
 rsync $JOB_FILE $OUTPUT_DIR/job/
 
 # Execute a Python program located in $HOME, that takes an input file and output directory as arguments.
-for idx in {0..380}
+for idx in {1..380}
 do
   srun --ntasks=1 --exclusive \
     python -m ancm.train \

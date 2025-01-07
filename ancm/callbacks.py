@@ -281,9 +281,9 @@ class CustomProgressBarLogger(Callback):
                 key = history_keys[0]
                 od_keys = self.history[key][list(self.history[key].keys())[0]]
                 for key in self.history:
-                    df = pd.DataFrame({
-                        k: [self.history[key][epoch][k] for epoch in self.history[key]]
-                        for k in od_keys})
+                    df = pd.DataFrame({'epoch': [int(epoch) for epoch in self.history[key]]})
+                    for k in od_keys:
+                        df[k] = [self.history[key][epoch][k] for epoch in self.history[key]]
                     history_dfs.append(df)
                 history_df = pd.concat(history_dfs)
                 dump_path = self.dump_results_folder / f'{self.filename}-training-history.csv'

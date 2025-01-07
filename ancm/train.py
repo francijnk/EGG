@@ -10,7 +10,6 @@ import argparse
 import operator
 import pathlib
 import json
-import uuid
 import time
 import math
 from datetime import timedelta
@@ -88,9 +87,6 @@ def get_params(params):
     check_args(args)
     if not args.silent:
         print(args)
-
-    if args.filename is None:
-        args.filename = str(uuid.uuid4())
 
     return args
 
