@@ -1,0 +1,901 @@
+max_len,erasure_pr,noise,metric,value
+2,0.0,no noise,accuracy,0.90625
+2,0.0,noise,accuracy,0.90625
+2,0.0,no noise,accuracy,0.882056474685669
+2,0.0,noise,accuracy,0.882056474685669
+2,0.0,no noise,accuracy,0.78125
+2,0.0,noise,accuracy,0.78125
+2,0.0,no noise,accuracy,0.8639112710952759
+2,0.0,noise,accuracy,0.8639112710952759
+2,0.0,no noise,accuracy,0.5816532373428345
+2,0.0,noise,accuracy,0.5816532373428345
+5,0.0,no noise,accuracy,0.9082661271095276
+5,0.0,noise,accuracy,0.9082661271095276
+5,0.0,no noise,accuracy,0.9122983813285828
+5,0.0,noise,accuracy,0.9122983813285828
+5,0.0,no noise,accuracy,0.8840726017951965
+5,0.0,noise,accuracy,0.8840726017951965
+5,0.0,no noise,accuracy,0.9163306355476379
+5,0.0,noise,accuracy,0.9163306355476379
+5,0.0,no noise,accuracy,0.9163306355476379
+5,0.0,noise,accuracy,0.9163306355476379
+10,0.0,no noise,accuracy,0.8830645084381104
+10,0.0,noise,accuracy,0.8830645084381104
+10,0.0,no noise,accuracy,0.8850806355476379
+10,0.0,noise,accuracy,0.8850806355476379
+10,0.0,no noise,accuracy,0.8961693644523621
+10,0.0,noise,accuracy,0.8961693644523621
+10,0.0,no noise,accuracy,0.586693525314331
+10,0.0,noise,accuracy,0.586693525314331
+10,0.0,no noise,accuracy,0.8790322542190552
+10,0.0,noise,accuracy,0.8790322542190552
+2,0.05,no noise,accuracy,0.882056474685669
+2,0.05,noise,accuracy,0.8911290168762207
+2,0.05,no noise,accuracy,0.8770161271095276
+2,0.05,noise,accuracy,0.8850806355476379
+2,0.05,no noise,accuracy,0.8457661271095276
+2,0.05,noise,accuracy,0.8538306355476379
+2,0.05,no noise,accuracy,0.8548387289047241
+2,0.05,noise,accuracy,0.8649193644523621
+2,0.05,no noise,accuracy,0.8840726017951965
+2,0.05,noise,accuracy,0.8901209831237793
+5,0.05,no noise,accuracy,0.9012096524238586
+5,0.05,noise,accuracy,0.9042338728904724
+5,0.05,no noise,accuracy,0.8850806355476379
+5,0.05,noise,accuracy,0.8901209831237793
+5,0.05,no noise,accuracy,0.8659273982048035
+5,0.05,noise,accuracy,0.8659273982048035
+5,0.05,no noise,accuracy,0.8669354915618896
+5,0.05,noise,accuracy,0.875
+5,0.05,no noise,accuracy,0.9274193644523621
+5,0.05,noise,accuracy,0.9294354915618896
+10,0.05,no noise,accuracy,0.9072580933570862
+10,0.05,noise,accuracy,0.9082661271095276
+10,0.05,no noise,accuracy,0.8477822542190552
+10,0.05,noise,accuracy,0.8538306355476379
+10,0.05,no noise,accuracy,0.8860887289047241
+10,0.05,noise,accuracy,0.8860887289047241
+10,0.05,no noise,accuracy,0.90625
+10,0.05,noise,accuracy,0.9042338728904724
+10,0.05,no noise,accuracy,0.6209677457809448
+10,0.05,noise,accuracy,0.6239919066429138
+2,0.1,no noise,accuracy,0.8497983813285828
+2,0.1,noise,accuracy,0.8911290168762207
+2,0.1,no noise,accuracy,0.850806474685669
+2,0.1,noise,accuracy,0.8780242204666138
+2,0.1,no noise,accuracy,0.8477822542190552
+2,0.1,noise,accuracy,0.8639112710952759
+2,0.1,no noise,accuracy,0.8215726017951965
+2,0.1,noise,accuracy,0.84375
+2,0.1,no noise,accuracy,0.8699596524238586
+2,0.1,noise,accuracy,0.8840726017951965
+5,0.1,no noise,accuracy,0.8860887289047241
+5,0.1,noise,accuracy,0.8981854915618896
+5,0.1,no noise,accuracy,0.9082661271095276
+5,0.1,noise,accuracy,0.9173387289047241
+5,0.1,no noise,accuracy,0.913306474685669
+5,0.1,noise,accuracy,0.9183467626571655
+5,0.1,no noise,accuracy,0.9163306355476379
+5,0.1,noise,accuracy,0.9203628897666931
+5,0.1,no noise,accuracy,0.8538306355476379
+5,0.1,noise,accuracy,0.8558467626571655
+10,0.1,no noise,accuracy,0.8719757795333862
+10,0.1,noise,accuracy,0.8770161271095276
+10,0.1,no noise,accuracy,0.9274193644523621
+10,0.1,noise,accuracy,0.9243951439857483
+10,0.1,no noise,accuracy,0.8397177457809448
+10,0.1,noise,accuracy,0.84375
+10,0.1,no noise,accuracy,0.9223790168762207
+10,0.1,noise,accuracy,0.9243951439857483
+10,0.1,no noise,accuracy,0.8830645084381104
+10,0.1,noise,accuracy,0.8840726017951965
+2,0.15,no noise,accuracy,0.8760080933570862
+2,0.15,noise,accuracy,0.8961693644523621
+2,0.15,no noise,accuracy,0.8568548560142517
+2,0.15,noise,accuracy,0.8850806355476379
+2,0.15,no noise,accuracy,0.819556474685669
+2,0.15,noise,accuracy,0.8639112710952759
+2,0.15,no noise,accuracy,0.836693525314331
+2,0.15,noise,accuracy,0.8608871102333069
+2,0.15,no noise,accuracy,0.8417338728904724
+2,0.15,noise,accuracy,0.8739919066429138
+5,0.15,no noise,accuracy,0.9012096524238586
+5,0.15,noise,accuracy,0.9032257795333862
+5,0.15,no noise,accuracy,0.8629032373428345
+5,0.15,noise,accuracy,0.8790322542190552
+5,0.15,no noise,accuracy,0.867943525314331
+5,0.15,noise,accuracy,0.875
+5,0.15,no noise,accuracy,0.9173387289047241
+5,0.15,noise,accuracy,0.9213709831237793
+5,0.15,no noise,accuracy,0.9112903475761414
+5,0.15,noise,accuracy,0.9173387289047241
+10,0.15,no noise,accuracy,0.8850806355476379
+10,0.15,noise,accuracy,0.8981854915618896
+10,0.15,no noise,accuracy,0.9012096524238586
+10,0.15,noise,accuracy,0.9012096524238586
+10,0.15,no noise,accuracy,0.9012096524238586
+10,0.15,noise,accuracy,0.9092742204666138
+10,0.15,no noise,accuracy,0.8870967626571655
+10,0.15,noise,accuracy,0.8881048560142517
+10,0.15,no noise,accuracy,0.9173387289047241
+10,0.15,noise,accuracy,0.9203628897666931
+2,0.2,no noise,accuracy,0.836693525314331
+2,0.2,noise,accuracy,0.8689516186714172
+2,0.2,no noise,accuracy,0.7147177457809448
+2,0.2,noise,accuracy,0.7600806355476379
+2,0.2,no noise,accuracy,0.7973790168762207
+2,0.2,noise,accuracy,0.8608871102333069
+2,0.2,no noise,accuracy,0.7620967626571655
+2,0.2,noise,accuracy,0.805443525314331
+2,0.2,no noise,accuracy,0.7792338728904724
+2,0.2,noise,accuracy,0.8104838728904724
+5,0.2,no noise,accuracy,0.8921371102333069
+5,0.2,noise,accuracy,0.90625
+5,0.2,no noise,accuracy,0.8608871102333069
+5,0.2,noise,accuracy,0.8760080933570862
+5,0.2,no noise,accuracy,0.899193525314331
+5,0.2,noise,accuracy,0.9153226017951965
+5,0.2,no noise,accuracy,0.8941532373428345
+5,0.2,noise,accuracy,0.9012096524238586
+5,0.2,no noise,accuracy,0.9012096524238586
+5,0.2,noise,accuracy,0.9112903475761414
+10,0.2,no noise,accuracy,0.899193525314331
+10,0.2,noise,accuracy,0.9193548560142517
+10,0.2,no noise,accuracy,0.8780242204666138
+10,0.2,noise,accuracy,0.8870967626571655
+10,0.2,no noise,accuracy,0.9112903475761414
+10,0.2,noise,accuracy,0.9213709831237793
+10,0.2,no noise,accuracy,0.9213709831237793
+10,0.2,noise,accuracy,0.9223790168762207
+10,0.2,no noise,accuracy,0.9102822542190552
+10,0.2,noise,accuracy,0.9112903475761414
+2,0.25,no noise,accuracy,0.8296371102333069
+2,0.25,noise,accuracy,0.8689516186714172
+2,0.25,no noise,accuracy,0.7620967626571655
+2,0.25,noise,accuracy,0.8417338728904724
+2,0.25,no noise,accuracy,0.5735887289047241
+2,0.25,noise,accuracy,0.6058467626571655
+2,0.25,no noise,accuracy,0.8014112710952759
+2,0.25,noise,accuracy,0.8538306355476379
+2,0.25,no noise,accuracy,0.8114919066429138
+2,0.25,noise,accuracy,0.8598790168762207
+5,0.25,no noise,accuracy,0.9052419066429138
+5,0.25,noise,accuracy,0.9072580933570862
+5,0.25,no noise,accuracy,0.8548387289047241
+5,0.25,noise,accuracy,0.8840726017951965
+5,0.25,no noise,accuracy,0.8881048560142517
+5,0.25,noise,accuracy,0.9052419066429138
+5,0.25,no noise,accuracy,0.875
+5,0.25,noise,accuracy,0.8850806355476379
+5,0.25,no noise,accuracy,0.8558467626571655
+5,0.25,noise,accuracy,0.8830645084381104
+10,0.25,no noise,accuracy,0.8699596524238586
+10,0.25,noise,accuracy,0.8931451439857483
+10,0.25,no noise,accuracy,0.8840726017951965
+10,0.25,noise,accuracy,0.8941532373428345
+10,0.25,no noise,accuracy,0.9082661271095276
+10,0.25,noise,accuracy,0.9112903475761414
+10,0.25,no noise,accuracy,0.9122983813285828
+10,0.25,noise,accuracy,0.9163306355476379
+10,0.25,no noise,accuracy,0.8477822542190552
+10,0.25,noise,accuracy,0.8629032373428345
+2,0.0,no noise,embedding_alignment,0.9285234496182058
+2,0.0,noise,embedding_alignment,0.9285234496182058
+2,0.0,no noise,embedding_alignment,0.9586493122842212
+2,0.0,noise,embedding_alignment,0.9586493122842212
+2,0.0,no noise,embedding_alignment,0.954391750697997
+2,0.0,noise,embedding_alignment,0.954391750697997
+2,0.0,no noise,embedding_alignment,0.9814071569426204
+2,0.0,noise,embedding_alignment,0.9814071569426204
+2,0.0,no noise,embedding_alignment,0.9519660025369023
+2,0.0,noise,embedding_alignment,0.9519660025369023
+5,0.0,no noise,embedding_alignment,0.9628374420401858
+5,0.0,noise,embedding_alignment,0.9628374420401858
+5,0.0,no noise,embedding_alignment,0.9676758918148135
+5,0.0,noise,embedding_alignment,0.9676758918148135
+5,0.0,no noise,embedding_alignment,0.9809232081962679
+5,0.0,noise,embedding_alignment,0.9809232081962679
+5,0.0,no noise,embedding_alignment,0.9744975469037516
+5,0.0,noise,embedding_alignment,0.9744975469037516
+5,0.0,no noise,embedding_alignment,0.9671128115592318
+5,0.0,noise,embedding_alignment,0.9671128115592318
+10,0.0,no noise,embedding_alignment,0.975838302651777
+10,0.0,noise,embedding_alignment,0.975838302651777
+10,0.0,no noise,embedding_alignment,0.9641352422989575
+10,0.0,noise,embedding_alignment,0.9641352422989575
+10,0.0,no noise,embedding_alignment,0.9459936495522396
+10,0.0,noise,embedding_alignment,0.9459936495522396
+10,0.0,no noise,embedding_alignment,0.9355666030366072
+10,0.0,noise,embedding_alignment,0.9355666030366072
+10,0.0,no noise,embedding_alignment,0.8704364922501475
+10,0.0,noise,embedding_alignment,0.8704364922501475
+2,0.05,no noise,embedding_alignment,0.9651242225934797
+2,0.05,noise,embedding_alignment,0.9651242225934797
+2,0.05,no noise,embedding_alignment,0.8930214893011278
+2,0.05,noise,embedding_alignment,0.8930214893011278
+2,0.05,no noise,embedding_alignment,0.9681865603699056
+2,0.05,noise,embedding_alignment,0.9681865603699056
+2,0.05,no noise,embedding_alignment,0.9584618097226584
+2,0.05,noise,embedding_alignment,0.9584618097226584
+2,0.05,no noise,embedding_alignment,0.9807850453481457
+2,0.05,noise,embedding_alignment,0.9807850453481457
+5,0.05,no noise,embedding_alignment,0.9774617868822689
+5,0.05,noise,embedding_alignment,0.9774617868822689
+5,0.05,no noise,embedding_alignment,0.9579060010557364
+5,0.05,noise,embedding_alignment,0.9579060010557364
+5,0.05,no noise,embedding_alignment,0.966395782600274
+5,0.05,noise,embedding_alignment,0.966395782600274
+5,0.05,no noise,embedding_alignment,0.932777259433593
+5,0.05,noise,embedding_alignment,0.932777259433593
+5,0.05,no noise,embedding_alignment,0.9555880709111045
+5,0.05,noise,embedding_alignment,0.9555880709111045
+10,0.05,no noise,embedding_alignment,0.9809035516796059
+10,0.05,noise,embedding_alignment,0.9809035516796059
+10,0.05,no noise,embedding_alignment,0.9535663059090919
+10,0.05,noise,embedding_alignment,0.9535663059090919
+10,0.05,no noise,embedding_alignment,0.9573425124170369
+10,0.05,noise,embedding_alignment,0.9573425124170369
+10,0.05,no noise,embedding_alignment,0.9503715080262773
+10,0.05,noise,embedding_alignment,0.9503715080262773
+10,0.05,no noise,embedding_alignment,0.9788172128427971
+10,0.05,noise,embedding_alignment,0.9788172128427971
+2,0.1,no noise,embedding_alignment,0.9801235531864672
+2,0.1,noise,embedding_alignment,0.9801235531864672
+2,0.1,no noise,embedding_alignment,0.9852313936457598
+2,0.1,noise,embedding_alignment,0.9852313936457598
+2,0.1,no noise,embedding_alignment,0.9624534354015011
+2,0.1,noise,embedding_alignment,0.9624534354015011
+2,0.1,no noise,embedding_alignment,0.9562171052843754
+2,0.1,noise,embedding_alignment,0.9562171052843754
+2,0.1,no noise,embedding_alignment,0.969119924025721
+2,0.1,noise,embedding_alignment,0.969119924025721
+5,0.1,no noise,embedding_alignment,0.965372055723781
+5,0.1,noise,embedding_alignment,0.965372055723781
+5,0.1,no noise,embedding_alignment,0.9660990935449489
+5,0.1,noise,embedding_alignment,0.9660990935449489
+5,0.1,no noise,embedding_alignment,0.9608750930246375
+5,0.1,noise,embedding_alignment,0.9608750930246375
+5,0.1,no noise,embedding_alignment,0.9680899167367669
+5,0.1,noise,embedding_alignment,0.9680899167367669
+5,0.1,no noise,embedding_alignment,0.989007053418463
+5,0.1,noise,embedding_alignment,0.989007053418463
+10,0.1,no noise,embedding_alignment,0.9564520649275582
+10,0.1,noise,embedding_alignment,0.9564520649275582
+10,0.1,no noise,embedding_alignment,0.9831803859708096
+10,0.1,noise,embedding_alignment,0.9831803859708096
+10,0.1,no noise,embedding_alignment,0.9448760380408071
+10,0.1,noise,embedding_alignment,0.9448760380408071
+10,0.1,no noise,embedding_alignment,0.9724009813717504
+10,0.1,noise,embedding_alignment,0.9724009813717504
+10,0.1,no noise,embedding_alignment,0.9693317666135489
+10,0.1,noise,embedding_alignment,0.9693317666135489
+2,0.15,no noise,embedding_alignment,0.9722201593884637
+2,0.15,noise,embedding_alignment,0.9722201593884637
+2,0.15,no noise,embedding_alignment,0.9637529849990665
+2,0.15,noise,embedding_alignment,0.9637529849990665
+2,0.15,no noise,embedding_alignment,0.9829838896755674
+2,0.15,noise,embedding_alignment,0.9829838896755674
+2,0.15,no noise,embedding_alignment,0.9601597801035353
+2,0.15,noise,embedding_alignment,0.9601597801035353
+2,0.15,no noise,embedding_alignment,0.9829374185640546
+2,0.15,noise,embedding_alignment,0.9829374185640546
+5,0.15,no noise,embedding_alignment,0.972834107408326
+5,0.15,noise,embedding_alignment,0.972834107408326
+5,0.15,no noise,embedding_alignment,0.9652904273378329
+5,0.15,noise,embedding_alignment,0.9652904273378329
+5,0.15,no noise,embedding_alignment,0.9811939044483035
+5,0.15,noise,embedding_alignment,0.9811939044483035
+5,0.15,no noise,embedding_alignment,0.9646752092580102
+5,0.15,noise,embedding_alignment,0.9646752092580102
+5,0.15,no noise,embedding_alignment,0.9791868552640597
+5,0.15,noise,embedding_alignment,0.9791868552640597
+10,0.15,no noise,embedding_alignment,0.9494865819057423
+10,0.15,noise,embedding_alignment,0.9494865819057423
+10,0.15,no noise,embedding_alignment,0.9673555291152198
+10,0.15,noise,embedding_alignment,0.9673555291152198
+10,0.15,no noise,embedding_alignment,0.9592493176367707
+10,0.15,noise,embedding_alignment,0.9592493176367707
+10,0.15,no noise,embedding_alignment,0.967473730941143
+10,0.15,noise,embedding_alignment,0.967473730941143
+10,0.15,no noise,embedding_alignment,0.9576512443134733
+10,0.15,noise,embedding_alignment,0.9576512443134733
+2,0.2,no noise,embedding_alignment,0.973007278995053
+2,0.2,noise,embedding_alignment,0.973007278995053
+2,0.2,no noise,embedding_alignment,0.9602542821189062
+2,0.2,noise,embedding_alignment,0.9602542821189062
+2,0.2,no noise,embedding_alignment,0.9767039607736617
+2,0.2,noise,embedding_alignment,0.9767039607736617
+2,0.2,no noise,embedding_alignment,0.9252728058053424
+2,0.2,noise,embedding_alignment,0.9252728058053424
+2,0.2,no noise,embedding_alignment,0.9500264597495611
+2,0.2,noise,embedding_alignment,0.9500264597495611
+5,0.2,no noise,embedding_alignment,0.9707469858498956
+5,0.2,noise,embedding_alignment,0.9707469858498956
+5,0.2,no noise,embedding_alignment,0.9713058176185934
+5,0.2,noise,embedding_alignment,0.9713058176185934
+5,0.2,no noise,embedding_alignment,0.98144760854512
+5,0.2,noise,embedding_alignment,0.98144760854512
+5,0.2,no noise,embedding_alignment,0.9408597499408908
+5,0.2,noise,embedding_alignment,0.9408597499408908
+5,0.2,no noise,embedding_alignment,0.973427366319096
+5,0.2,noise,embedding_alignment,0.973427366319096
+10,0.2,no noise,embedding_alignment,0.9721524475459562
+10,0.2,noise,embedding_alignment,0.9721524475459562
+10,0.2,no noise,embedding_alignment,0.954183242169422
+10,0.2,noise,embedding_alignment,0.954183242169422
+10,0.2,no noise,embedding_alignment,0.9666503570897408
+10,0.2,noise,embedding_alignment,0.9666503570897408
+10,0.2,no noise,embedding_alignment,0.9726287362378233
+10,0.2,noise,embedding_alignment,0.9726287362378233
+10,0.2,no noise,embedding_alignment,0.9689194776891398
+10,0.2,noise,embedding_alignment,0.9689194776891398
+2,0.25,no noise,embedding_alignment,0.9861134016184337
+2,0.25,noise,embedding_alignment,0.9861134016184337
+2,0.25,no noise,embedding_alignment,0.9609844153046012
+2,0.25,noise,embedding_alignment,0.9609844153046012
+2,0.25,no noise,embedding_alignment,0.9607502117200505
+2,0.25,noise,embedding_alignment,0.9607502117200505
+2,0.25,no noise,embedding_alignment,0.9785234184712421
+2,0.25,noise,embedding_alignment,0.9785234184712421
+2,0.25,no noise,embedding_alignment,0.9743119593428361
+2,0.25,noise,embedding_alignment,0.9743119593428361
+5,0.25,no noise,embedding_alignment,0.9625535558721785
+5,0.25,noise,embedding_alignment,0.9625535558721785
+5,0.25,no noise,embedding_alignment,0.9664752440901523
+5,0.25,noise,embedding_alignment,0.9664752440901523
+5,0.25,no noise,embedding_alignment,0.9620944236758029
+5,0.25,noise,embedding_alignment,0.9620944236758029
+5,0.25,no noise,embedding_alignment,0.9732950905160165
+5,0.25,noise,embedding_alignment,0.9732950905160165
+5,0.25,no noise,embedding_alignment,0.9602618587191547
+5,0.25,noise,embedding_alignment,0.9602618587191547
+10,0.25,no noise,embedding_alignment,0.9599067340665627
+10,0.25,noise,embedding_alignment,0.9599067340665627
+10,0.25,no noise,embedding_alignment,0.9718741780322904
+10,0.25,noise,embedding_alignment,0.9718741780322904
+10,0.25,no noise,embedding_alignment,0.9613621634605177
+10,0.25,noise,embedding_alignment,0.9613621634605177
+10,0.25,no noise,embedding_alignment,0.9182912477936117
+10,0.25,noise,embedding_alignment,0.9182912477936117
+10,0.25,no noise,embedding_alignment,0.8926313843466154
+10,0.25,noise,embedding_alignment,0.8926313843466154
+2,0.0,no noise,topographic_rho,0.35788406963396774
+2,0.0,noise,topographic_rho,0.35788406963396774
+2,0.0,no noise,topographic_rho,0.40152176007688284
+2,0.0,noise,topographic_rho,0.40152176007688284
+2,0.0,no noise,topographic_rho,0.5259931999606526
+2,0.0,noise,topographic_rho,0.5259931999606526
+2,0.0,no noise,topographic_rho,0.39987539069809996
+2,0.0,noise,topographic_rho,0.39987539069809996
+2,0.0,no noise,topographic_rho,0.42129796516341206
+2,0.0,noise,topographic_rho,0.42129796516341206
+5,0.0,no noise,topographic_rho,0.6015393648249184
+5,0.0,noise,topographic_rho,0.6015393648249184
+5,0.0,no noise,topographic_rho,0.62592426543094
+5,0.0,noise,topographic_rho,0.62592426543094
+5,0.0,no noise,topographic_rho,0.587105192159073
+5,0.0,noise,topographic_rho,0.587105192159073
+5,0.0,no noise,topographic_rho,0.5580892373569339
+5,0.0,noise,topographic_rho,0.5580892373569339
+5,0.0,no noise,topographic_rho,0.37090496732552447
+5,0.0,noise,topographic_rho,0.37090496732552447
+10,0.0,no noise,topographic_rho,0.5536093279552716
+10,0.0,noise,topographic_rho,0.5536093279552716
+10,0.0,no noise,topographic_rho,0.5317061487011827
+10,0.0,noise,topographic_rho,0.5317061487011827
+10,0.0,no noise,topographic_rho,0.5636371172164841
+10,0.0,noise,topographic_rho,0.5636371172164841
+10,0.0,no noise,topographic_rho,0.3121926517471571
+10,0.0,noise,topographic_rho,0.3121926517471571
+10,0.0,no noise,topographic_rho,0.3228473705139279
+10,0.0,noise,topographic_rho,0.3228473705139279
+2,0.05,no noise,topographic_rho,0.3597972499171559
+2,0.05,noise,topographic_rho,0.37671068204984764
+2,0.05,no noise,topographic_rho,0.44388060626530174
+2,0.05,noise,topographic_rho,0.46888797243021585
+2,0.05,no noise,topographic_rho,0.46564169446660564
+2,0.05,noise,topographic_rho,0.48842339703888205
+2,0.05,no noise,topographic_rho,0.3896522572220536
+2,0.05,noise,topographic_rho,0.4058121651751753
+2,0.05,no noise,topographic_rho,0.3785594604873356
+2,0.05,noise,topographic_rho,0.39015836648433194
+5,0.05,no noise,topographic_rho,0.5563280840026741
+5,0.05,noise,topographic_rho,0.5777478911138335
+5,0.05,no noise,topographic_rho,0.5006520512224553
+5,0.05,noise,topographic_rho,0.5151390423920792
+5,0.05,no noise,topographic_rho,0.5833066336892551
+5,0.05,noise,topographic_rho,0.5985949984696834
+5,0.05,no noise,topographic_rho,0.5294624829746929
+5,0.05,noise,topographic_rho,0.5458083097174833
+5,0.05,no noise,topographic_rho,0.37985924991018694
+5,0.05,noise,topographic_rho,0.3954028195480137
+10,0.05,no noise,topographic_rho,0.5940165172731879
+10,0.05,noise,topographic_rho,0.6059321503846143
+10,0.05,no noise,topographic_rho,0.5547106138364151
+10,0.05,noise,topographic_rho,0.5650150278335422
+10,0.05,no noise,topographic_rho,0.6814603494334152
+10,0.05,noise,topographic_rho,0.692943353782999
+10,0.05,no noise,topographic_rho,0.6055818365633265
+10,0.05,noise,topographic_rho,0.6174863848885009
+10,0.05,no noise,topographic_rho,0.48908548778246796
+10,0.05,noise,topographic_rho,0.4934630351758986
+2,0.1,no noise,topographic_rho,0.3961492815990543
+2,0.1,noise,topographic_rho,0.4511551875782632
+2,0.1,no noise,topographic_rho,0.44630884147644617
+2,0.1,noise,topographic_rho,0.511688785635397
+2,0.1,no noise,topographic_rho,0.3602368592340912
+2,0.1,noise,topographic_rho,0.41458040662984763
+2,0.1,no noise,topographic_rho,0.349952303631427
+2,0.1,noise,topographic_rho,0.38943816140324483
+2,0.1,no noise,topographic_rho,0.3510873163977591
+2,0.1,noise,topographic_rho,0.3982702360349584
+5,0.1,no noise,topographic_rho,0.5861944518429955
+5,0.1,noise,topographic_rho,0.6211894726889995
+5,0.1,no noise,topographic_rho,0.44912497579704297
+5,0.1,noise,topographic_rho,0.48908843343584835
+5,0.1,no noise,topographic_rho,0.5441786805915049
+5,0.1,noise,topographic_rho,0.5901079059085967
+5,0.1,no noise,topographic_rho,0.46967937592605946
+5,0.1,noise,topographic_rho,0.5234711457819372
+5,0.1,no noise,topographic_rho,0.3277842060461689
+5,0.1,noise,topographic_rho,0.3439668101403908
+10,0.1,no noise,topographic_rho,0.5789876092973254
+10,0.1,noise,topographic_rho,0.6063098639647644
+10,0.1,no noise,topographic_rho,0.6289732713170656
+10,0.1,noise,topographic_rho,0.6698887362560169
+10,0.1,no noise,topographic_rho,0.5618421720695205
+10,0.1,noise,topographic_rho,0.5888745009694548
+10,0.1,no noise,topographic_rho,0.6216352045405922
+10,0.1,noise,topographic_rho,0.6505149651822028
+10,0.1,no noise,topographic_rho,0.5604072640748746
+10,0.1,noise,topographic_rho,0.5757726108809175
+2,0.15,no noise,topographic_rho,0.32198117506015966
+2,0.15,noise,topographic_rho,0.40879676830201245
+2,0.15,no noise,topographic_rho,0.26447145930682564
+2,0.15,noise,topographic_rho,0.36828890065763215
+2,0.15,no noise,topographic_rho,0.3361765614624494
+2,0.15,noise,topographic_rho,0.4357711291616677
+2,0.15,no noise,topographic_rho,0.31538868892580435
+2,0.15,noise,topographic_rho,0.40004237848335017
+2,0.15,no noise,topographic_rho,0.3039108691206293
+2,0.15,noise,topographic_rho,0.3984684513892141
+5,0.15,no noise,topographic_rho,0.46190325504237983
+5,0.15,noise,topographic_rho,0.5475616569965882
+5,0.15,no noise,topographic_rho,0.5061035816843248
+5,0.15,noise,topographic_rho,0.5569819647494366
+5,0.15,no noise,topographic_rho,0.4474817386865294
+5,0.15,noise,topographic_rho,0.5514663610648166
+5,0.15,no noise,topographic_rho,0.3761142621532144
+5,0.15,noise,topographic_rho,0.46910348559688636
+5,0.15,no noise,topographic_rho,0.42935365951676285
+5,0.15,noise,topographic_rho,0.49335649944523385
+10,0.15,no noise,topographic_rho,0.5778159978213755
+10,0.15,noise,topographic_rho,0.6154242317785726
+10,0.15,no noise,topographic_rho,0.5667073898570967
+10,0.15,noise,topographic_rho,0.6188927928337821
+10,0.15,no noise,topographic_rho,0.5022311898411899
+10,0.15,noise,topographic_rho,0.5609188705001741
+10,0.15,no noise,topographic_rho,0.5669431059168157
+10,0.15,noise,topographic_rho,0.5994890786649024
+10,0.15,no noise,topographic_rho,0.47420197391584235
+10,0.15,noise,topographic_rho,0.5304718723958978
+2,0.2,no noise,topographic_rho,0.2488011167640074
+2,0.2,noise,topographic_rho,0.3712084517807447
+2,0.2,no noise,topographic_rho,0.3017852657845324
+2,0.2,noise,topographic_rho,0.4384411860008119
+2,0.2,no noise,topographic_rho,0.2852369289489698
+2,0.2,noise,topographic_rho,0.4373078702376968
+2,0.2,no noise,topographic_rho,0.2286023244792641
+2,0.2,noise,topographic_rho,0.3182286230055871
+2,0.2,no noise,topographic_rho,0.291440379613042
+2,0.2,noise,topographic_rho,0.4222578058195638
+5,0.2,no noise,topographic_rho,0.398459756766307
+5,0.2,noise,topographic_rho,0.5192737298139746
+5,0.2,no noise,topographic_rho,0.36820500635236353
+5,0.2,noise,topographic_rho,0.5239638291111551
+5,0.2,no noise,topographic_rho,0.3879020102678221
+5,0.2,noise,topographic_rho,0.5101311824619854
+5,0.2,no noise,topographic_rho,0.4702110176988552
+5,0.2,noise,topographic_rho,0.5840308422598233
+5,0.2,no noise,topographic_rho,0.41132971162639115
+5,0.2,noise,topographic_rho,0.5355497352191609
+10,0.2,no noise,topographic_rho,0.5159131687259403
+10,0.2,noise,topographic_rho,0.606029354053063
+10,0.2,no noise,topographic_rho,0.6305529188844761
+10,0.2,noise,topographic_rho,0.6921656466704
+10,0.2,no noise,topographic_rho,0.4541076509103257
+10,0.2,noise,topographic_rho,0.5233766583909981
+10,0.2,no noise,topographic_rho,0.45520999390209155
+10,0.2,noise,topographic_rho,0.5343118556923441
+10,0.2,no noise,topographic_rho,0.4757930957274826
+10,0.2,noise,topographic_rho,0.5169606052585332
+2,0.25,no noise,topographic_rho,0.2541761100398212
+2,0.25,noise,topographic_rho,0.3617247844872389
+2,0.25,no noise,topographic_rho,0.25143546790637544
+2,0.25,noise,topographic_rho,0.43579928011360225
+2,0.25,no noise,topographic_rho,0.27259286307720226
+2,0.25,noise,topographic_rho,0.3687028028954102
+2,0.25,no noise,topographic_rho,0.2148314728419027
+2,0.25,noise,topographic_rho,0.3874887669349533
+2,0.25,no noise,topographic_rho,0.19634184052346249
+2,0.25,noise,topographic_rho,0.3697691685181864
+5,0.25,no noise,topographic_rho,0.24592336275196983
+5,0.25,noise,topographic_rho,0.4268778850925976
+5,0.25,no noise,topographic_rho,0.34365574011822425
+5,0.25,noise,topographic_rho,0.5099661965985823
+5,0.25,no noise,topographic_rho,0.35195234107726725
+5,0.25,noise,topographic_rho,0.5255288089722144
+5,0.25,no noise,topographic_rho,0.29269806551853444
+5,0.25,noise,topographic_rho,0.4622291670884105
+5,0.25,no noise,topographic_rho,0.41035194270312536
+5,0.25,noise,topographic_rho,0.510469815352387
+10,0.25,no noise,topographic_rho,0.42892569740843806
+10,0.25,noise,topographic_rho,0.551548070121563
+10,0.25,no noise,topographic_rho,0.5478554511879797
+10,0.25,noise,topographic_rho,0.6572012914680807
+10,0.25,no noise,topographic_rho,0.42715739363556254
+10,0.25,noise,topographic_rho,0.5448069632036106
+10,0.25,no noise,topographic_rho,0.3141287889057647
+10,0.25,noise,topographic_rho,0.40372486514439876
+10,0.25,no noise,topographic_rho,0.24094198733053937
+10,0.25,noise,topographic_rho,0.28714568040773353
+2,0.0,no noise,pos_dis,0.61083984375
+2,0.0,noise,pos_dis,0.61083984375
+2,0.0,no noise,pos_dis,0.2802411913871765
+2,0.0,noise,pos_dis,0.2802411913871765
+2,0.0,no noise,pos_dis,0.0875677764415741
+2,0.0,noise,pos_dis,0.0875677764415741
+2,0.0,no noise,pos_dis,0.35040363669395447
+2,0.0,noise,pos_dis,0.35040363669395447
+2,0.0,no noise,pos_dis,0.6825405359268188
+2,0.0,noise,pos_dis,0.6825405359268188
+5,0.0,no noise,pos_dis,0.1683388352394104
+5,0.0,noise,pos_dis,0.1683388352394104
+5,0.0,no noise,pos_dis,0.08430212736129761
+5,0.0,noise,pos_dis,0.08430212736129761
+5,0.0,no noise,pos_dis,0.36627447605133057
+5,0.0,noise,pos_dis,0.36627447605133057
+5,0.0,no noise,pos_dis,0.04116244986653328
+5,0.0,noise,pos_dis,0.04116244986653328
+5,0.0,no noise,pos_dis,0.25988128781318665
+5,0.0,noise,pos_dis,0.25988128781318665
+10,0.0,no noise,pos_dis,0.13431355357170105
+10,0.0,noise,pos_dis,0.13431355357170105
+10,0.0,no noise,pos_dis,0.25487619638442993
+10,0.0,noise,pos_dis,0.25487619638442993
+10,0.0,no noise,pos_dis,0.1412154883146286
+10,0.0,noise,pos_dis,0.1412154883146286
+10,0.0,no noise,pos_dis,0.5574923753738403
+10,0.0,noise,pos_dis,0.5574923753738403
+10,0.0,no noise,pos_dis,0.06738924235105515
+10,0.0,noise,pos_dis,0.06738924235105515
+2,0.05,no noise,pos_dis,0.07611251622438431
+2,0.05,noise,pos_dis,0.08310125768184662
+2,0.05,no noise,pos_dis,0.03025880828499794
+2,0.05,noise,pos_dis,0.035432592034339905
+2,0.05,no noise,pos_dis,0.034231580793857574
+2,0.05,noise,pos_dis,0.033989064395427704
+2,0.05,no noise,pos_dis,0.13750503957271576
+2,0.05,noise,pos_dis,0.14699356257915497
+2,0.05,no noise,pos_dis,0.08291471004486084
+2,0.05,noise,pos_dis,0.09087541699409485
+5,0.05,no noise,pos_dis,0.08522143959999084
+5,0.05,noise,pos_dis,0.09371279180049896
+5,0.05,no noise,pos_dis,0.14961987733840942
+5,0.05,noise,pos_dis,0.15646536648273468
+5,0.05,no noise,pos_dis,0.2802184820175171
+5,0.05,noise,pos_dis,0.30105486512184143
+5,0.05,no noise,pos_dis,0.2239740788936615
+5,0.05,noise,pos_dis,0.24664053320884705
+5,0.05,no noise,pos_dis,0.215158611536026
+5,0.05,noise,pos_dis,0.23078060150146484
+10,0.05,no noise,pos_dis,0.06759507954120636
+10,0.05,noise,pos_dis,0.07374769449234009
+10,0.05,no noise,pos_dis,0.3132762908935547
+10,0.05,noise,pos_dis,0.34774187207221985
+10,0.05,no noise,pos_dis,0.1976601630449295
+10,0.05,noise,pos_dis,0.22762982547283173
+10,0.05,no noise,pos_dis,0.15887928009033203
+10,0.05,noise,pos_dis,0.18138346076011658
+10,0.05,no noise,pos_dis,0.6172506809234619
+10,0.05,noise,pos_dis,0.7632389068603516
+2,0.1,no noise,pos_dis,0.10713234543800354
+2,0.1,noise,pos_dis,0.1256784349679947
+2,0.1,no noise,pos_dis,0.10120995342731476
+2,0.1,noise,pos_dis,0.11810111999511719
+2,0.1,no noise,pos_dis,0.04231427609920502
+2,0.1,noise,pos_dis,0.05099748447537422
+2,0.1,no noise,pos_dis,0.02487803064286709
+2,0.1,noise,pos_dis,0.02637440524995327
+2,0.1,no noise,pos_dis,0.10801329463720322
+2,0.1,noise,pos_dis,0.1247568279504776
+5,0.1,no noise,pos_dis,0.04888544976711273
+5,0.1,noise,pos_dis,0.06104084849357605
+5,0.1,no noise,pos_dis,0.055079616606235504
+5,0.1,noise,pos_dis,0.06103290244936943
+5,0.1,no noise,pos_dis,0.06071973964571953
+5,0.1,noise,pos_dis,0.06974242627620697
+5,0.1,no noise,pos_dis,0.06224393844604492
+5,0.1,noise,pos_dis,0.07360587269067764
+5,0.1,no noise,pos_dis,0.07512690871953964
+5,0.1,noise,pos_dis,0.0885264202952385
+10,0.1,no noise,pos_dis,0.056276507675647736
+10,0.1,noise,pos_dis,0.0669117122888565
+10,0.1,no noise,pos_dis,0.05966745689511299
+10,0.1,noise,pos_dis,0.06911581754684448
+10,0.1,no noise,pos_dis,0.05769135802984238
+10,0.1,noise,pos_dis,0.06805326044559479
+10,0.1,no noise,pos_dis,0.22472438216209412
+10,0.1,noise,pos_dis,0.24811705946922302
+10,0.1,no noise,pos_dis,0.2036396563053131
+10,0.1,noise,pos_dis,0.2252117395401001
+2,0.15,no noise,pos_dis,0.05094883590936661
+2,0.15,noise,pos_dis,0.06399013102054596
+2,0.15,no noise,pos_dis,0.02691742405295372
+2,0.15,noise,pos_dis,0.030483894050121307
+2,0.15,no noise,pos_dis,0.07838452607393265
+2,0.15,noise,pos_dis,0.09066887199878693
+2,0.15,no noise,pos_dis,0.09577703475952148
+2,0.15,noise,pos_dis,0.11292983591556549
+2,0.15,no noise,pos_dis,0.053076595067977905
+2,0.15,noise,pos_dis,0.0628804862499237
+5,0.15,no noise,pos_dis,0.05039208009839058
+5,0.15,noise,pos_dis,0.059880129992961884
+5,0.15,no noise,pos_dis,0.17759115993976593
+5,0.15,noise,pos_dis,0.18820559978485107
+5,0.15,no noise,pos_dis,0.013041095808148384
+5,0.15,noise,pos_dis,0.01616630144417286
+5,0.15,no noise,pos_dis,0.03552341088652611
+5,0.15,noise,pos_dis,0.043671272695064545
+5,0.15,no noise,pos_dis,0.0425281822681427
+5,0.15,noise,pos_dis,0.038386616855859756
+10,0.15,no noise,pos_dis,0.22635658085346222
+10,0.15,noise,pos_dis,0.30639415979385376
+10,0.15,no noise,pos_dis,0.05455631762742996
+10,0.15,noise,pos_dis,0.06552369147539139
+10,0.15,no noise,pos_dis,0.054872892796993256
+10,0.15,noise,pos_dis,0.0671648308634758
+10,0.15,no noise,pos_dis,0.15337160229682922
+10,0.15,noise,pos_dis,0.2141651213169098
+10,0.15,no noise,pos_dis,0.029728632420301437
+10,0.15,noise,pos_dis,0.039850156754255295
+2,0.2,no noise,pos_dis,0.06643390655517578
+2,0.2,noise,pos_dis,0.08587026596069336
+2,0.2,no noise,pos_dis,0.01656227558851242
+2,0.2,noise,pos_dis,0.022375086322426796
+2,0.2,no noise,pos_dis,0.01089573185890913
+2,0.2,noise,pos_dis,0.011568209156394005
+2,0.2,no noise,pos_dis,0.16573908925056458
+2,0.2,noise,pos_dis,0.2174627184867859
+2,0.2,no noise,pos_dis,0.01265963539481163
+2,0.2,noise,pos_dis,0.016159353777766228
+5,0.2,no noise,pos_dis,0.03628777340054512
+5,0.2,noise,pos_dis,0.04343637079000473
+5,0.2,no noise,pos_dis,0.018999546766281128
+5,0.2,noise,pos_dis,0.024346427991986275
+5,0.2,no noise,pos_dis,0.02172762341797352
+5,0.2,noise,pos_dis,0.025949060916900635
+5,0.2,no noise,pos_dis,0.09969978034496307
+5,0.2,noise,pos_dis,0.1374841034412384
+5,0.2,no noise,pos_dis,0.06963063776493073
+5,0.2,noise,pos_dis,0.0912998840212822
+10,0.2,no noise,pos_dis,0.11237259209156036
+10,0.2,noise,pos_dis,0.15035414695739746
+10,0.2,no noise,pos_dis,0.1135333776473999
+10,0.2,noise,pos_dis,0.1449594795703888
+10,0.2,no noise,pos_dis,0.2875523567199707
+10,0.2,noise,pos_dis,0.3843774199485779
+10,0.2,no noise,pos_dis,0.21697063744068146
+10,0.2,noise,pos_dis,0.2903166115283966
+10,0.2,no noise,pos_dis,0.17987458407878876
+10,0.2,noise,pos_dis,0.20450861752033234
+2,0.25,no noise,pos_dis,0.037525475025177
+2,0.25,noise,pos_dis,0.03633325546979904
+2,0.25,no noise,pos_dis,0.07456168532371521
+2,0.25,noise,pos_dis,0.09563598036766052
+2,0.25,no noise,pos_dis,0.014442084357142448
+2,0.25,noise,pos_dis,0.017086641862988472
+2,0.25,no noise,pos_dis,0.05204208940267563
+2,0.25,noise,pos_dis,0.06995075941085815
+2,0.25,no noise,pos_dis,0.07852508127689362
+2,0.25,noise,pos_dis,0.09861788153648376
+5,0.25,no noise,pos_dis,0.028424743562936783
+5,0.25,noise,pos_dis,0.03700157627463341
+5,0.25,no noise,pos_dis,0.022796230390667915
+5,0.25,noise,pos_dis,0.02808029018342495
+5,0.25,no noise,pos_dis,0.03225453197956085
+5,0.25,noise,pos_dis,0.04276864603161812
+5,0.25,no noise,pos_dis,0.04962493106722832
+5,0.25,noise,pos_dis,0.066460981965065
+5,0.25,no noise,pos_dis,0.18960773944854736
+5,0.25,noise,pos_dis,0.23526272177696228
+10,0.25,no noise,pos_dis,0.06631450355052948
+10,0.25,noise,pos_dis,0.09006272256374359
+10,0.25,no noise,pos_dis,0.07970993220806122
+10,0.25,noise,pos_dis,0.10708411782979965
+10,0.25,no noise,pos_dis,0.07270760834217072
+10,0.25,noise,pos_dis,0.0954379215836525
+10,0.25,no noise,pos_dis,0.250433087348938
+10,0.25,noise,pos_dis,0.3447195887565613
+10,0.25,no noise,pos_dis,0.11032084375619888
+10,0.25,noise,pos_dis,0.14444896578788757
+2,0.0,no noise,bos_dis,0.2525697350502014
+2,0.0,noise,bos_dis,0.2525697350502014
+2,0.0,no noise,bos_dis,0.19375155866146088
+2,0.0,noise,bos_dis,0.19375155866146088
+2,0.0,no noise,bos_dis,0.11072126775979996
+2,0.0,noise,bos_dis,0.11072126775979996
+2,0.0,no noise,bos_dis,0.2224799245595932
+2,0.0,noise,bos_dis,0.2224799245595932
+2,0.0,no noise,bos_dis,0.7187436819076538
+2,0.0,noise,bos_dis,0.7187436819076538
+5,0.0,no noise,bos_dis,0.1509215384721756
+5,0.0,noise,bos_dis,0.1509215384721756
+5,0.0,no noise,bos_dis,0.10068892687559128
+5,0.0,noise,bos_dis,0.10068892687559128
+5,0.0,no noise,bos_dis,0.19272591173648834
+5,0.0,noise,bos_dis,0.19272591173648834
+5,0.0,no noise,bos_dis,0.14035090804100037
+5,0.0,noise,bos_dis,0.14035090804100037
+5,0.0,no noise,bos_dis,0.08918529003858566
+5,0.0,noise,bos_dis,0.08918529003858566
+10,0.0,no noise,bos_dis,0.2300141304731369
+10,0.0,noise,bos_dis,0.2300141304731369
+10,0.0,no noise,bos_dis,0.1099022701382637
+10,0.0,noise,bos_dis,0.1099022701382637
+10,0.0,no noise,bos_dis,0.09097804874181747
+10,0.0,noise,bos_dis,0.09097804874181747
+10,0.0,no noise,bos_dis,0.43208444118499756
+10,0.0,noise,bos_dis,0.43208444118499756
+10,0.0,no noise,bos_dis,0.14668850600719452
+10,0.0,noise,bos_dis,0.14668850600719452
+2,0.05,no noise,bos_dis,0.12685348093509674
+2,0.05,noise,bos_dis,0.1287047415971756
+2,0.05,no noise,bos_dis,0.1288781613111496
+2,0.05,noise,bos_dis,0.14028619229793549
+2,0.05,no noise,bos_dis,0.14114728569984436
+2,0.05,noise,bos_dis,0.16157560050487518
+2,0.05,no noise,bos_dis,0.1336461454629898
+2,0.05,noise,bos_dis,0.14708246290683746
+2,0.05,no noise,bos_dis,0.12129025161266327
+2,0.05,noise,bos_dis,0.1323082596063614
+5,0.05,no noise,bos_dis,0.07094873487949371
+5,0.05,noise,bos_dis,0.07653667777776718
+5,0.05,no noise,bos_dis,0.10119982808828354
+5,0.05,noise,bos_dis,0.1036485806107521
+5,0.05,no noise,bos_dis,0.13651275634765625
+5,0.05,noise,bos_dis,0.1527029573917389
+5,0.05,no noise,bos_dis,0.13731732964515686
+5,0.05,noise,bos_dis,0.14177589118480682
+5,0.05,no noise,bos_dis,0.08327201753854752
+5,0.05,noise,bos_dis,0.08882196992635727
+10,0.05,no noise,bos_dis,0.1269487887620926
+10,0.05,noise,bos_dis,0.13862934708595276
+10,0.05,no noise,bos_dis,0.10705888271331787
+10,0.05,noise,bos_dis,0.12508231401443481
+10,0.05,no noise,bos_dis,0.1553756445646286
+10,0.05,noise,bos_dis,0.16509206593036652
+10,0.05,no noise,bos_dis,0.11069418489933014
+10,0.05,noise,bos_dis,0.12421658635139465
+10,0.05,no noise,bos_dis,0.3923855125904083
+10,0.05,noise,bos_dis,0.5370524525642395
+2,0.1,no noise,bos_dis,0.08505217730998993
+2,0.1,noise,bos_dis,0.09879080206155777
+2,0.1,no noise,bos_dis,0.1167081668972969
+2,0.1,noise,bos_dis,0.13554821908473969
+2,0.1,no noise,bos_dis,0.09381475299596786
+2,0.1,noise,bos_dis,0.09892966598272324
+2,0.1,no noise,bos_dis,0.07722955197095871
+2,0.1,noise,bos_dis,0.07872902601957321
+2,0.1,no noise,bos_dis,0.10680767893791199
+2,0.1,noise,bos_dis,0.11523500829935074
+5,0.1,no noise,bos_dis,0.13340935111045837
+5,0.1,noise,bos_dis,0.14348439872264862
+5,0.1,no noise,bos_dis,0.0769798681139946
+5,0.1,noise,bos_dis,0.0813191682100296
+5,0.1,no noise,bos_dis,0.09405014663934708
+5,0.1,noise,bos_dis,0.0979074016213417
+5,0.1,no noise,bos_dis,0.1340770125389099
+5,0.1,noise,bos_dis,0.14341308176517487
+5,0.1,no noise,bos_dis,0.055722925812006
+5,0.1,noise,bos_dis,0.06635694205760956
+10,0.1,no noise,bos_dis,0.10978139191865921
+10,0.1,noise,bos_dis,0.10736966878175735
+10,0.1,no noise,bos_dis,0.13179199397563934
+10,0.1,noise,bos_dis,0.13877421617507935
+10,0.1,no noise,bos_dis,0.09029045701026917
+10,0.1,noise,bos_dis,0.09480377286672592
+10,0.1,no noise,bos_dis,0.09333536773920059
+10,0.1,noise,bos_dis,0.0898979902267456
+10,0.1,no noise,bos_dis,0.0695655345916748
+10,0.1,noise,bos_dis,0.06031165271997452
+2,0.15,no noise,bos_dis,0.08859515935182571
+2,0.15,noise,bos_dis,0.0931987315416336
+2,0.15,no noise,bos_dis,0.07401371747255325
+2,0.15,noise,bos_dis,0.07427811622619629
+2,0.15,no noise,bos_dis,0.12330812960863113
+2,0.15,noise,bos_dis,0.12380301207304001
+2,0.15,no noise,bos_dis,0.11204712837934494
+2,0.15,noise,bos_dis,0.09780075401067734
+2,0.15,no noise,bos_dis,0.05436132103204727
+2,0.15,noise,bos_dis,0.04852510243654251
+5,0.15,no noise,bos_dis,0.08060471713542938
+5,0.15,noise,bos_dis,0.08188163489103317
+5,0.15,no noise,bos_dis,0.16136550903320312
+5,0.15,noise,bos_dis,0.18280892074108124
+5,0.15,no noise,bos_dis,0.10026214271783829
+5,0.15,noise,bos_dis,0.09855540096759796
+5,0.15,no noise,bos_dis,0.08298847824335098
+5,0.15,noise,bos_dis,0.08367428183555603
+5,0.15,no noise,bos_dis,0.08872383832931519
+5,0.15,noise,bos_dis,0.0978815108537674
+10,0.15,no noise,bos_dis,0.1532370001077652
+10,0.15,noise,bos_dis,0.17903076112270355
+10,0.15,no noise,bos_dis,0.13201996684074402
+10,0.15,noise,bos_dis,0.1379701942205429
+10,0.15,no noise,bos_dis,0.07176999747753143
+10,0.15,noise,bos_dis,0.08182413130998611
+10,0.15,no noise,bos_dis,0.12659500539302826
+10,0.15,noise,bos_dis,0.1301291584968567
+10,0.15,no noise,bos_dis,0.1009335070848465
+10,0.15,noise,bos_dis,0.1018497496843338
+2,0.2,no noise,bos_dis,0.0695696622133255
+2,0.2,noise,bos_dis,0.07268153131008148
+2,0.2,no noise,bos_dis,0.07563653588294983
+2,0.2,noise,bos_dis,0.08856071531772614
+2,0.2,no noise,bos_dis,0.05902598053216934
+2,0.2,noise,bos_dis,0.054545462131500244
+2,0.2,no noise,bos_dis,0.15379934012889862
+2,0.2,noise,bos_dis,0.219444140791893
+2,0.2,no noise,bos_dis,0.09949300438165665
+2,0.2,noise,bos_dis,0.10534152388572693
+5,0.2,no noise,bos_dis,0.07011321187019348
+5,0.2,noise,bos_dis,0.06431355327367783
+5,0.2,no noise,bos_dis,0.07900921255350113
+5,0.2,noise,bos_dis,0.07730613648891449
+5,0.2,no noise,bos_dis,0.07929088175296783
+5,0.2,noise,bos_dis,0.07700493931770325
+5,0.2,no noise,bos_dis,0.10727594792842865
+5,0.2,noise,bos_dis,0.1048484742641449
+5,0.2,no noise,bos_dis,0.12479881197214127
+5,0.2,noise,bos_dis,0.13249069452285767
+10,0.2,no noise,bos_dis,0.1055297926068306
+10,0.2,noise,bos_dis,0.11104726046323776
+10,0.2,no noise,bos_dis,0.08407356590032578
+10,0.2,noise,bos_dis,0.07678504288196564
+10,0.2,no noise,bos_dis,0.22422151267528534
+10,0.2,noise,bos_dis,0.2361690104007721
+10,0.2,no noise,bos_dis,0.1590563952922821
+10,0.2,noise,bos_dis,0.15566767752170563
+10,0.2,no noise,bos_dis,0.0688704326748848
+10,0.2,noise,bos_dis,0.06543835997581482
+2,0.25,no noise,bos_dis,0.05793359503149986
+2,0.25,noise,bos_dis,0.045376356691122055
+2,0.25,no noise,bos_dis,0.13894249498844147
+2,0.25,noise,bos_dis,0.16103136539459229
+2,0.25,no noise,bos_dis,0.008490503765642643
+2,0.25,noise,bos_dis,0.013928340747952461
+2,0.25,no noise,bos_dis,0.06551827490329742
+2,0.25,noise,bos_dis,0.06362009048461914
+2,0.25,no noise,bos_dis,0.06273417919874191
+2,0.25,noise,bos_dis,0.057798754423856735
+5,0.25,no noise,bos_dis,0.07489228993654251
+5,0.25,noise,bos_dis,0.06113767996430397
+5,0.25,no noise,bos_dis,0.09746181219816208
+5,0.25,noise,bos_dis,0.11014087498188019
+5,0.25,no noise,bos_dis,0.06493501365184784
+5,0.25,noise,bos_dis,0.04657799005508423
+5,0.25,no noise,bos_dis,0.09110424667596817
+5,0.25,noise,bos_dis,0.08321615308523178
+5,0.25,no noise,bos_dis,0.18227320909500122
+5,0.25,noise,bos_dis,0.19851459562778473
+10,0.25,no noise,bos_dis,0.10491618514060974
+10,0.25,noise,bos_dis,0.09003409743309021
+10,0.25,no noise,bos_dis,0.0911136195063591
+10,0.25,noise,bos_dis,0.09509456157684326
+10,0.25,no noise,bos_dis,0.08685154467821121
+10,0.25,noise,bos_dis,0.07712084800004959
+10,0.25,no noise,bos_dis,0.1892504245042801
+10,0.25,noise,bos_dis,0.21765193343162537
+10,0.25,no noise,bos_dis,0.06515248119831085
+10,0.25,noise,bos_dis,0.07810866832733154

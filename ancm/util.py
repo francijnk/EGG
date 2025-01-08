@@ -55,10 +55,7 @@ def entropy_per_symbol(messages, freq_table):
     return entropies
 
 
-
-
 def compute_redundancy(messages, max_len, vocab_size):
-    from collections import defaultdict
     freq_table = defaultdict(float)
     for m in messages:
         m = _hashable_tensor(m)
@@ -110,10 +107,14 @@ def compute_max_rep(messages):
     message (0 for messages that consist of EOS symbols only).
     """
     if isinstance(messages, list):
+        # print(messages[0], len(messages), type(messages))
         messages = [msg.argmax(dim=1) if msg.dim() == 2
                     else msg for msg in messages]
         messages = torch.nn.utils.rnn.pad_sequence(messages, batch_first=True)
-        messages = torch.stack(messages)
+        # print(messages[0], len(messages), type(messages))
+        # messages = torch.stack(messages)
+        # print(messages[0], len(messages), type(messages))
+        # print("\n\n")
 
     messages = messages.to(torch.float16)
     messages[messages == 0] = float('nan')
@@ -181,14 +182,14 @@ def compute_redundancy_smb(messages, max_len, vocab_size):
         entropies.append(H)
 
         redundancies = []
-        for entropy in entropies:
-            redundancy = 1 - entropy/max_entropy
+        for e in entropies:
+            redundancy = 1 - e / max_entropy
             redundancies.append(redundancy)
 
     return redundancies
 
 
-def compute_redundancy_msg(messages,  max_len):
+def compute_redundancy_msg(messages, max_len):
     """
     Computes redundancy at the message level.
     """

@@ -2,6 +2,9 @@
 
 > Emergence of Linguistic Communication from Referential Games with Symbolic and Pixel Input
 
+## Contents
+- `ancm/runs/` contains raw results
+- `ancm/results/` contains plots and analyses
 
 ## Setup
 ```bash
@@ -16,27 +19,13 @@ cd .. && python3 -m pip install --editable egg/ && cd ancm/
 3. Edit the training script `ancm/jobs/job.sh`
 4. Add the job `sbatch ancm/jobs/job.sh`
 
+## Plots & alalyses
+
+`python3 -m ancm.analyse -i ancm/runs/preliminary_results -o ancm/analyses/preliminary_results [--recompute]`
+
 ## Training
 
-To generate a dataset for a given set of perceptual dimensions:
-```bash
-python3 train.py --perceptual_dimensions '[4, 4, 4, 4, 4]' --n_distractors 4 \
-  --vocab_size 12 --n_epochs 10 --max_len 5 --length_cost 0.001 \
-  --train_samples 1e5 --sender_cell lstm --receiver_cell lstm \
-  --sender_hidden 50 --receiver_hidden 50 --sender_embedding 10 --receiver_embedding 10 \
-  --sender_lr 1e-3 --receiver_lr 2e-4 --sender_entropy_coeff 0.01 --receiver_entropy_coeff 0.001 \
-  --mode rf --evaluate --output_json --dump_data_folder data/input_data/ --dump_results_folder runs/ --filename baseline
-```
-
-To use an existing NPZ dataset:
-```bash
-python3 train.py --load_input_data data/input_data/visa-5-200.npz --n_distractors 4 \
-  --vocab_size 12 --n_epochs 15 --max_len 5 --length_cost 0.001 \
-  --train_samples 1e5 --sender_cell lstm --receiver_cell lstm \
-  --sender_hidden 50 --receiver_hidden 50 --sender_embedding 10 --receiver_embedding 10 \
-  --sender_lr 1e-3 --receiver_lr 2e-4 --sender_entropy_coeff 0.01 --receiver_entropy_coeff 0.001 \
-  --mode rf --evaluate --output_json --dump_data_folder data/ --dump_results_folder runs/ --filename baseline
-```
+Check out `run_test.sh`.
 
 ## Data
 
