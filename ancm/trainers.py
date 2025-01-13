@@ -299,6 +299,7 @@ class Trainer:
                 for callback in self.callbacks:
                     callback.on_validation_begin(epoch + 1)
                 validation_loss, validation_interaction = self.eval(apply_noise=True)
+                crop_messages(validation_interaction)
 
                 for callback in self.callbacks:
                     callback.on_validation_end(
@@ -310,12 +311,11 @@ class Trainer:
                     for callback in self.callbacks:
                         callback.on_validation_begin(epoch + 1)
                     validation_loss, validation_interaction = self.eval(apply_noise=False)
+                    crop_messages(validation_interaction)
 
                     for callback in self.callbacks:
-
-                        if (isinstance(callback, TrainingMetricsCallback) 
+                        if (isinstance(callback, TrainingMetricsCallback)
                                 and isinstance(self.game.channel, ErasureChannel)):
-                            # to exclude erased symbol
                             callback.on_secondary_validation_end(
                                 validation_loss, validation_interaction, epoch + 1)
                         else:

@@ -1,35 +1,28 @@
 import torch
-import numpy as np # REmove
 import pandas as pd
 
 from collections import OrderedDict, defaultdict
-from typing import Any, Dict, Iterable, List, NamedTuple, Optional, Union
-from functools import reduce
 
 from rich.live import Live
-from rich.columns import Columns
-from rich.console import RenderableType
 from rich.progress import (
     BarColumn,
     Progress,
     ProgressColumn,
     TextColumn,
-    TimeElapsedColumn,
     TimeRemainingColumn,
 )
-from rich.table import Table, Column
+from rich.table import Table
 from rich.text import Text
 
 from ancm.util import (
-    crop_messages,
     compute_alignment,
     compute_max_rep,
     compute_redundancy_msg,
-    compute_redundancy_smb,
     compute_top_sim,
     compute_posdis,
     compute_bosdis,
 )
+from ancm.redundancy import compute_redundancy_smb, compute_redundancy_smb_adjusted
 
 from egg.core.util import find_lengths
 from egg.core.callbacks import Callback, CustomProgress
@@ -54,7 +47,7 @@ class EpochProgress(Progress):
             speed = task.speed
             if speed is None:
                 return Text("?", style="progress.data.speed")
-            speed = f"{1/speed:,.{2}f}"
+            speed = f"{1 / speed:,.{2}f}"
             return Text(f"{speed} s/ep", style="progress.data.speed")
 
     def __init__(self, *args, **kwargs):
@@ -89,7 +82,7 @@ class CustomProgressBarLogger(Callback):
         self.filename = filename
         self.step = validation_freq
         self.history = defaultdict(lambda: defaultdict(dict))
-        self.hide_cols = 'receiver_entropy sender_entropy'.split()
+        self.hide_cols = ['receiver_entropy', 'sender_entropy']
 
         self.progress = CustomProgress(
             TextColumn(
@@ -141,11 +134,14 @@ class CustomProgressBarLogger(Callback):
 
     def get_row(self, od, header=False):
         row = Table(expand=True, box=None, show_header=header,
-                    show_footer=False, padding=(0,1), pad_edge=True)
+                    show_footer=False, padding=(0, 1), pad_edge=True)
         for colname in od.keys():
             if colname in self.hide_cols:
                 continue
-            print_name = colname if not colname.startswith('actual_vocab_size') else 'vocab_size'
+
+            print_name = colname.replace('redund', 'r') \
+                if not colname.startswith('actual_vocab_size') else 'vocab_size'
+
             if colname == 'phase':
                 ratio = 1.25
             elif colname == 'epoch':
@@ -154,19 +150,19 @@ class CustomProgressBarLogger(Callback):
                 ratio = 1
             row.add_column(
                 print_name,
-                justify='left' if colname in ('phase', 'epoch')  else 'right',
+                justify='left' if colname in ('phase', 'epoch') else 'right',
                 ratio=ratio)
         if not header:
             row.add_row(
                 str(od.pop('epoch')),
-                *[self.format_metric_val(v)  for k, v in od.items()
+                *[self.format_metric_val(v) for k, v in od.items()
                   if k not in self.hide_cols],
                 style=self.style[od['phase']])
         return row
 
     @staticmethod
     def format_metric_val(val):
-        if val is None or val !=  val:
+        if val is None or val != val:
             return '–'
         elif isinstance(val, int):
             return str(val)
@@ -176,7 +172,9 @@ class CustomProgressBarLogger(Callback):
             return val
 
     def generate_live_table(self, od=None):
-        live_table = Table(expand=True, box=None, show_header=False, show_footer=False, padding=(0,0), pad_edge=True)
+        live_table = Table(
+            expand=True, box=None, show_header=False,
+            show_footer=False, padding=(0, 0), pad_edge=True)
         if od:
             header = self.get_row(od=od, header=True)
             live_table.add_row(header)
@@ -261,7 +259,7 @@ class CustomProgressBarLogger(Callback):
             phase = 'val'
             p_key = 'val'
         else:
-            phase = 'val (no noise)'
+            phase = 'val (nn)'
             p_key = 'val-no-noise'
 
         od = self.build_od(logs, loss, epoch, phase)
@@ -287,14 +285,15 @@ class CustomProgressBarLogger(Callback):
                 history_df = pd.concat(history_dfs)
                 dump_path = self.dump_results_folder / f'{self.filename}-training-history.csv'
                 history_df.to_csv(dump_path, index=False)
-                print(f"| Training history saved to {self.dump_results_folder/self.filename}-training-history.csv")
+                print(f"| Training history saved to {self.dump_results_folder / self.filename}-training-history.csv")
 
 
 class TrainingMetricsCallback(Callback):
-    def __init__(self, vocab_size, max_len, channel_type, sender, receiver, dataloader, device, bs=32):
+    def __init__(self, vocab_size, max_len, channel_type, error_prob, sender, receiver, dataloader, device, bs=32):
         self.vocab_size = vocab_size
         self.max_len = max_len
         self.channel_type = channel_type
+        self.error_prob = error_prob
 
         # to compute speaker-listener alignment
         self.sender = sender
@@ -306,7 +305,11 @@ class TrainingMetricsCallback(Callback):
     def on_validation_end(self, loss: float, logs: Interaction, epoch: int):
         if logs.message is not None:
             if logs.message.dim() == 3:
+                # under GS, EOS might be followed by a non-EOS symbol
                 message = logs.message.argmax(-1)
+                lengths = find_lengths(message)
+                for i in range(message.size(0)):
+                    message[i, lengths[i]:] = 0
             else:
                 message = logs.message
 
@@ -315,24 +318,29 @@ class TrainingMetricsCallback(Callback):
 
             logs.aux['lexicon_size'] = int(lexicon_size)
             logs.aux['actual_vocab_size'] = int(actual_vocab_size)
+            logs.aux['alignment'] = compute_alignment(self.dataloader, self.sender, self.receiver, self.device, self.bs)
 
             # redundancy
             logs.aux['max_rep'] = compute_max_rep(message)
             logs.aux['redund_msg'] = compute_redundancy_msg(logs.message, self.max_len)
-            logs.aux['redund_smb'] = compute_redundancy_smb(logs.message, self.max_len, self.vocab_size)
-
-            logs.aux['alignment'] = compute_alignment(self.dataloader, self.sender, self.receiver, self.device, self.bs)
+            logs.aux['redund_smb'] = compute_redundancy_smb(
+                message, self.max_len, self.vocab_size, self.channel_type, self.error_prob)
+            logs.aux['redund_smb_adj'] = compute_redundancy_smb_adjusted(
+                message, self.max_len, self.vocab_size, self.channel_type, self.error_prob)
 
             # compositinoality
             logs.aux['top_sim'] = compute_top_sim(logs.sender_input, logs.message)
             logs.aux['pos_dis'] = compute_posdis(logs.sender_input, logs.message)
             logs.aux['bos_dis'] = compute_bosdis(logs.sender_input, logs.message, self.vocab_size)
 
-
     def on_secondary_validation_end(self, loss: float, logs: Interaction, epoch: int):
         if logs.message is not None:
             if logs.message.dim() == 3:
+                # under GS, EOS might be followed by a non-EOS symbol
                 message = logs.message.argmax(-1)
+                lengths = find_lengths(message)
+                for i in range(message.size(0)):
+                    message[i, lengths[i]:] = 0
             else:
                 message = logs.message
 
@@ -345,41 +353,52 @@ class TrainingMetricsCallback(Callback):
 
             logs.aux['lexicon_size'] = int(lexicon_size)
             logs.aux['actual_vocab_size'] = int(actual_vocab_size)
+            logs.aux['alignment'] = compute_alignment(self.dataloader, self.sender, self.receiver, self.device, self.bs)
 
             # redundancy
             logs.aux['max_rep'] = compute_max_rep(message)
             logs.aux['redund_msg'] = compute_redundancy_msg(logs.message, self.max_len)
-            logs.aux['redund_smb'] = compute_redundancy_smb(logs.message, self.max_len, vocab_size)
+            logs.aux['redund_smb'] = compute_redundancy_smb(
+                message, self.max_len, vocab_size, channel=None, error_prob=0.0)
+            logs.aux['redund_smb_adj'] = compute_redundancy_smb_adjusted(
+                message, self.max_len, vocab_size, channel=None, error_prob=0.0)
 
-            logs.aux['alignment'] = compute_alignment(self.dataloader, self.sender, self.receiver, self.device, self.bs)
-
+            # compositionality
             logs.aux['top_sim'] = compute_top_sim(logs.sender_input, logs.message)
             logs.aux['pos_dis'] = compute_posdis(logs.sender_input, logs.message)
             logs.aux['bos_dis'] = compute_bosdis(logs.sender_input, logs.message, vocab_size)
 
-
     def on_epoch_end(self, loss: float, logs: Interaction, epoch: int):
         if logs.message is not None:
             if logs.message.dim() == 3:
+                # under GS, EOS might be followed by a non-EOS symbol
                 message = logs.message.argmax(-1)
+                lengths = find_lengths(message)
+                for i in range(message.size(0)):
+                    message[i, lengths[i]:] = 0
             else:
                 message = logs.message
+
+            # for erasure channel, use vocab size without the special symbol
+            vocab_size = self.vocab_size - 1 if self.channel_type == 'erasure' \
+                else self.vocab_size
 
             lexicon_size = torch.unique(logs.message, dim=0).shape[0]
             actual_vocab_size = torch.unique(torch.flatten(message), dim=0).size(0)
 
             logs.aux['lexicon_size'] = int(lexicon_size)
             logs.aux['actual_vocab_size'] = int(actual_vocab_size)
+            logs.aux['alignment'] = None  # compute_alignment(self.dataloader, self.sender, self.receiver, self.device, self.bs)
 
             # redundancy
             logs.aux['max_rep'] = compute_max_rep(message)
             logs.aux['redund_msg'] = None  # compute_redundancy_msg(logs.message, self.max_len)
-            logs.aux['redund_smb'] = None  # compute_redundancy_smb(logs.message, self.max_len, self.vocab_size)
-
-            logs.aux['alignment'] = None  # compute_alignment(self.dataloader, self.sender, self.receiver, self.device, self.bs)
+            logs.aux['redund_smb'] = compute_redundancy_smb(
+                message, self.max_len, vocab_size, self.channel_type, self.error_prob)
+            logs.aux['redund_smb_adj'] = compute_redundancy_smb_adjusted(
+                message, self.max_len, vocab_size, self.channel_type, self.error_prob)
 
             # compositinoality
             logs.aux['top_sim'] = None  # compute_top_sim(logs.sender_input, logs.message)
             logs.aux['pos_dis'] = None  # compute_posdis(logs.sender_input, logs.message)
             logs.aux['bos_dis'] = None  # compute_bosdis(logs.sender_input, logs.message, self.vocab_size)
-
