@@ -26,7 +26,6 @@ from ancm.util import (
     dump_sender_receiver,
     compute_alignment,
     compute_redundancy_msg,
-    # compute_redundancy_smb,
     compute_mi_input_msgs,
     compute_top_sim,
     compute_posdis,
@@ -117,7 +116,7 @@ def check_args(args):
         pdb.set_trace()
 
     args.n_features = len(args.perceptual_dimensions)
-    
+
     args.channel = args.channel.lower() if args.channel else args.channel
     assert (
         args.channel is None
@@ -182,7 +181,7 @@ def main(params):
             opts.receiver_hidden,
             opts.receiver_cell)
         game = SenderReceiverRnnGS(
-            sender, receiver, 
+            sender, receiver,
             loss=loss_gs,
             vocab_size=opts.vocab_size,
             channel_type=opts.channel,
@@ -214,15 +213,15 @@ def main(params):
         game = SenderReceiverRnnReinforce(
             sender, receiver,
             loss=loss_reinforce,
-            vocab_size=opts.vocab_size, 
-            channel_type=opts.channel, 
+            vocab_size=opts.vocab_size,
+            channel_type=opts.channel,
             error_prob=opts.error_prob,
             length_cost=opts.length_cost,
             sender_entropy_coeff=opts.sender_entropy_coeff,
             receiver_entropy_coeff=opts.receiver_entropy_coeff,
             device=device,
             seed=opts.random_seed)
-        ### CHANGE
+        # TODO use the native egg optimizer mechanism
         optimizer = torch.optim.RMSprop([
             {"params": game.sender.parameters(), "lr": opts.sender_lr},
             {"params": game.receiver.parameters(), "lr": opts.receiver_lr},
@@ -308,7 +307,7 @@ def main(params):
         dataloader = torch.utils.data.DataLoader(dataset, batch_size=opts.batch_size, shuffle=False)
 
         predictions = []
-        
+
         for batch in dataloader:
             batched_messages, batched_inputs = batch
             outputs = receiver(batched_messages, batched_inputs)
@@ -325,15 +324,14 @@ def main(params):
                     )
                     assert message_end == -1 or batched_messages[i, message_end] == 0
                     predictions.append(outputs[i, message_end, ...].argmax(dim=-1).detach())
-                
-                
+
         predictions = torch.Tensor(predictions)
         new_labels = torch.Tensor((new_labels))
         compared = torch.eq(predictions, new_labels)
-        accuracy2 = compared.float().mean().item()        
+        accuracy2 = compared.float().mean().item()
 
         all_symbols = set(int(s) for m in messages for s in m.tolist())
-        actual_vocab_size = len(all_symbols) 
+        actual_vocab_size = len(all_symbols)
 
         receiver_outputs = move_to(receiver_outputs, device)
         receiver_outputs = torch.stack(receiver_outputs)
@@ -402,7 +400,7 @@ def main(params):
                     apply_noise=False,
                     variable_length=True, max_len=opts.max_len,
                     vocab_size=opts.vocab_size, device=device)
-            
+
             padded_messages_nn = torch.nn.utils.rnn.pad_sequence(messages, batch_first=True)
 
             # to get new additional accuracy for truncated messages (where one symbol is removed)
@@ -414,15 +412,14 @@ def main(params):
             dataloader_nn = torch.utils.data.DataLoader(dataset_nn, batch_size=opts.batch_size, shuffle=False)
 
             predictions_nn = []
-        
+
             for batch_nn in dataloader_nn:
                 batched_messages_nn, batched_inputs_nn = batch_nn
                 outputs_nn = receiver(batched_messages_nn, batched_inputs_nn)
                 if opts.mode.lower() == 'rf':
                     predictions_nn.extend(outputs_nn[0])
                 elif opts.mode.lower() == 'gs':
-                    batched_messages_nn = batched_messages_nn.argmax(
-                    dim=-1)
+                    batched_messages_nn = batched_messages_nn.argmax(dim=-1)
                     for i in range(batched_messages_nn.size(0)):
                         eos_positions = (batched_messages_nn[i, :] == 0).nonzero()
                         message_end = (
@@ -435,7 +432,7 @@ def main(params):
             new_labels_nn = torch.Tensor((new_labels_nn))
             compared_nn = torch.eq(predictions_nn, new_labels_nn)
             accuracy2_nn = compared_nn.float().mean().item()
-            
+
             receiver_outputs_nn = move_to(receiver_outputs_nn, device)
             receiver_outputs_nn = torch.stack(receiver_outputs_nn)
             labels_nn = move_to(labels_nn, device)

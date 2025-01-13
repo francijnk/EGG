@@ -315,7 +315,7 @@ def dump_sender_receiver(
                 message = message.argmax(
                     dim=-1
                 )
-                 # actual symbols instead of one-hot encoded
+                # actual symbols instead of one-hot encoded
 
             if not variable_length:
                 messages.extend(message)
@@ -342,7 +342,8 @@ def dump_sender_receiver(
 
     game.train(mode=train_state)
     
-    return sender_inputs, messages, one_hots, receiver_inputs, receiver_outputs, labels  # log_prob, entropy
+    return sender_inputs, messages, one_hots, receiver_inputs, receiver_outputs, labels
+
 
 def remove_n_items(tensor, n=1):
     """
@@ -377,23 +378,24 @@ def remove_n_items(tensor, n=1):
 
     return result
 
+
 def remove_n_dims(tensor, n=1):
 
     # Get the number of rows (N)
     num_rows = tensor.shape[0]
-    
+
     # Ensure there are enough rows to remove `n` and keep the last row
     if n >= num_rows:
         raise ValueError("Cannot remove more rows than available (excluding the last row).")
     if num_rows <= 1:
         raise ValueError("The input tensor must have more than one row.")
-    
+
     # Get indices of rows that can be removed (exclude the last row)
     removable_indices = list(range(num_rows - 1))  # Exclude last row
-    
+
     # Generate all combinations of `n` rows to remove
     combos = list(combinations(removable_indices, n))
-    
+
     # Create new tensors with the selected rows removed
     result = []
     for combo in combos:
@@ -402,7 +404,7 @@ def remove_n_dims(tensor, n=1):
         new = tensor[mask]
         new = new.to(torch.float)
         result.append(new)
-    
+
     return result
 
 
@@ -421,13 +423,13 @@ def truncate_messages(messages, receiver_input, labels, mode):
 
     return new_messages, new_r_input, new_labels
 
-        
 
 def crop_messages(interaction):
     """
     Given an Interaction object, removes non EOS symbols after the first EOS.
     Only works for the REINFORCE training mode.
     """
+    assert interaction.message_length is not None
     if interaction.message.dim() == 2:  # REINFORCE
         for i in range(interaction.size):
             length = interaction.message_length[i].long().item()
