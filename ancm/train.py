@@ -24,16 +24,20 @@ from egg.zoo.objects_game.features import VectorsLoader
 from ancm.trainers import Trainer
 from ancm.util import (
     dump_sender_receiver,
-    compute_alignment,
-    compute_redundancy_msg,
+    truncate_messages,
+    is_jsonable,
+    CustomDataset
+)
+from ancm.metrics import (
     compute_mi_input_msgs,
+    compute_conceptual_alignment,
+    compute_max_rep,
+    compute_redundancy_msg,
+    compute_redundancy_smb,
+    compute_redundancy_smb_adjusted,
     compute_top_sim,
     compute_posdis,
     compute_bosdis,
-    truncate_messages,
-    compute_max_rep,
-    is_jsonable,
-    CustomDataset
 )
 from ancm.archs import (
     SenderGS, ReceiverGS,
@@ -44,10 +48,6 @@ from ancm.archs import (
 from ancm.callbacks import (
     CustomProgressBarLogger,
     TrainingMetricsCallback,
-)
-from ancm.redundancy import (
-    compute_redundancy_smb,
-    compute_redundancy_smb_adjusted,
 )
 
 
@@ -342,28 +342,28 @@ def main(params):
             else receiver_outputs
 
         accuracy = torch.mean((preds == labels).float()).item()
-        alignment = compute_alignment(
+        alignment = compute_conceptual_alignment(
             test_data, _receiver, _sender, device, opts.batch_size)
-        redundancy_msg = compute_redundancy_msg(
+        redund_msg = compute_redundancy_msg(
             messages, opts.max_len)
-        redundancy_smb = compute_redundancy_smb(
+        redund_smb = compute_redundancy_smb(
             messages, opts.max_len, opts.vocab_size, opts.channel, opts.error_prob)
-        redundancy_smb_adj = compute_redundancy_smb_adjusted(
+        redund_smb_adj = compute_redundancy_smb_adjusted(
             messages, opts.max_len, opts.vocab_size, opts.channel, opts.error_prob)
-        top_sim = compute_top_sim(sender_inputs, messages, opts.perceptual_dimensions)
+        topographic_rho = compute_top_sim(sender_inputs, messages, opts.perceptual_dimensions)
         pos_dis = compute_posdis(sender_inputs, messages)
         bos_dis = compute_bosdis(sender_inputs, messages, opts.vocab_size)
-        max_rep = torch.mean(compute_max_rep(messages).to(torch.float16)).item()
+        maxrep = torch.mean(compute_max_rep(messages).to(torch.float16)).item()
 
         output_dict['results']['accuracy'] = accuracy
         output_dict['results']['embedding_alignment'] = alignment
-        output_dict['results']['redundancy_msg'] = redundancy_msg
-        output_dict['results']['redundancy_smb'] = redundancy_smb
-        output_dict['results']['redundancy_smb_adj'] = redundancy_smb_adj
-        output_dict['results']['topographic_rho'] = top_sim
+        output_dict['results']['redundancy_msg'] = redund_msg
+        output_dict['results']['redundancy_smb'] = redund_smb
+        output_dict['results']['redundancy_smb_adj'] = redund_smb_adj
+        output_dict['results']['topographic_rho'] = topographic_rho
         output_dict['results']['pos_dis'] = pos_dis
         output_dict['results']['bos_dis'] = bos_dis
-        output_dict['results']['max_rep'] = max_rep
+        output_dict['results']['max_rep'] = maxrep
         output_dict['results']['actual_vocab_size'] = actual_vocab_size
         output_dict['results']['accuracy2'] = accuracy2
 
@@ -383,13 +383,13 @@ def main(params):
         mi = f"{mi_result['mi']:.3f}"
         entropy_inp_dim = f"{[round(x, 3) for x in mi_result['entropy_inp_dim']]}"
         mi_dim = f'{[round(x, 3) for x in mi_result["mi_dim"]]}'
-        t_rho = f'{top_sim:.3f}'
+        t_rho = f'{topographic_rho:.3f}'
         p_dis = f'{pos_dis:.3f}'
         b_dis = f'{bos_dis:.3f}'
-        redund_msg = f'{redundancy_msg:.3f}'
-        redund_smb = f'{redundancy_smb:.3f}'
-        redund_smb_adj = f'{redundancy_smb_adj:.3f}'
-        max_repetitions = f'{max_rep:.2f}'
+        redund_msg = f'{redund_msg:.3f}'
+        redund_smb = f'{redund_smb:.3f}'
+        redund_smb_adj = f'{redund_smb_adj:.3f}'
+        max_repetitions = f'{maxrep:.2f}'
 
         # If we applied noise during training,
         # compute results after disabling noise in the test phase as well
@@ -441,10 +441,10 @@ def main(params):
             preds_nn = receiver_outputs_nn.argmax(dim=1) if opts.mode.lower() == 'gs' \
                 else receiver_outputs_nn
             accuracy_nn = torch.mean((preds_nn == labels_nn).float()).item()
-            redundancy_msg_nn = compute_redundancy_msg(messages_nn, opts.max_len)
-            redundancy_smb_nn = compute_redundancy_smb(
+            redund_msg_nn = compute_redundancy_msg(messages_nn, opts.max_len)
+            redund_smb_nn = compute_redundancy_smb(
                 messages_nn, opts.max_len, opts.vocab_size, None, 0.0)
-            redundancy_smb_adj_nn = compute_redundancy_smb_adjusted(
+            redund_smb_adj_nn = compute_redundancy_smb_adjusted(
                 messages_nn, opts.max_len, opts.vocab_size, None, 0.0)
             top_sim_nn = compute_top_sim(sender_inputs_nn, messages_nn, opts.perceptual_dimensions)
             pos_dis_nn = compute_posdis(sender_inputs_nn, messages_nn)
@@ -456,9 +456,9 @@ def main(params):
 
             output_dict['results-no-noise']['accuracy'] = accuracy_nn
             output_dict['results-no-noise']['embedding_alignment'] = alignment
-            output_dict['results-no-noise']['redundancy_msg'] = redundancy_msg_nn
-            output_dict['results-no-noise']['redundancy_smb'] = redundancy_smb_nn
-            output_dict['results-no-noise']['redundancy_smb_adj'] = redundancy_smb_adj_nn
+            output_dict['results-no-noise']['redundancy_msg'] = redund_msg_nn
+            output_dict['results-no-noise']['redundancy_smb'] = redund_smb_nn
+            output_dict['results-no-noise']['redundancy_smb_adj'] = redund_smb_adj_nn
             output_dict['results-no-noise']['topographic_rho'] = top_sim_nn
             output_dict['results-no-noise']['pos_dis'] = pos_dis_nn
             output_dict['results-no-noise']['bos_dis'] = bos_dis_nn
@@ -477,9 +477,9 @@ def main(params):
             t_rho += f" / {top_sim_nn:.3f}"
             p_dis += f'/ {pos_dis_nn:.3f}'
             b_dis += f'/ {bos_dis_nn:.3f}'
-            redund_msg += f' / {redundancy_msg_nn:.3f}'
-            redund_smb += f' / {redundancy_smb_nn:.3f}'
-            redund_smb_adj += f' / {redundancy_smb_adj_nn:.3f}'
+            redund_msg += f' / {redund_msg_nn:.3f}'
+            redund_smb += f' / {redund_smb_nn:.3f}'
+            redund_smb_adj += f' / {redund_smb_adj_nn:.3f}'
             max_repetitions += f' / {max_rep_nn:.2f}'
 
             if not opts.simple_logging:

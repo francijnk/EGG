@@ -1,17 +1,29 @@
 import json
 import torch
-import math
-import numpy as np
-from sklearn.metrics.pairwise import cosine_similarity
-from Levenshtein import distance
-from scipy.stats import pearsonr, spearmanr
 from torch.utils.data import Dataset
 from itertools import combinations
 
 from typing import Optional
 
 from egg.core.util import move_to
-from egg.zoo.objects_game.util import mutual_info, entropy
+
+
+class CustomDataset(Dataset):
+    def __init__(self, messages, receiver_inputs):
+        """
+        Args:
+            messages (torch.Tensor): Tensor of shape (N, 5), where N is the number of samples.
+            receiver_inputs (torch.Tensor): Tensor of shape (N, 5, 8).
+        """
+        assert len(messages) == len(receiver_inputs), "Messages and receiver_inputs must have the same number of samples."
+        self.messages = messages
+        self.receiver_inputs = receiver_inputs
+
+    def __len__(self):
+        return len(self.messages)
+
+    def __getitem__(self, idx):
+        return self.messages[idx], self.receiver_inputs[idx]
 
 
 def is_jsonable(x):
@@ -22,226 +34,16 @@ def is_jsonable(x):
         return False
 
 
-def compute_mi_input_msgs(sender_inputs, messages):
-    num_dimensions = len(sender_inputs[0])
-    each_dim = [[] for _ in range(num_dimensions)]
-    result = []
-    for i, _ in enumerate(each_dim):
-        for vector in sender_inputs:
-            each_dim[i].append(vector[i])  # only works for 1-D sender inputs
-
-    for i, dim_list in enumerate(each_dim):
-        result.append(round(mutual_info(messages, dim_list), 4))
-
-    return {
-        'entropy_msg': entropy(messages),
-        'entropy_inp': entropy(sender_inputs),
-        'mi': mutual_info(messages, sender_inputs),
-        'entropy_inp_dim': [entropy(elem) for elem in each_dim],
-        'mi_dim': result,
-    }
-
-
-def entropy_per_symbol(messages, freq_table):
-    entropies = []
-    n = sum(v for v in freq_table.values())
-
-    for i, m in enumerate(messages):
-        H = 0
-        for symbol in m:
-            p = freq_table[symbol] / n
-            H += -p * np.log(p)
-        entropies.append(H)
-
-    return entropies
-
-
-def compute_alignment(dataloader, sender, receiver, device, bs):
+def crop_messages(interaction):
     """
-    Computes speaker-listener alignment.
+    Given an Interaction object, removes non EOS symbols after the first EOS.
+    Only works for the REINFORCE training mode.
     """
-    all_features = dataloader.dataset.list_of_tuples
-    targets = dataloader.dataset.target_idxs
-    obj_features = np.unique(all_features[:, targets[0], :], axis=0)
-    obj_features = torch.tensor(obj_features, dtype=torch.float).to(device)
-
-    n_batches = math.ceil(obj_features.size()[0] / bs)
-    sender_embeddings, receiver_embeddings = None, None
-
-    for batch in [obj_features[bs * y:bs * (y + 1), :] for y in range(n_batches)]:
-        with torch.no_grad():
-            b_sender_embeddings = sender.fc1(batch).tanh().cpu().numpy()
-            b_receiver_embeddings = receiver.fc1(batch).tanh().cpu().numpy()
-            if sender_embeddings is None:
-                sender_embeddings = b_sender_embeddings
-                receiver_embeddings = b_receiver_embeddings
-            else:
-                sender_embeddings = np.concatenate((sender_embeddings, b_sender_embeddings))
-                receiver_embeddings = np.concatenate((receiver_embeddings, b_receiver_embeddings))
-
-    sender_sims = cosine_similarity(sender_embeddings)
-    receiver_sims = cosine_similarity(receiver_embeddings)
-    r = pearsonr(sender_sims.ravel(), receiver_sims.ravel())
-    return r.statistic
-
-
-def compute_max_rep(messages):
-    """
-    Computes the number of occurrences of the most frequent symbol in each
-    message (0 for messages that consist of EOS symbols only).
-    """
-    if isinstance(messages, list):
-        messages = [msg.argmax(dim=1) if msg.dim() == 2
-                    else msg for msg in messages]
-        messages = torch.nn.utils.rnn.pad_sequence(messages, batch_first=True)
-
-    messages = messages.to(torch.float16)
-    messages[messages == 0] = float('nan')
-    mode = torch.mode(messages, dim=1).values
-    is_rep = (messages == torch.unsqueeze(mode, dim=-1).expand(*messages.size()))
-    max_rep = (is_rep.to(torch.int16).sum(dim=1))
-    return max_rep
-
-
-def compute_redundancy_smb_placeholder(messages, max_len, vocab_size):
-    """
-    Computes redundancy at the symbol level, treating messages as sequences.
-    """
-    pass
-
-
-def compute_redundancy_msg(messages, max_len):
-    """
-    Computes redundancy at the message level.
-    """
-    messages = [msg.argmax(dim=1) if msg.dim() == 2
-                else msg for msg in messages]
-
-    actual_entropy = entropy(messages)
-    maximal_entropy = math.log(len(messages), 2)
-
-    return 1 - actual_entropy / maximal_entropy
-
-
-def compute_top_sim(sender_inputs, messages, dimensions=None):
-    """
-    Computes topographic rho.
-    """
-    obj_tensor = torch.stack(sender_inputs) \
-        if isinstance(sender_inputs, list) else sender_inputs
-
-    if dimensions is None:
-        dimensions = []
-        for d in range(obj_tensor.size(1)):
-            dim = len(torch.unique(obj_tensor[:, d]))
-            dimensions.append(dim)
-
-    onehot = []
-    for i, dim in enumerate(dimensions):
-        if dim == 4:
-            # TODO remove?
-            # one-hot encode categorical dimensions
-            n1 = (np.logical_or(
-                obj_tensor[:, i].int() == 1, obj_tensor[:, i].int() == 2
-            )).int().reshape(obj_tensor.size(0), 1)
-            n2 = (np.logical_or(
-                obj_tensor[:, i].int() == 1, obj_tensor[:, i].int() == 3
-            )).int().reshape(obj_tensor.size(0), 1)
-            onehot.append(n1)
-            onehot.append(n2)
-        else:
-            # binary dimensions need not be transformed
-            onehot.append(obj_tensor[:, i:i + 1])
-    onehot = np.concatenate(onehot, axis=1)
-
-    messages = [msg.argmax(dim=1).tolist() if msg.dim() == 2
-                else msg.tolist() for msg in messages]
-
-    # pairwise cosine similarity between object vectors
-    cos_sims = cosine_similarity(onehot)
-
-    # pairwise Levenshtein distance between messages
-    lev_dists = np.ones((len(messages), len(messages)), dtype='int')
-    for i, msg_i in enumerate(messages):
-        for j, msg_j in enumerate(messages):
-            if i > j:
-                continue
-            elif i == j:
-                lev_dists[i][j] = 1
-            else:
-                m1 = [str(int(x)) for x in msg_i]
-                m2 = [str(int(x)) for x in msg_j]
-                dist = distance(m1, m2)
-                lev_dists[i][j] = dist
-                lev_dists[j][i] = dist
-
-    rho = spearmanr(cos_sims, lev_dists, axis=None).statistic * -1
-    return rho
-
-
-def compute_posdis(sender_inputs, messages):
-    """
-    Computes PosDis.
-    """
-    messages = [msg.argmax(dim=1) if msg.dim() == 2
-                else msg for msg in messages]
-    strings = torch.nn.utils.rnn.pad_sequence(messages, batch_first=True)
-
-    attributes = torch.stack(sender_inputs) \
-        if isinstance(sender_inputs, list) else sender_inputs
-
-    gaps = torch.zeros(strings.size(1))
-    non_constant_positions = 0.0
-    for j in range(strings.size(1)):
-        symbol_mi = []
-        h_j = None
-        for i in range(attributes.size(1)):
-            x, y = attributes[:, i], strings[:, j]
-            info = mutual_info(x, y)
-            symbol_mi.append(info)
-
-            if h_j is None:
-                h_j = entropy(y)
-
-        symbol_mi.sort(reverse=True)
-
-        if h_j > 0.0:
-            gaps[j] = (symbol_mi[0] - symbol_mi[1]) / h_j
-            non_constant_positions += 1
-
-    score = gaps.sum() / non_constant_positions
-    return score.item()
-
-
-def histogram(messages, vocab_size):
-    messages = [msg.argmax(dim=1) if msg.dim() == 2
-                else msg for msg in messages]
-    messages = torch.nn.utils.rnn.pad_sequence(messages, batch_first=True)
-    messages = torch.stack(messages) \
-        if isinstance(messages, list) else messages
-
-    # Handle messages with added noise
-    if vocab_size in messages:
-        vocab_size += 1
-
-    # Create a histogram with size [batch_size, vocab_size] initialized with zeros
-    histogram = torch.zeros(messages.size(0), vocab_size)
-
-    if messages.dim() > 2:
-        messages = messages.view(messages.size(0), -1)
-
-    # Count occurrences of each value in strings and store them in histogram
-    histogram.scatter_add_(1, messages.long(), torch.ones_like(messages, dtype=torch.float))
-
-    return histogram
-
-
-def compute_bosdis(sender_inputs, messages, vocab_size):
-    """
-    Computes BosDis.
-    """
-    histograms = histogram(messages, vocab_size)
-    return compute_posdis(sender_inputs, histograms[:, 1:])
+    assert interaction.message_length is not None
+    if interaction.message.dim() == 2:  # REINFORCE
+        for i in range(interaction.size):
+            length = interaction.message_length[i].long().item()
+            interaction.message[i, length:] = 0
 
 
 def dump_sender_receiver(
@@ -312,9 +114,7 @@ def dump_sender_receiver(
             if gs:
                 # so we can access these later
                 one_hots.extend(message)
-                message = message.argmax(
-                    dim=-1
-                )
+                message = message.argmax(dim=-1)
                 # actual symbols instead of one-hot encoded
 
             if not variable_length:
@@ -422,33 +222,3 @@ def truncate_messages(messages, receiver_input, labels, mode):
         new_labels.extend([labels[i]] * len(truncated))
 
     return new_messages, new_r_input, new_labels
-
-
-def crop_messages(interaction):
-    """
-    Given an Interaction object, removes non EOS symbols after the first EOS.
-    Only works for the REINFORCE training mode.
-    """
-    assert interaction.message_length is not None
-    if interaction.message.dim() == 2:  # REINFORCE
-        for i in range(interaction.size):
-            length = interaction.message_length[i].long().item()
-            interaction.message[i, length:] = 0
-
-
-class CustomDataset(Dataset):
-    def __init__(self, messages, receiver_inputs):
-        """
-        Args:
-            messages (torch.Tensor): Tensor of shape (N, 5), where N is the number of samples.
-            receiver_inputs (torch.Tensor): Tensor of shape (N, 5, 8).
-        """
-        assert len(messages) == len(receiver_inputs), "Messages and receiver_inputs must have the same number of samples."
-        self.messages = messages
-        self.receiver_inputs = receiver_inputs
-
-    def __len__(self):
-        return len(self.messages)
-
-    def __getitem__(self, idx):
-        return self.messages[idx], self.receiver_inputs[idx]

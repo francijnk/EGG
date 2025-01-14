@@ -14,15 +14,16 @@ from rich.progress import (
 from rich.table import Table
 from rich.text import Text
 
-from ancm.util import (
-    compute_alignment,
+from ancm.metrics import (
+    compute_conceptual_alignment,
     compute_max_rep,
     compute_redundancy_msg,
+    compute_redundancy_smb,
+    compute_redundancy_smb_adjusted,
     compute_top_sim,
     compute_posdis,
     compute_bosdis,
 )
-from ancm.redundancy import compute_redundancy_smb, compute_redundancy_smb_adjusted
 
 from egg.core.util import find_lengths
 from egg.core.callbacks import Callback, CustomProgress
@@ -318,7 +319,7 @@ class TrainingMetricsCallback(Callback):
 
             logs.aux['lexicon_size'] = int(lexicon_size)
             logs.aux['actual_vocab_size'] = int(actual_vocab_size)
-            logs.aux['alignment'] = compute_alignment(self.dataloader, self.sender, self.receiver, self.device, self.bs)
+            logs.aux['alignment'] = compute_conceptual_alignment(self.dataloader, self.sender, self.receiver, self.device, self.bs)
 
             # redundancy
             logs.aux['max_rep'] = compute_max_rep(message)
@@ -353,7 +354,7 @@ class TrainingMetricsCallback(Callback):
 
             logs.aux['lexicon_size'] = int(lexicon_size)
             logs.aux['actual_vocab_size'] = int(actual_vocab_size)
-            logs.aux['alignment'] = compute_alignment(self.dataloader, self.sender, self.receiver, self.device, self.bs)
+            logs.aux['alignment'] = compute_conceptual_alignment(self.dataloader, self.sender, self.receiver, self.device, self.bs)
 
             # redundancy
             logs.aux['max_rep'] = compute_max_rep(message)
@@ -388,7 +389,7 @@ class TrainingMetricsCallback(Callback):
 
             logs.aux['lexicon_size'] = int(lexicon_size)
             logs.aux['actual_vocab_size'] = int(actual_vocab_size)
-            logs.aux['alignment'] = None  # compute_alignment(self.dataloader, self.sender, self.receiver, self.device, self.bs)
+            logs.aux['alignment'] = None  # compute_conceptual_alignment(self.dataloader, self.sender, self.receiver, self.device, self.bs)
 
             # redundancy
             logs.aux['max_rep'] = compute_max_rep(message)
@@ -399,6 +400,6 @@ class TrainingMetricsCallback(Callback):
                 message, self.max_len, vocab_size, self.channel_type, self.error_prob)
 
             # compositinoality
-            logs.aux['top_sim'] = None  # compute_top_sim(logs.sender_input, logs.message)
-            logs.aux['pos_dis'] = None  # compute_posdis(logs.sender_input, logs.message)
-            logs.aux['bos_dis'] = None  # compute_bosdis(logs.sender_input, logs.message, self.vocab_size)
+            logs.aux['top_sim'] = None  # top_sim(logs.sender_input, logs.message)
+            logs.aux['pos_dis'] = None  # posdis(logs.sender_input, logs.message)
+            logs.aux['bos_dis'] = None  # bosdis(logs.sender_input, logs.message, self.vocab_size)
