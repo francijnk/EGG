@@ -1,4 +1,6 @@
-random_seeds = [i+1 for i in range(5)]
+import sys
+
+random_seeds = [i + 1 for i in range(5)]
 data_seeds = [42]
 error_probs = [0.00, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30]
 channels = 'erasure deletion symmetric'.split()
@@ -9,7 +11,7 @@ rlr = 1e-3
 length_cost = 1e-3
 vocab_size = 10
 hidden_units = 50
-n_epochs = 10
+n_epochs = 25
 
 
 def get_opts(error_prob, channel, max_len, random_seed, data_seed):
@@ -30,7 +32,6 @@ def get_opts(error_prob, channel, max_len, random_seed, data_seed):
         f'--random_seed {random_seed}',
         f'--data_seed {data_seed}',
         f'--filename {filename}',
-        # f'--dump_results_folder {results_dir}',
         f'--n_epochs {n_epochs}',
         '--perceptual_dimensions [2]*8',
         '--n_distractors 4',
@@ -40,7 +41,7 @@ def get_opts(error_prob, channel, max_len, random_seed, data_seed):
         '--receiver_entropy_coeff 0.001',
         '--sender_cell lstm',
         '--receiver_cell lstm',
-        '--mode gs',
+        '--mode rf',
         '--evaluate',
         '--validation_freq 1',
     ]
@@ -50,25 +51,24 @@ def get_opts(error_prob, channel, max_len, random_seed, data_seed):
 
 
 if __name__ == '__main__':
-
     all_params = []
-    for max_len in max_lengths:
-        for rs in random_seeds:
-            for ds in data_seeds:
-                params = get_opts(0., None, max_len, rs, ds)
-                all_params.append(' '.join(params))
+    if 0. in error_probs:
+        for max_len in max_lengths:
+            for rs in random_seeds:
+                for ds in data_seeds:
+                    params = get_opts(0., None, max_len, rs, ds)
+                    all_params.append(' '.join(params))
 
     for max_len in max_lengths:
         for channel in channels:
-            for pr in error_probs[1:]:
+            for pr in [p for p in error_probs if p > 0]:
                 for rs in random_seeds:
                     for ds in data_seeds:
                         params = get_opts(pr, channel, max_len, rs, ds)
                         all_params.append(' '.join(params))
 
-
-    params_file = 'ancm/jobs/params.txt'
-    with open(params_file, 'w') as fp:
+    params_fpath = sys.argv[1]
+    with open(params_fpath, 'w') as fp:
         fp.write('\n'.join(all_params))
 
-    print(len(all_params), 'lines saved to', params_file)
+    print(len(all_params), 'lines saved to', params_fpath)

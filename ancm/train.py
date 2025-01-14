@@ -11,7 +11,7 @@ import operator
 import pathlib
 import json
 import time
-import math
+# import math
 from datetime import timedelta
 from collections import defaultdict
 
@@ -24,24 +24,26 @@ from egg.zoo.objects_game.features import VectorsLoader
 from ancm.trainers import Trainer
 from ancm.util import (
     dump_sender_receiver,
-    compute_alignment,
+    truncate_messages,
+    is_jsonable,
+    CustomDataset
+)
+from ancm.metrics import (
+    compute_mi_input_msgs,
+    compute_conceptual_alignment,
+    compute_max_rep,
     compute_redundancy_msg,
     compute_redundancy_smb,
-    compute_mi_input_msgs,
+    compute_redundancy_smb_adjusted,
     compute_top_sim,
     compute_posdis,
     compute_bosdis,
-    compute_redundancy,
-    truncate_messages,
-    compute_max_rep,
-    is_jsonable,
-    CustomDataset
 )
 from ancm.archs import (
     SenderGS, ReceiverGS,
     loss_gs, SenderReceiverRnnGS,
     SenderReinforce, ReceiverReinforce,
-    loss_reinforce, SenderReceiverRnnReinforce
+    loss_reinforce, SenderReceiverRnnReinforce,
 )
 from ancm.callbacks import (
     CustomProgressBarLogger,
@@ -83,14 +85,10 @@ def get_params(params):
     parser.add_argument("--filename", type=str, default=None, help="Filename (no extension)")
     parser.add_argument("--debug", action="store_true", default=False, help="Run egg/objects_game with pdb enabled")
     parser.add_argument("--simple_logging", action="store_true", default=False, help="Use console logger instead of progress bar")
-    parser.add_argument("--silent", action="store_true", default=False, help="Do not print eval stats during training")
 
     args = core.init(parser, params)
-
     check_args(args)
-    if not args.silent:
-        print(args)
-
+    print(args)
     return args
 
 
@@ -118,7 +116,7 @@ def check_args(args):
         pdb.set_trace()
 
     args.n_features = len(args.perceptual_dimensions)
-    
+
     args.channel = args.channel.lower() if args.channel else args.channel
     assert (
         args.channel is None
@@ -183,7 +181,7 @@ def main(params):
             opts.receiver_hidden,
             opts.receiver_cell)
         game = SenderReceiverRnnGS(
-            sender, receiver, 
+            sender, receiver,
             loss=loss_gs,
             vocab_size=opts.vocab_size,
             channel_type=opts.channel,
@@ -215,15 +213,15 @@ def main(params):
         game = SenderReceiverRnnReinforce(
             sender, receiver,
             loss=loss_reinforce,
-            vocab_size=opts.vocab_size, 
-            channel_type=opts.channel, 
+            vocab_size=opts.vocab_size,
+            channel_type=opts.channel,
             error_prob=opts.error_prob,
             length_cost=opts.length_cost,
             sender_entropy_coeff=opts.sender_entropy_coeff,
             receiver_entropy_coeff=opts.receiver_entropy_coeff,
             device=device,
             seed=opts.random_seed)
-        ### CHANGE
+        # TODO use the native egg optimizer mechanism
         optimizer = torch.optim.RMSprop([
             {"params": game.sender.parameters(), "lr": opts.sender_lr},
             {"params": game.receiver.parameters(), "lr": opts.receiver_lr},
@@ -245,6 +243,7 @@ def main(params):
             vocab_size=receiver_vocab_size,
             max_len=opts.max_len,
             channel_type=opts.channel,
+            error_prob=opts.error_prob,
             sender=_sender,
             receiver=_receiver,
             dataloader=validation_data,
@@ -276,7 +275,7 @@ def main(params):
         callbacks=callbacks)
 
     t_start = time.monotonic()
-    if opts.silent or opts.simple_logging or opts.error_prob == 0. or not opts.channel:
+    if opts.simple_logging or opts.error_prob == 0. or not opts.channel:
         trainer.train(n_epochs=opts.n_epochs, second_val=False)
     else:
         trainer.train(n_epochs=opts.n_epochs, second_val=True)
@@ -291,7 +290,7 @@ def main(params):
         output_dict = defaultdict(dict)
 
         # Standard evaluation – same setting as during training
-        sender_inputs, messages, one_hots, receiver_inputs, receiver_outputs, labels, redundancies_per_msg = \
+        sender_inputs, messages, one_hots, receiver_inputs, receiver_outputs, labels = \
             dump_sender_receiver(
                 game, test_data, opts.mode == 'gs', apply_noise=opts.error_prob != 0,
                 variable_length=True, max_len=opts.max_len, vocab_size=receiver_vocab_size,
@@ -308,7 +307,7 @@ def main(params):
         dataloader = torch.utils.data.DataLoader(dataset, batch_size=opts.batch_size, shuffle=False)
 
         predictions = []
-        
+
         for batch in dataloader:
             batched_messages, batched_inputs = batch
             outputs = receiver(batched_messages, batched_inputs)
@@ -325,15 +324,14 @@ def main(params):
                     )
                     assert message_end == -1 or batched_messages[i, message_end] == 0
                     predictions.append(outputs[i, message_end, ...].argmax(dim=-1).detach())
-                
-                
+
         predictions = torch.Tensor(predictions)
         new_labels = torch.Tensor((new_labels))
         compared = torch.eq(predictions, new_labels)
-        accuracy2 = compared.float().mean().item()        
+        accuracy2 = compared.float().mean().item()
 
         all_symbols = set(int(s) for m in messages for s in m.tolist())
-        actual_vocab_size = len(all_symbols) 
+        actual_vocab_size = len(all_symbols)
 
         receiver_outputs = move_to(receiver_outputs, device)
         receiver_outputs = torch.stack(receiver_outputs)
@@ -344,23 +342,28 @@ def main(params):
             else receiver_outputs
 
         accuracy = torch.mean((preds == labels).float()).item()
-        alignment = compute_alignment(
+        alignment = compute_conceptual_alignment(
             test_data, _receiver, _sender, device, opts.batch_size)
-        redundancy_msg_lvl = compute_redundancy_msg(messages, opts.max_len)
-        redundancy_smb_lvl = sum(redundancies_per_msg) / len(redundancies_per_msg)
-        top_sim = compute_top_sim(sender_inputs, messages, opts.perceptual_dimensions)
+        redund_msg = compute_redundancy_msg(
+            messages, opts.max_len)
+        redund_smb = compute_redundancy_smb(
+            messages, opts.max_len, opts.vocab_size, opts.channel, opts.error_prob)
+        redund_smb_adj = compute_redundancy_smb_adjusted(
+            messages, opts.max_len, opts.vocab_size, opts.channel, opts.error_prob)
+        topographic_rho = compute_top_sim(sender_inputs, messages, opts.perceptual_dimensions)
         pos_dis = compute_posdis(sender_inputs, messages)
         bos_dis = compute_bosdis(sender_inputs, messages, opts.vocab_size)
-        max_rep = torch.mean(compute_max_rep(messages).to(torch.float16)).item()
+        maxrep = torch.mean(compute_max_rep(messages).to(torch.float16)).item()
 
         output_dict['results']['accuracy'] = accuracy
         output_dict['results']['embedding_alignment'] = alignment
-        output_dict['results']['redundancy_msg_lvl'] = redundancy_msg_lvl
-        output_dict['results']['redundancy_smb_lvl'] = redundancy_smb_lvl
-        output_dict['results']['topographic_rho'] = top_sim
+        output_dict['results']['redundancy_msg'] = redund_msg
+        output_dict['results']['redundancy_smb'] = redund_smb
+        output_dict['results']['redundancy_smb_adj'] = redund_smb_adj
+        output_dict['results']['topographic_rho'] = topographic_rho
         output_dict['results']['pos_dis'] = pos_dis
         output_dict['results']['bos_dis'] = bos_dis
-        output_dict['results']['max_rep'] = max_rep
+        output_dict['results']['max_rep'] = maxrep
         output_dict['results']['actual_vocab_size'] = actual_vocab_size
         output_dict['results']['accuracy2'] = accuracy2
 
@@ -380,24 +383,26 @@ def main(params):
         mi = f"{mi_result['mi']:.3f}"
         entropy_inp_dim = f"{[round(x, 3) for x in mi_result['entropy_inp_dim']]}"
         mi_dim = f'{[round(x, 3) for x in mi_result["mi_dim"]]}'
-        t_rho = f'{top_sim:.3f}'
+        t_rho = f'{topographic_rho:.3f}'
         p_dis = f'{pos_dis:.3f}'
         b_dis = f'{bos_dis:.3f}'
-        redund_msg = f'{redundancy_msg_lvl:.3f}'
-        redund_smb = f'{redundancy_smb_lvl:.3f}'
-        max_repetitions = f'{max_rep:.2f}'
+        redund_msg = f'{redund_msg:.3f}'
+        redund_smb = f'{redund_smb:.3f}'
+        redund_smb_adj = f'{redund_smb_adj:.3f}'
+        max_repetitions = f'{maxrep:.2f}'
 
         # If we applied noise during training,
         # compute results after disabling noise in the test phase as well
         if opts.error_prob != 0:
             sender_inputs_nn, messages_nn, one_hots_nn, receiver_inputs_nn, \
-                receiver_outputs_nn, labels_nn, redundancies_per_msg_nn = dump_sender_receiver(
+                receiver_outputs_nn, labels_nn = dump_sender_receiver(
                     game, test_data, opts.mode.lower() == 'gs',
                     apply_noise=False,
                     variable_length=True, max_len=opts.max_len,
                     vocab_size=opts.vocab_size, device=device)
             
             padded_messages_nn = torch.nn.utils.rnn.pad_sequence(messages, batch_first=True)
+
 
             # to get new additional accuracy for truncated messages (where one symbol is removed)
             if opts.mode == 'rf':
@@ -408,15 +413,14 @@ def main(params):
             dataloader_nn = torch.utils.data.DataLoader(dataset_nn, batch_size=opts.batch_size, shuffle=False)
 
             predictions_nn = []
-        
+
             for batch_nn in dataloader_nn:
                 batched_messages_nn, batched_inputs_nn = batch_nn
                 outputs_nn = receiver(batched_messages_nn, batched_inputs_nn)
                 if opts.mode.lower() == 'rf':
                     predictions_nn.extend(outputs_nn[0])
                 elif opts.mode.lower() == 'gs':
-                    batched_messages_nn = batched_messages_nn.argmax(
-                    dim=-1)
+                    batched_messages_nn = batched_messages_nn.argmax(dim=-1)
                     for i in range(batched_messages_nn.size(0)):
                         eos_positions = (batched_messages_nn[i, :] == 0).nonzero()
                         message_end = (
@@ -429,7 +433,7 @@ def main(params):
             new_labels_nn = torch.Tensor((new_labels_nn))
             compared_nn = torch.eq(predictions_nn, new_labels_nn)
             accuracy2_nn = compared_nn.float().mean().item()
-            
+
             receiver_outputs_nn = move_to(receiver_outputs_nn, device)
             receiver_outputs_nn = torch.stack(receiver_outputs_nn)
             labels_nn = move_to(labels_nn, device)
@@ -438,20 +442,24 @@ def main(params):
             preds_nn = receiver_outputs_nn.argmax(dim=1) if opts.mode.lower() == 'gs' \
                 else receiver_outputs_nn
             accuracy_nn = torch.mean((preds_nn == labels_nn).float()).item()
-            redundancy_msg_lvl_nn = compute_redundancy_msg(messages_nn, opts.max_len)
-            redundancy_smb_lvl_nn = sum(redundancies_per_msg_nn) / len(redundancies_per_msg_nn)
+            redund_msg_nn = compute_redundancy_msg(messages_nn, opts.max_len)
+            redund_smb_nn = compute_redundancy_smb(
+                messages_nn, opts.max_len, opts.vocab_size, None, 0.0)
+            redund_smb_adj_nn = compute_redundancy_smb_adjusted(
+                messages_nn, opts.max_len, opts.vocab_size, None, 0.0)
             top_sim_nn = compute_top_sim(sender_inputs_nn, messages_nn, opts.perceptual_dimensions)
             pos_dis_nn = compute_posdis(sender_inputs_nn, messages_nn)
             bos_dis_nn = compute_bosdis(sender_inputs_nn, messages_nn, opts.vocab_size)
             max_rep_nn = torch.mean(compute_max_rep(messages_nn).to(torch.float16)).item()
 
             all_symbols = set(int(s) for m in messages_nn for s in m.tolist())
-            actual_vocab_size_nn = len(all_symbols) 
+            actual_vocab_size_nn = len(all_symbols)
 
             output_dict['results-no-noise']['accuracy'] = accuracy_nn
             output_dict['results-no-noise']['embedding_alignment'] = alignment
-            output_dict['results-no-noise']['redundancy_msg_lvl'] = redundancy_msg_lvl_nn
-            output_dict['results-no-noise']['redundancy_smb_lvl'] = redundancy_smb_lvl_nn
+            output_dict['results-no-noise']['redundancy_msg'] = redund_msg_nn
+            output_dict['results-no-noise']['redundancy_smb'] = redund_smb_nn
+            output_dict['results-no-noise']['redundancy_smb_adj'] = redund_smb_adj_nn
             output_dict['results-no-noise']['topographic_rho'] = top_sim_nn
             output_dict['results-no-noise']['pos_dis'] = pos_dis_nn
             output_dict['results-no-noise']['bos_dis'] = bos_dis_nn
@@ -470,63 +478,61 @@ def main(params):
             t_rho += f" / {top_sim_nn:.3f}"
             p_dis += f'/ {pos_dis_nn:.3f}'
             b_dis += f'/ {bos_dis_nn:.3f}'
-            redund_msg += f' / {redundancy_msg_lvl_nn:.3f}'
-            redund_smb += f' / {redundancy_smb_lvl_nn:.3f}'
+            redund_msg += f' / {redund_msg_nn:.3f}'
+            redund_smb += f' / {redund_smb_nn:.3f}'
+            redund_smb_adj += f' / {redund_smb_adj_nn:.3f}'
             max_repetitions += f' / {max_rep_nn:.2f}'
 
-            if not opts.silent:
-                if not opts.simple_logging:
-                    print("|")
-                print(f"|\033[1m Results (with noise / without noise)\033[0m\n|")
+            if not opts.simple_logging:
+                print("|")
+            print("|\033[1m Results (with noise / without noise)\033[0m\n|")
         else:
             acc_str = f'{accuracy:.2f}'
-            if not opts.silent:
-                print(f"|\n|\033[1m Results\033[0m\n|")
+            print("|\n|\033[1m Results\033[0m\n|")
 
-        if not opts.silent:
-            align = 30
-            print("|" + "H(msg) =".rjust(align), entropy_msg)
-            print("|" + "H(target objs) =".rjust(align), entropy_inp)
-            print("|" + "I(target objs; msg) =".rjust(align), mi)
-            print("|\n| Separately for each object vector dimension")
-            if opts.error_prob != 0:
-                print("|" + "H(target objs) =".rjust(align), entropy_inp_dim)
-                print("|" + "I(target objs; msg) =".rjust(align), mi_dim, "(with noise)")
-                print("|" + "I(target objs; msg) =".rjust(align), mi_dim_nn, "(no noise)")
-            else:
-                print("|" + "H(target objs) =".rjust(align), entropy_inp_dim)
-                print("|" + "I(target objs; msg) =".rjust(align), mi_dim)
-            print('|')
-            print("|" + "Accuracy:".rjust(align), acc_str)
-            print("|" + "Accuracy2:".rjust(align), acc2_str)
-            print("|")
-            print("|" + "Embedding alignment:".rjust(align) + f" {alignment:.2f}")
-            print("|" + "Redundancy (message level):".rjust(align), redund_msg)
-            print("|" + "Redundancy (symbol level):".rjust(align), redund_smb)
-            print("|" + "Max num of symbol reps:".rjust(align) + f" {max_repetitions}")
-            print("|" + "Topographic rho:".rjust(align) + f" {t_rho}")
-            print("|" + "PosDis:".rjust(align) + f" {p_dis}")
-            print("|" + "BosDis:".rjust(align) + f" {b_dis}")
-        
-            
+        align = 40
+        print("|" + "H(msg) =".rjust(align), entropy_msg)
+        print("|" + "H(target objs) =".rjust(align), entropy_inp)
+        print("|" + "I(target objs; msg) =".rjust(align), mi)
+        print("|\n| Separately for each object vector dimension")
+        if opts.error_prob != 0:
+            print("|" + "H(target objs) =".rjust(align), entropy_inp_dim)
+            print("|" + "I(target objs; msg) =".rjust(align), mi_dim, "(with noise)")
+            print("|" + "I(target objs; msg) =".rjust(align), mi_dim_nn, "(no noise)")
+        else:
+            print("|" + "H(target objs) =".rjust(align), entropy_inp_dim)
+            print("|" + "I(target objs; msg) =".rjust(align), mi_dim)
+        print('|')
+        print("|" + "Accuracy:".rjust(align), acc_str)
+        print("|" + "Accuracy2:".rjust(align), acc2_str)
+        print("|")
+        print("|" + "Embedding alignment:".rjust(align) + f" {alignment:.2f}")
+        print("|" + "Redundancy (message level):".rjust(align), redund_msg)
+        print("|" + "Redundancy (symbol level):".rjust(align), redund_smb)
+        print("|" + "Redundancy (symbol level, adjusted):".rjust(align), redund_smb_adj)
+        print("|" + "Max num. of symbol reps.:".rjust(align) + f" {max_repetitions}")
+        print("|" + "Topographic rho:".rjust(align) + f" {t_rho}")
+        print("|" + "PosDis:".rjust(align) + f" {p_dis}")
+        print("|" + "BosDis:".rjust(align) + f" {b_dis}")
+
         if opts.dump_results_folder:
             opts.dump_results_folder.mkdir(exist_ok=True)
 
             messages_dict = {}
 
             msg_dict = defaultdict(int)
-            for sender_input, message, receiver_input, receiver_output, label, redundancy \
-                    in zip(sender_inputs, messages, receiver_inputs, receiver_outputs, labels, redundancies_per_msg):
+            for sender_input, message, receiver_input, receiver_output, label \
+                    in zip(
+                        sender_inputs, messages, receiver_inputs,
+                        receiver_outputs, labels):
                 target_vec = ','.join([str(int(x)) for x in sender_input.tolist()])
                 message = ','.join([str(int(x)) for x in message.tolist()])
                 candidate_vex = [','.join([str(int(x)) for x in candidate])
                                  for candidate in receiver_input.tolist()]
-                redundancy = redundancy
                 message_log = {
                     'target_vec': target_vec,
                     'candidate_vex': candidate_vex,
-                    'message': message,
-                    'redundancy': redundancy}
+                    'message': message}
                 if opts.error_prob != 0:
                     message_log['message_no_noise'] = None
                 message_log['label'] = label.item()
@@ -539,10 +545,10 @@ def main(params):
 
             if opts.error_prob != 0.:
                 msg_dict_nn = defaultdict(int)
-                for sender_input, message, receiver_input, receiver_output, label, redundancy_nn \
+                for sender_input, message, receiver_input, receiver_output, label \
                         in zip(
-                            sender_inputs_nn, messages_nn, receiver_inputs_nn, 
-                            receiver_outputs_nn, labels_nn, redundancies_per_msg_nn):
+                            sender_inputs_nn, messages_nn, receiver_inputs_nn,
+                            receiver_outputs_nn, labels_nn):
                     target_vec = ','.join([str(int(x)) for x in sender_input.tolist()])
                     candidate_vex = [','.join([str(int(c)) for c in candidate])
                                      for candidate in receiver_input.tolist()]
@@ -551,24 +557,26 @@ def main(params):
                     m_key = f'{target_vec}#' + ';'.join(candidate_vex)
                     messages_dict[m_key]['message_no_noise'] = message
                     msg_dict_nn[message] += 1
-                    messages_dict[m_key]['redundancy_nn'] = redundancy_nn
 
                 sorted_msgs_nn = sorted(msg_dict_nn.items(), key=operator.itemgetter(1), reverse=True)
 
-            lexicon_size_nn = str(len(msg_dict.keys())) if opts.error_prob == 0 \
+            lexicon_size = str(len(msg_dict.keys())) if opts.error_prob == 0 \
                 else f'{len(msg_dict.keys())} / {len(msg_dict_nn.keys())}'
-            if not opts.silent and opts.error_prob == 0:
+
+            if opts.error_prob == 0 or opts.channel is None:
                 print("|")
                 print("|" + "Unique target objects:".rjust(align), len(unique_dict.keys()))
                 print("|" + "Lexicon size:".rjust(align), lexicon_size)
                 print("|" + "Vocab size:".rjust(align), f"{actual_vocab_size}/{opts.vocab_size}")
-            elif not opts.silent and opts.error_prob == 0:
+            else:
                 print("|")
                 print("|" + "Unique target objects:".rjust(align), len(unique_dict.keys()))
-                print("|" + "Lexicon size:".rjust(align), lexicon_size, "(no noise)")
-                print("|" + "Lexicon size:".rjust(align), lexicon_size_nn, "(with noise)")
-                print("|" + "Vocab size:".rjust(align), f"{actual_vocab_size}/{opts.vocab_size} (no noise)")
-                print("|" + "Vocab size:".rjust(align), f"{actual_vocab_size_nn}/{opts.vocab_size} (with noise)")
+                print("|" + "Lexicon size:".rjust(align), lexicon_size)
+
+                if receiver_vocab_size != opts.vocab_size:
+                    print("|" + "Vocab size:".rjust(align), f"{actual_vocab_size}/{actual_vocab_size_nn} out of {receiver_vocab_size}/{opts.vocab_size}")
+                else:
+                    print("|" + "Vocab size:".rjust(align), f"{actual_vocab_size}/{opts.vocab_size}")
 
             output_dict['results']['unique_targets'] = len(unique_dict.keys())
             output_dict['results']['unique_msg'] = len(msg_dict.keys())
@@ -590,15 +598,12 @@ def main(params):
             with open(opts.dump_results_folder / f'{opts.filename}-results.json', 'w') as f:
                 json.dump(output_dict, f, indent=4)
 
-            if not opts.silent:
-                print(f"| Results saved to {opts.dump_results_folder/opts.filename}-results.json")
+            print(f"| Results saved to {opts.dump_results_folder / opts.filename}-results.json")
 
-    if not opts.silent:
-        print('| Total training time:', time_total)
-        print('| Training time per epoch:', time_per_epoch)
+    print('| Total training time:', time_total)
+    print('| Training time per epoch:', time_per_epoch)
+
 
 if __name__ == "__main__":
-
     import sys
-
     main(sys.argv[1:])
