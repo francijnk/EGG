@@ -140,13 +140,11 @@ class CustomProgressBarLogger(Callback):
             if colname in self.hide_cols:
                 continue
 
-            print_name = colname.replace('redund', 'r') \
+            print_name = colname.replace('redund_smb', 'r_s').replace('redund_msg', 'r_m') \
                 if not colname.startswith('actual_vocab_size') else 'vocab_size'
 
-            if colname == 'phase':
-                ratio = 1.25
-            elif colname == 'epoch':
-                ratio = 0.25
+            if colname == 'epoch':
+                ratio = 0.5
             else:
                 ratio = 1
             row.add_column(
@@ -314,8 +312,13 @@ class TrainingMetricsCallback(Callback):
             else:
                 message = logs.message
 
+            vocab_size = self.vocab_size + 1 \
+                if self.channel_type == 'erasure' and self.error_prob > 0. \
+                else self.vocab_size
+
             lexicon_size = torch.unique(logs.message, dim=0).shape[0]
-            actual_vocab_size = torch.unique(torch.flatten(message), dim=0).size(0)
+            actual_vocab = torch.unique(torch.flatten(message), dim=0)
+            actual_vocab_size = actual_vocab.size(0)
 
             logs.aux['lexicon_size'] = int(lexicon_size)
             logs.aux['actual_vocab_size'] = int(actual_vocab_size)
@@ -328,11 +331,13 @@ class TrainingMetricsCallback(Callback):
                 message, self.max_len, self.vocab_size, self.channel_type, self.error_prob)
             logs.aux['redund_smb_adj'] = compute_redundancy_smb_adjusted(
                 message, self.max_len, self.vocab_size, self.channel_type, self.error_prob)
+            logs.aux['redund_smb_adj2'] = compute_redundancy_smb_adjusted(
+                message, self.max_len, self.vocab_size, self.channel_type, self.error_prob, alphabet=actual_vocab)
 
             # compositinoality
             logs.aux['top_sim'] = compute_top_sim(logs.sender_input, logs.message)
             logs.aux['pos_dis'] = compute_posdis(logs.sender_input, logs.message)
-            logs.aux['bos_dis'] = compute_bosdis(logs.sender_input, logs.message, self.vocab_size)
+            logs.aux['bos_dis'] = compute_bosdis(logs.sender_input, logs.message, vocab_size)
 
     def on_secondary_validation_end(self, loss: float, logs: Interaction, epoch: int):
         if logs.message is not None:
@@ -345,12 +350,9 @@ class TrainingMetricsCallback(Callback):
             else:
                 message = logs.message
 
-            # for erasure channel, use vocab size without the special symbol
-            vocab_size = self.vocab_size - 1 if self.channel_type == 'erasure' \
-                else self.vocab_size
-
             lexicon_size = torch.unique(logs.message, dim=0).shape[0]
-            actual_vocab_size = torch.unique(torch.flatten(message), dim=0).size(0)
+            actual_vocab = torch.unique(torch.flatten(message), dim=0)
+            actual_vocab_size = actual_vocab.size(0)
 
             logs.aux['lexicon_size'] = int(lexicon_size)
             logs.aux['actual_vocab_size'] = int(actual_vocab_size)
@@ -360,14 +362,16 @@ class TrainingMetricsCallback(Callback):
             logs.aux['max_rep'] = compute_max_rep(message)
             logs.aux['redund_msg'] = compute_redundancy_msg(logs.message, self.max_len)
             logs.aux['redund_smb'] = compute_redundancy_smb(
-                message, self.max_len, vocab_size, channel=None, error_prob=0.0)
+                message, self.max_len, self.vocab_size, channel=None, error_prob=0.0)
             logs.aux['redund_smb_adj'] = compute_redundancy_smb_adjusted(
-                message, self.max_len, vocab_size, channel=None, error_prob=0.0)
+                message, self.max_len, self.vocab_size, channel=None, error_prob=0.0)
+            logs.aux['redund_smb_adj2'] = compute_redundancy_smb_adjusted(
+                message, self.max_len, self.vocab_size, channel=None, error_prob=0.0, alphabet=actual_vocab)
 
             # compositionality
             logs.aux['top_sim'] = compute_top_sim(logs.sender_input, logs.message)
             logs.aux['pos_dis'] = compute_posdis(logs.sender_input, logs.message)
-            logs.aux['bos_dis'] = compute_bosdis(logs.sender_input, logs.message, vocab_size)
+            logs.aux['bos_dis'] = compute_bosdis(logs.sender_input, logs.message, self.vocab_size)
 
     def on_epoch_end(self, loss: float, logs: Interaction, epoch: int):
         if logs.message is not None:
@@ -380,12 +384,13 @@ class TrainingMetricsCallback(Callback):
             else:
                 message = logs.message
 
-            # for erasure channel, use vocab size without the special symbol
-            vocab_size = self.vocab_size - 1 if self.channel_type == 'erasure' \
-                else self.vocab_size
+            # vocab_size = self.vocab_size + 1 \
+            #     if self.channel_type == 'erasure' and self.error_prob > 0. \
+            #     else self.vocab_size
 
             lexicon_size = torch.unique(logs.message, dim=0).shape[0]
-            actual_vocab_size = torch.unique(torch.flatten(message), dim=0).size(0)
+            actual_vocab = torch.unique(torch.flatten(message), dim=0)
+            actual_vocab_size = actual_vocab.size(0)
 
             logs.aux['lexicon_size'] = int(lexicon_size)
             logs.aux['actual_vocab_size'] = int(actual_vocab_size)
@@ -395,9 +400,11 @@ class TrainingMetricsCallback(Callback):
             logs.aux['max_rep'] = compute_max_rep(message)
             logs.aux['redund_msg'] = None  # compute_redundancy_msg(logs.message, self.max_len)
             logs.aux['redund_smb'] = compute_redundancy_smb(
-                message, self.max_len, vocab_size, self.channel_type, self.error_prob)
+                message, self.max_len, self.vocab_size, self.channel_type, self.error_prob)
             logs.aux['redund_smb_adj'] = compute_redundancy_smb_adjusted(
-                message, self.max_len, vocab_size, self.channel_type, self.error_prob)
+                message, self.max_len, self.vocab_size, self.channel_type, self.error_prob)
+            logs.aux['redund_smb_adj2'] = compute_redundancy_smb_adjusted(
+                message, self.max_len, self.vocab_size, self.channel_type, self.error_prob, alphabet=actual_vocab)
 
             # compositinoality
             logs.aux['top_sim'] = None  # top_sim(logs.sender_input, logs.message)

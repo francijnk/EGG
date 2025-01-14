@@ -97,7 +97,7 @@ def binary_entropy(p):
     return -p * math.log(p, 2) - (1 - p) * math.log(1 - p, 2)
 
 
-def sequence_entropy(messages, vocab_size, length=None):
+def sequence_entropy(messages, vocab_size, length=None, alphabet=None):
     """
     Computes entropy of the messages, where each symbol is treated as a
     distinct random variable. The entropy is approximated from the sample of
@@ -106,22 +106,27 @@ def sequence_entropy(messages, vocab_size, length=None):
     requested length (excluding EOS).
     """
 
+    if alphabet is None:
+        non_eos_alphabet = [i + 1 for i in range(vocab_size - 1)]
+    else:
+        non_eos_alphabet = [s for s in alphabet if s > 0] + [-1] * (vocab_size - len(alphabet) - 1)
+
     if length is not None:
         # compute entropy assuming the message length provided (excluding EOS)
-        alphabet = (
-            [[-1] + [i + 1 for i in range(vocab_size - 1)]] * length
-            + [[0] + [-1] * (vocab_size - 1)] * (messages.size(1) - length))
+        alphabet_smb = (
+            [[-1] + non_eos_alphabet] * length
+            + [[0] + [-1] * len(non_eos_alphabet)] * (messages.size(1) - length))
         entropy = entropy_joint(
-            messages.t().numpy(), estimator='JAMES-STEIN', Alphabet_X=alphabet)
+            messages.t().numpy(), estimator='JAMES-STEIN', Alphabet_X=alphabet_smb)
 
     else:
         # handle sequences of any permissible length
         max_len = find_lengths(messages).max() - 1
-        alphabet = (
-            [[i for i in range(vocab_size)]] * max_len
+        alphabet_smb = (
+            [[0] + non_eos_alphabet] * max_len
             + [[0] + [-1] * (vocab_size - 1)] * (messages.size(1) - max_len))
         entropy = entropy_joint(
-            messages.t().numpy(), estimator='JAMES-STEIN', Alphabet_X=alphabet)
+            messages.t().numpy(), estimator='JAMES-STEIN', Alphabet_X=alphabet_smb)
 
     return entropy
 
@@ -144,15 +149,27 @@ def maximize_sequence_entropy(max_len, vocab_size, channel=None, error_prob=None
 
         def _entropy(eos_prob):
             erased_prob = (1 - eos_prob) * error_prob
-            return (
-                - eos_prob * math.log(eos_prob, 2)
-                - erased_prob * math.log(erased_prob, 2)
-                - (1 - eos_prob) * (1 - erased_prob) * (
-                    math.log(1 - eos_prob, 2)
-                    + math.log(1 - erased_prob, 2)
-                    - math.log(vocab_size - 1, 2)
+            if vocab_size == 1:
+                return 0
+            elif vocab_size == 2:
+                return (
+                    - eos_prob * math.log(eos_prob, 2)
+                    - erased_prob * math.log(erased_prob, 2)
+                    - (1 - eos_prob) * (1 - erased_prob) * (
+                        math.log(1 - eos_prob, 2)
+                        + math.log(1 - erased_prob, 2)
+                    )
                 )
-            )
+            else:
+                return (
+                    - eos_prob * math.log(eos_prob, 2)
+                    - erased_prob * math.log(erased_prob, 2)
+                    - (1 - eos_prob) * (1 - erased_prob) * (
+                        math.log(1 - eos_prob, 2)
+                        + math.log(1 - erased_prob, 2)
+                        - math.log(vocab_size - 1, 2)
+                    )
+                )
 
         optimal_eos_prob = minimize_scalar(
             lambda p: -1 * _entropy(p),
@@ -165,13 +182,23 @@ def maximize_sequence_entropy(max_len, vocab_size, channel=None, error_prob=None
             return 0, [1.]
 
         def _entropy(eos_prob):
-            return (
-                - (eos_prob + error_prob) * math.log(eos_prob + error_prob, 2)
-                - (1 - eos_prob - error_prob) * (
-                    math.log(1 - eos_prob - error_prob, 2)
-                    - math.log(vocab_size - 1, 2)
+            if vocab_size == 1:
+                return 0
+            elif vocab_size == 2:
+                return (
+                    - (eos_prob + error_prob) * math.log(eos_prob + error_prob, 2)
+                    - (1 - eos_prob - error_prob) * (
+                        math.log(1 - eos_prob - error_prob, 2)
+                    )
                 )
-            )
+            else:
+                return (
+                    - (eos_prob + error_prob) * math.log(eos_prob + error_prob, 2)
+                    - (1 - eos_prob - error_prob) * (
+                        math.log(1 - eos_prob - error_prob, 2)
+                        - math.log(vocab_size - 1, 2)
+                    )
+                )
 
         optimal_eos_prob = minimize_scalar(
             lambda p: -1 * _entropy(p),
@@ -233,7 +260,7 @@ def maximize_sequence_entropy(max_len, vocab_size, channel=None, error_prob=None
     return _sequence_entropy(optimal_eos_prob.x), eos_probs
 
 
-def compute_redundancy_smb(messages, max_len, vocab_size, channel, error_prob, maxiter=1000):
+def compute_redundancy_smb(messages, max_len, vocab_size, channel, error_prob, alphabet=None, maxiter=1000):
     """
     Computes a redundancy based on the symbol-level message entropy.
     The value returned is multiplied by a factor dependent on the maximum
@@ -244,14 +271,20 @@ def compute_redundancy_smb(messages, max_len, vocab_size, channel, error_prob, m
 
     if channel == 'erasure':
         vocab_size += 1
+        if alphabet is not None:
+            alphabet = list(alphabet)
+            alphabet.append(vocab_size)
 
-    H = sequence_entropy(messages, vocab_size)
+    if alphabet is not None:
+        vocab_size = len(alphabet)
+
+    H = sequence_entropy(messages, vocab_size, alphabet=alphabet)
     H_max, _ = maximize_sequence_entropy(max_len, vocab_size, channel, error_prob, maxiter)
     H_max = max(H_max, H)  # the value of H is biased, and could exceed H_max
     return 1 - H / H_max
 
 
-def compute_redundancy_smb_adjusted(messages, max_len, vocab_size, channel, error_prob, maxiter=1000):
+def compute_redundancy_smb_adjusted(messages, max_len, vocab_size, channel, error_prob, alphabet=None, maxiter=1000):
     """
     Computes a redundancy based on the symbol-level message entropy, adjusted
     not to depend on message length and to have values in range [0, 1].
@@ -268,10 +301,15 @@ def compute_redundancy_smb_adjusted(messages, max_len, vocab_size, channel, erro
         l.item(): (lengths == l).to(torch.int).sum().item() / n
         for l in torch.unique(lengths)})
 
+    if alphabet is not None:
+        vocab_size = len(alphabet)
+    elif channel == 'erasure' and error_prob > 0.:
+        vocab_size += 1
+
     # compute the maximum entropies for the erasure channel
     if channel == 'erasure' and error_prob > 0.:
         _, eos_probs = maximize_sequence_entropy(
-            max_len, vocab_size, channel, error_prob, maxiter)
+            max_len, vocab_size - 1, channel, error_prob, maxiter)
         max_entropies = [0]
         for eos_prob in eos_probs[::-1]:
             max_entropy = (
@@ -281,7 +319,7 @@ def compute_redundancy_smb_adjusted(messages, max_len, vocab_size, channel, erro
                     binary_entropy(eos_prob)
                     # + eos_prob * 0
                     + (1 - eos_prob) * (
-                        math.log(vocab_size - 1, 2)
+                        math.log(vocab_size - 2, 2)
                         + max_entropies[0]
                     )
                 )
@@ -297,29 +335,30 @@ def compute_redundancy_smb_adjusted(messages, max_len, vocab_size, channel, erro
         if _messages.size(0) == 0:
             continue
 
-        if channel == 'deletion':
-            ent_msg = sequence_entropy(_messages, vocab_size)
-        elif channel == 'erasure':
-            ent_msg = sequence_entropy(_messages, vocab_size + 1, i)
+        if channel == 'deletion' and error_prob > 0.:
+            ent_msg = sequence_entropy(_messages, vocab_size, alphabet=alphabet)
         else:
-            ent_msg = sequence_entropy(_messages, vocab_size, i)
+            ent_msg = sequence_entropy(_messages, vocab_size, i, alphabet)
 
-        if channel == 'erasure' and error_prob != 0.:
+        if channel == 'erasure' and error_prob > 0.:
             ent_max = max_entropies[i - 1]
         else:
-            ent_max = math.log(vocab_size - 1, 2) * i
+            ent_max = math.log(vocab_size - 1, 2) * i if vocab_size > 2 else 0.
 
         # due to the bias of entropy estimators, the value of ent_msg could
         # exceed the value of the maximum entropy value
         ent_max = max(ent_max, ent_msg)
 
         prob_msg = len_probs_msg[i]
-        redundancy_msg = 1 - ent_msg / ent_max
 
-        if redundancy:
-            redundancy += prob_msg * redundancy_msg
+        if ent_max == 0.:
+            redundancy += prob_msg * 1.
         else:
-            redundancy = prob_msg * redundancy_msg
+            redundancy_msg = 1 - ent_msg / ent_max
+            if redundancy:
+                redundancy += prob_msg * redundancy_msg
+            else:
+                redundancy = prob_msg * redundancy_msg
 
     return redundancy if redundancy is not None else 1.
 
@@ -446,3 +485,56 @@ def compute_bosdis(sender_inputs, messages, vocab_size):
     """
     histograms = histogram(messages, vocab_size)
     return compute_posdis(sender_inputs, histograms[:, 1:])
+
+
+# for testing - remove later or change into proper tests
+import random
+
+
+def generate_messages(n, max_len, vocab_size, repeat_prob, var_len=False):
+    if var_len:
+        lengths = {
+            i: 1. / len(list(range(max_len // 2, max_len + 1)))
+            for i in range(max_len // 2, max_len + 1)
+        }
+    else:
+        lengths = {max_len: 1.}
+
+    messages = []
+    for i in range(n):
+        symbols = []
+        msg_len = np.random.choice(
+            np.arange(
+                min(list(lengths.keys())),
+                max(list(lengths.keys())) + 1),
+            p=list(lengths.values()))
+        for j in range(msg_len):
+            if j == 0:
+                smb = random.randint(1, vocab_size - 1)
+            else:
+                repeat = random.random() < repeat_prob
+                if repeat:
+                    smb = symbols[-1]
+                else:
+                    options = np.array(
+                        [i for i in range(1, vocab_size) if i != symbols[-1]])
+                    probs = [1. / len(options) for _ in range(len(options))]
+                    smb = np.random.choice(options, p=probs)
+            symbols.append(smb)
+        symbols.append(0)
+        msg = torch.tensor(symbols)
+        messages.append(msg)
+    messages = torch.nn.utils.rnn.pad_sequence(messages, batch_first=True)
+
+    return messages
+
+
+# messages = generate_messages(1000, 10, 3, repeat_prob=1., var_len=False)
+# alphabet = torch.unique(torch.flatten(messages), dim=0)
+# print(alphabet)
+# print(compute_redundancy_smb(messages, 10, 3, None, 0.0))
+# print(compute_redundancy_smb_adjusted(messages, 10, 3, None, 0.0))
+# print(compute_redundancy_smb(messages, 10, 8, None, 0.0, alphabet=alphabet))
+# print(compute_redundancy_smb_adjusted(messages, 10, 8, None, 0.0, alphabet=alphabet))
+# print(compute_redundancy_smb(messages, 10, 8, None, 0.0, alphabet=None))
+# print(compute_redundancy_smb_adjusted(messages, 10, 8, None, 0.0, alphabet=None))

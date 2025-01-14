@@ -240,7 +240,7 @@ def main(params):
 
     callbacks = [
         TrainingMetricsCallback(
-            vocab_size=receiver_vocab_size,
+            vocab_size=opts.vocab_size,
             max_len=opts.max_len,
             channel_type=opts.channel,
             error_prob=opts.error_prob,
@@ -330,8 +330,9 @@ def main(params):
         compared = torch.eq(predictions, new_labels)
         accuracy2 = compared.float().mean().item()
 
-        all_symbols = set(int(s) for m in messages for s in m.tolist())
-        actual_vocab_size = len(all_symbols)
+        actual_vocab = set(int(s) for m in messages for s in m.tolist())
+        actual_vocab_size = len(actual_vocab)
+
 
         receiver_outputs = move_to(receiver_outputs, device)
         receiver_outputs = torch.stack(receiver_outputs)
@@ -350,6 +351,8 @@ def main(params):
             messages, opts.max_len, opts.vocab_size, opts.channel, opts.error_prob)
         redund_smb_adj = compute_redundancy_smb_adjusted(
             messages, opts.max_len, opts.vocab_size, opts.channel, opts.error_prob)
+        redund_smb_adj2 = compute_redundancy_smb_adjusted(
+            messages, opts.max_len, opts.vocab_size, opts.channel, opts.error_prob, alphabet=actual_vocab)
         topographic_rho = compute_top_sim(sender_inputs, messages, opts.perceptual_dimensions)
         pos_dis = compute_posdis(sender_inputs, messages)
         bos_dis = compute_bosdis(sender_inputs, messages, opts.vocab_size)
@@ -360,6 +363,7 @@ def main(params):
         output_dict['results']['redundancy_msg'] = redund_msg
         output_dict['results']['redundancy_smb'] = redund_smb
         output_dict['results']['redundancy_smb_adj'] = redund_smb_adj
+        output_dict['results']['redundancy_smb_adj2'] = redund_smb_adj2
         output_dict['results']['topographic_rho'] = topographic_rho
         output_dict['results']['pos_dis'] = pos_dis
         output_dict['results']['bos_dis'] = bos_dis
@@ -439,6 +443,9 @@ def main(params):
             labels_nn = move_to(labels_nn, device)
             labels_nn = torch.stack(labels_nn)
 
+            actual_vocab_nn = set(int(s) for m in messages_nn for s in m.tolist())
+            actual_vocab_size_nn = len(actual_vocab_nn)
+
             preds_nn = receiver_outputs_nn.argmax(dim=1) if opts.mode.lower() == 'gs' \
                 else receiver_outputs_nn
             accuracy_nn = torch.mean((preds_nn == labels_nn).float()).item()
@@ -447,19 +454,19 @@ def main(params):
                 messages_nn, opts.max_len, opts.vocab_size, None, 0.0)
             redund_smb_adj_nn = compute_redundancy_smb_adjusted(
                 messages_nn, opts.max_len, opts.vocab_size, None, 0.0)
+            redund_smb_adj2_nn = compute_redundancy_smb_adjusted(
+                messages_nn, opts.max_len, opts.vocab_size, None, 0.0, actual_vocab_nn)
             top_sim_nn = compute_top_sim(sender_inputs_nn, messages_nn, opts.perceptual_dimensions)
             pos_dis_nn = compute_posdis(sender_inputs_nn, messages_nn)
             bos_dis_nn = compute_bosdis(sender_inputs_nn, messages_nn, opts.vocab_size)
             max_rep_nn = torch.mean(compute_max_rep(messages_nn).to(torch.float16)).item()
-
-            all_symbols = set(int(s) for m in messages_nn for s in m.tolist())
-            actual_vocab_size_nn = len(all_symbols)
 
             output_dict['results-no-noise']['accuracy'] = accuracy_nn
             output_dict['results-no-noise']['embedding_alignment'] = alignment
             output_dict['results-no-noise']['redundancy_msg'] = redund_msg_nn
             output_dict['results-no-noise']['redundancy_smb'] = redund_smb_nn
             output_dict['results-no-noise']['redundancy_smb_adj'] = redund_smb_adj_nn
+            output_dict['results-no-noise']['redundancy_smb_adj2'] = redund_smb_adj2_nn
             output_dict['results-no-noise']['topographic_rho'] = top_sim_nn
             output_dict['results-no-noise']['pos_dis'] = pos_dis_nn
             output_dict['results-no-noise']['bos_dis'] = bos_dis_nn
