@@ -5,9 +5,8 @@ import subprocess
 
 # load parameters from a file
 with open(sys.argv[2]) as fp:
-    param_lines = fp.read().split('\n')
+    param_lines = fp.read().split('\n')[:-1]
 
-print(param_lines[0], param_lines[-1])
 param_sets = [[p for p in line.split()] for line in param_lines]
 
 
