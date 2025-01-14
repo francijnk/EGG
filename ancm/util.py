@@ -141,63 +141,8 @@ def dump_sender_receiver(
                         receiver_outputs.append(output[i, ...])
 
     game.train(mode=train_state)
-    
+
     return sender_inputs, messages, one_hots, receiver_inputs, receiver_outputs, labels
-
-    Args:
-        tensor (torch.Tensor): The input tensor.
-        n (int): The number of items to remove.
-
-    Returns:
-        list[torch.Tensor]: A list of tensors with `n` items removed.
-    """
-    # Ensure the input is a PyTorch tensor
-    tensor = torch.tensor(tensor) if not isinstance(tensor, torch.Tensor) else tensor
-
-    # Get the indices of elements that can be removed (exclude 0)
-    removable_indices = [idx for idx in range(len(tensor)) if tensor[idx] != 0]
-
-    # Generate all combinations of `n` indices to remove
-    combos = list(combinations(removable_indices, n))
-
-    # Create new tensors with the combinations removed
-    result = []
-    for indices in combos:
-        mask = torch.ones(len(tensor), dtype=torch.bool)
-        mask[list(indices)] = False
-        new = tensor[mask]
-        new = new.to(torch.long)
-        result.append(new)
-
-    return result
-
-def remove_n_dims(tensor, n=1):
-
-    # Get the number of rows (N)
-    num_rows = tensor.shape[0]
-    
-    # Ensure there are enough rows to remove `n` and keep the last row
-    if n >= num_rows:
-        raise ValueError("Cannot remove more rows than available (excluding the last row).")
-    if num_rows <= 1:
-        raise ValueError("The input tensor must have more than one row.")
-    
-    # Get indices of rows that can be removed (exclude the last row)
-    removable_indices = list(range(num_rows - 1))  # Exclude last row
-    
-    # Generate all combinations of `n` rows to remove
-    combos = list(combinations(removable_indices, n))
-    
-    # Create new tensors with the selected rows removed
-    result = []
-    for combo in combos:
-        mask = torch.ones(num_rows, dtype=torch.bool)
-        mask[list(combo)] = False  # Set rows in the combo to False (remove them)
-        new = tensor[mask]
-        new = new.to(torch.float)
-        result.append(new)
-    
-    return result
 
 
 def truncate_messages(messages, receiver_input, labels, mode):
@@ -215,7 +160,6 @@ def truncate_messages(messages, receiver_input, labels, mode):
 
     return new_messages, new_r_input, new_labels
 
-        
 
 def remove_n_items(tensor, n=1):
     """
@@ -278,19 +222,3 @@ def remove_n_dims(tensor, n=1):
         result.append(new)
 
     return result
-
-
-def truncate_messages(messages, receiver_input, labels, mode):
-    new_messages = []
-    new_r_input = []
-    new_labels = []
-    for i, message in enumerate(messages):
-        if mode == 'rf':
-            truncated = remove_n_items(message, 1)
-        elif mode == 'gs':
-            truncated = remove_n_dims(message, 1)
-        new_messages.extend(truncated)
-        new_r_input.extend([receiver_input[i]] * len(truncated))
-        new_labels.extend([labels[i]] * len(truncated))
-
-    return new_messages, new_r_input, new_labels
