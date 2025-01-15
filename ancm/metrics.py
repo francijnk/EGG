@@ -116,7 +116,6 @@ def sequence_entropy(messages, vocab_size, length=None, alphabet=None):
         alphabet_smb = (
             [[-1] + non_eos_alphabet] * length
             + [[0] + [-1] * len(non_eos_alphabet)] * (messages.size(1) - length))
-        alphabet_smb = np.array(alphabet_smb, dtype=np.int64)
         entropy = entropy_joint(
             messages.t().numpy(), estimator='JAMES-STEIN', Alphabet_X=alphabet_smb)
 
@@ -126,7 +125,6 @@ def sequence_entropy(messages, vocab_size, length=None, alphabet=None):
         alphabet_smb = (
             [[0] + non_eos_alphabet] * max_len
             + [[0] + [-1] * (vocab_size - 1)] * (messages.size(1) - max_len))
-        alphabet_smb = np.array(alphabet_smb, dtype=np.int64)
         entropy = entropy_joint(
             messages.t().numpy(), estimator='JAMES-STEIN', Alphabet_X=alphabet_smb)
 

@@ -408,7 +408,7 @@ def main(params):
                     variable_length=True, max_len=opts.max_len,
                     vocab_size=opts.vocab_size, device=device)
 
-            padded_messages_nn = torch.nn.utils.rnn.pad_sequence(messages, batch_first=True)
+            padded_messages_nn = torch.nn.utils.rnn.pad_sequence(messages_nn, batch_first=True)
 
             # to get new additional accuracy for truncated messages (where one symbol is removed)
             if opts.mode == 'rf':
