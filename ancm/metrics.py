@@ -67,17 +67,31 @@ def compute_max_rep(messages):
     Computes the number of occurrences of the most frequent symbol in each
     message (0 for messages that consist of EOS symbols only).
     """
+
     if isinstance(messages, list):
         messages = [msg.argmax(dim=1) if msg.dim() == 2
                     else msg for msg in messages]
         messages = torch.nn.utils.rnn.pad_sequence(messages, batch_first=True)
 
-    messages = messages.to(torch.float16)
-    messages[messages == 0] = float('nan')
-    mode = torch.mode(messages, dim=1).values
-    is_rep = (messages == torch.unsqueeze(mode, dim=-1).expand(*messages.size()))
-    max_rep = (is_rep.to(torch.int16).sum(dim=1))
-    return max_rep
+    all_symbols = torch.unique(torch.flatten(messages), dim=0)
+    non_eos_symbols = all_symbols[all_symbols != 0]
+
+    output = torch.zeros(messages.size(0))
+    for smb in non_eos_symbols:
+        smb_tensor = smb.expand(messages.size(1))
+        smb_tensor = smb_tensor.t().expand(*messages.size())
+        
+        match = messages.eq(smb_tensor).to(torch.int)
+        for i in range(0, messages.size(1) - 1):
+            # search for a repeating subsequence of length i + 1
+            matching_msg = match.max(dim=1).values.to(torch.bool)
+            length = torch.where(matching_msg, i + 1, 0)
+            if torch.all(length == 0):  # if no message has any matches, continue
+                break
+            output = torch.where(length > output, length, output)
+            match = torch.mul(match[:, :-1], match[:, 1:])
+
+    return output
 
 
 def compute_redundancy_msg(messages, max_len):
