@@ -1,17 +1,17 @@
 import sys
 
-random_seeds = [i + 1 for i in range(5)]
+random_seeds = [i + 1 for i in range(3)]
 data_seeds = [42]
 error_probs = [0.00, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30]
 channels = 'erasure deletion symmetric'.split()
-max_lengths = [2, 3, 5, 10]
+max_lengths = [2, 3, 4, 5, 8]
 
 slr = 5e-3
 rlr = 1e-3
 length_cost = 1e-3
 vocab_size = 10
 hidden_units = 50
-n_epochs = 25
+n_epochs = 40
 
 
 def get_opts(error_prob, channel, max_len, random_seed, data_seed):
