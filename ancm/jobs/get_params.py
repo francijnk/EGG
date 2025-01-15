@@ -11,7 +11,8 @@ rlr = 1e-3
 length_cost = 1e-3
 vocab_size = 10
 hidden_units = 50
-n_epochs = 40
+n_epochs = 25
+mode = 'gs'
 
 
 def get_opts(error_prob, channel, max_len, random_seed, data_seed):
@@ -41,7 +42,7 @@ def get_opts(error_prob, channel, max_len, random_seed, data_seed):
         '--receiver_entropy_coeff 0.001',
         '--sender_cell lstm',
         '--receiver_cell lstm',
-        '--mode rf',
+        f'--mode {mode}',
         '--evaluate',
         '--validation_freq 1',
     ]
