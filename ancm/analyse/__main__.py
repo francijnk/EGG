@@ -29,13 +29,15 @@ def plot_test(data_test, output_dir):
     value_x_tick = [0, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30]
 
     # (1) Accuracy
-    df = test_long[test_long.metric == 'accuracy']
+    df = test_long[test_long.metric.isin(['accuracy', 'accuracy2', 'embedding_alignment'])]
     plot = sns.relplot(
         df,
         x='error_prob', y='value',
         col='max_len', row='channel', style='noise',
-        kind='line', errorbar=('se', 2), marker='o',
-        markersize=8, hue='max_len',
+        kind='line', 
+        errorbar=None,  # ('se', 2), 
+        marker='o',
+        markersize=8, hue='metric',
         facet_kws=dict(margin_titles=True), legend=True)
     # sns.move_legend(
     #    plot, "upper center", bbox_to_anchor=(.5, 1.04), ncol=3,
@@ -46,34 +48,38 @@ def plot_test(data_test, output_dir):
     close_plot(plot)
 
     # (2) Redundancy
-    df = test_long[test_long.metric == 'redundancy_message']
+    df = test_long[test_long.metric.isin([
+        'redundancy_message',
+        'redundancy_symbol',
+        'redundancy_symbol_adj1',
+        'redundancy_symbol_adj2'])]
     plot = sns.relplot(
         df,
-        x='error_prob', y='value', hue='max_len',
+        x='error_prob', y='value', hue='metric',
         col='max_len', row='channel', style='noise',
         errorbar=None, # errorbar=('se',2),
         marker='o', kind='line', markersize=8,
         facet_kws=dict(margin_titles=True), legend=True)
     # sns.move_legend(
     #    plot, "upper center", bbox_to_anchor=(.5, 1.04), ncol=3,
-    #     title="max message length", frameon=False,)
+    #     title="redundancy", frameon=False,)
     plot.set(xticks=value_x_tick)
     plot.savefig(os.path.join(output_dir, "test_redundancy.png"), dpi=400)
     close_plot(plot)
 
     # (3) Max. rep.
-    # df = test_long[test_long.metric == 'max_rep']
-    # plot = sns.relplot(
-    #     df, col='max_len', x='error_prob', y='value', kind='line',
-    #     errorbar=('se',2), style='noise', row='channel', marker='o',
-    #     markersize=8, hue='max_len',
-    #     facet_kws=dict(margin_titles=True), legend=True)
+    df = test_long[test_long.metric == 'max_rep']
+    plot = sns.relplot(
+        df, col='max_len', x='error_prob', y='value', kind='line',
+        errorbar=('se',2), style='noise', row='channel', marker='o',
+        markersize=8, # hue='max_len',
+        facet_kws=dict(margin_titles=True), legend=True)
     # sns.move_legend(
     #     plot, "upper center", bbox_to_anchor=(.5, 1.04), ncol=3,
-    #     title="max message length", frameon=False,)
-    # plot.set(xticks=value_x_tick)
-    # plot.savefig(os.path.join(output_dir, "test_max_rep.png"), dpi=400)
-    # close_plot(plot)
+    #     title="avg len of max rep subsequence", frameon=False,)
+    plot.set(xticks=value_x_tick)
+    plot.savefig(os.path.join(output_dir, "test_max_rep.png"), dpi=400)
+    close_plot(plot)
 
     # (4) Compositionality
     df = test_long[(test_long.metric.isin('topographic_rho pos_dis bos_dis'.split()))]
@@ -81,10 +87,10 @@ def plot_test(data_test, output_dir):
     plot = sns.relplot(
         df,
         x='error_prob', y='value', style='noise',
-        col='metric', row='channel',
+        col='max_len', row='channel',
         errorbar=None, # errorbar=('se',2),
         marker='o', markersize=8, kind='line',
-        hue='max_len', facet_kws=dict(margin_titles=True), legend=True)
+        hue='metric', facet_kws=dict(margin_titles=True), legend=True)
     # sns.move_legend(
     #    plot, "upper center", bbox_to_anchor=(.5, 1.04), ncol=3,
     #    title="max message length", frameon=False,)
@@ -108,7 +114,41 @@ def plot_training(data_val, output_dir):
     plot.savefig(os.path.join(output_dir, "training_accuracy.png"))
     close_plot(plot)
 
-    metrics = ['redund_msg']
+    metrics = ['alignment']
+    df = get_long_val_data(data_val, metrics)
+
+    sns.set_palette(sns.husl_palette(4, 0.76))
+    plot = sns.relplot(
+        legend=True, data=df,
+        x='epoch', y='value', hue='channel',
+        row='max_len', col='error_prob', style='noise',
+        errorbar=None,  # errorbar=('se', 2),
+        kind='line', facet_kws=dict(margin_titles=True))
+    plot.set_titles("{col_name}")
+    plot.savefig(os.path.join(output_dir, "training_alignment.png"))
+    close_plot(plot)
+
+    # redundancy
+    metrics = ['redund_msg', 'redund_smb', 'redund_smb_adj', 'redund_smb_adj2']
+    df = get_long_val_data(data_val, metrics)
+
+    for channel in pd.unique(df.channel):
+        df_channel = df[df.channel == channel]
+        sns.set_palette(sns.husl_palette(4))
+        plot = sns.relplot(
+            legend=True, data=df,
+            row='max_len', col='error_prob',
+            x='epoch', y='value', kind='line',
+            hue='metric', style='noise',
+            errorbar=None,
+            # errorbar=('se', 2),
+            facet_kws=dict(margin_titles=True))
+        plot.set_titles("{col_name}")
+        plot.savefig(os.path.join(output_dir, f"training_redundancy_{channel}.png"))
+        close_plot(plot)
+
+    # lexicon size
+    metrics = ['lexicon_size']
     df = get_long_val_data(data_val, metrics)
 
     sns.set_palette(sns.husl_palette(4, 0.76))
@@ -121,9 +161,43 @@ def plot_training(data_val, output_dir):
         # errorbar=('se', 2),
         facet_kws=dict(margin_titles=True))
     plot.set_titles("{col_name}")
-    plot.savefig(os.path.join(output_dir, "training_redundancy.png"))
+    plot.savefig(os.path.join(output_dir, "training_lexicon.png"))
     close_plot(plot)
 
+    metrics = ['actual_vocab_size']
+    df = get_long_val_data(data_val, metrics)
+
+    sns.set_palette(sns.husl_palette(4, 0.76))
+    plot = sns.relplot(
+        legend=True, data=df,
+        x='epoch', y='value', hue='channel',
+        row='max_len', col='error_prob', style='noise',
+        errorbar=None,  # errorbar=('se', 2),
+        kind='line', facet_kws=dict(margin_titles=True))
+    plot.set_titles("{col_name}")
+    plot.savefig(os.path.join(output_dir, "training_actual_vs.png"))
+    close_plot(plot)
+
+    # length, max rep, actual_vs
+    metrics = ['length', 'max_rep']
+    df = get_long_val_data(data_val, metrics)
+
+    for channel in pd.unique(df.channel):
+        df_channel = df[df.channel == channel]
+        sns.set_palette(sns.husl_palette(3))
+        plot = sns.relplot(
+            legend=True, data=df,
+            row='max_len', col='error_prob',
+            x='epoch', y='value', kind='line',
+            hue='metric', style='noise',
+            errorbar=None,
+            # errorbar=('se', 2),
+            facet_kws=dict(margin_titles=True))
+        plot.set_titles("{col_name}")
+        plot.savefig(os.path.join(output_dir, f"training_msg_len_{channel}.png"))
+        close_plot(plot)
+
+    # compositionality
     metrics = 'top_sim pos_dis bos_dis'.split()
     df = get_long_val_data(data_val, metrics)
     for channel in pd.unique(df.channel):
@@ -157,6 +231,8 @@ def analyse(data_test, output_dir):
             header = (
                 "error_prob ".ljust(12) +
                 "acc ".ljust(6) +
+                "acc2 ".ljust(6) +
+                "acc2_nn ".ljust(10) +
                 "unique_msg ".ljust(12) +
                 "unique_msg_nn ".ljust(16) +
                 "avg_len ".ljust(8) +
@@ -175,11 +251,13 @@ def analyse(data_test, output_dir):
 
                 unique_msg = rows_noise['unique_messages'].mean()
                 acc = rows_no_noise['accuracy'].mean()
+                acc2 = rows_noise['accuracy2'].mean()
+                acc2_nn = rows_no_noise['accuracy2'].mean()
                 unique_msg_nn = rows_no_noise['unique_messages'].mean()
                 avg_len = rows_noise['avg_length'].mean()
                 avg_len_nn = rows_no_noise['avg_length'].mean()
-                max_rep = -1  # rows_noise['max_rep'].mean()
-                max_rep_nn = -1  # rows_noise['max_rep'].mean()
+                max_rep = rows_noise['max_rep'].mean()
+                max_rep_nn = rows_noise['max_rep'].mean()
                 actual_vs = rows_noise['actual_vocab_size'].mean()
                 # actual_vs_nn = rows_no_noise['actual_vocab_size'].mean()
 
@@ -188,6 +266,8 @@ def analyse(data_test, output_dir):
                 lines.append(
                     f"{error_prob:.2f}".ljust(12) +
                     f"{acc:.2f}".ljust(6) +
+                    f"{acc2:.2f}".ljust(6) +
+                    f"{acc2_nn:.2f}".ljust(10) +
                     f"{unique_msg:.2f}".ljust(12) +
                     f"{unique_msg_nn:.2f}".ljust(16) +
                     f"{avg_len:.2f}".ljust(8) +
@@ -197,7 +277,7 @@ def analyse(data_test, output_dir):
                     f"{actual_vs:.2f}".ljust(8))
             lines.append("=" * len(header))
 
-    with open(os.path.join(output_dir, "unique_objects.txt"), "w") as file:
+    with open(os.path.join(output_dir, "stats.txt"), "w") as file:
         file.write("\n".join(lines))
 
 

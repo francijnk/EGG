@@ -33,7 +33,7 @@ def load_data(input_dir):
 
             if error_prob != 0.:
                 df_noise = df[df.phase == 'val']
-                df_no_noise = df[df.phase == 'val (no noise)']
+                df_no_noise = df[df.phase == 'val (nn)']
             else:
                 df_noise = df[df.phase == 'val']
                 df_no_noise = df[df.phase == 'val']
@@ -61,9 +61,12 @@ def load_data(input_dir):
             data_test['error_prob'].append(error_prob)
             data_test['noise'].append('no noise')
             data_test['accuracy'].append(fdata['results']['accuracy'])
-            data_test['redundancy_message'].append(fdata['results']['redundancy_msg_lvl'])
-            data_test['redundancy_symbol'].append(fdata['results']['redundancy_smb_lvl'])
-            # data_test['max_rep'].append(fdata['results']['max_rep'])
+            data_test['accuracy2'].append(fdata['results']['accuracy2'])
+            data_test['redundancy_message'].append(fdata['results']['redundancy_msg'])
+            data_test['redundancy_symbol'].append(fdata['results']['redundancy_smb'])
+            data_test['redundancy_symbol_adj1'].append(fdata['results']['redundancy_smb_adj'])
+            data_test['redundancy_symbol_adj2'].append(fdata['results']['redundancy_smb_adj2'])
+            data_test['max_rep'].append(fdata['results']['max_rep'])
             data_test['embedding_alignment'].append(fdata['results']['embedding_alignment'])
             data_test['topographic_rho'].append(fdata['results']['topographic_rho'])
             data_test['pos_dis'].append(fdata['results']['pos_dis'])
@@ -79,9 +82,12 @@ def load_data(input_dir):
             data_test['error_prob'].append(error_prob)
             data_test['noise'].append('noise')
             data_test['accuracy'].append(fdata[r_nn]['accuracy'])
-            data_test['redundancy_message'].append(fdata[r_nn]['redundancy_msg_lvl'])
-            data_test['redundancy_symbol'].append(fdata[r_nn]['redundancy_smb_lvl'])
-            # data_test['max_rep'].append(fdata['results']['max_rep'])
+            data_test['accuracy2'].append(fdata[r_nn]['accuracy2'])
+            data_test['redundancy_message'].append(fdata[r_nn]['redundancy_msg'])
+            data_test['redundancy_symbol'].append(fdata[r_nn]['redundancy_smb'])
+            data_test['redundancy_symbol_adj1'].append(fdata[r_nn]['redundancy_smb_adj'])
+            data_test['redundancy_symbol_adj2'].append(fdata[r_nn]['redundancy_smb_adj2'])
+            data_test['max_rep'].append(fdata[r_nn]['max_rep'])
             data_test['embedding_alignment'].append(fdata[r_nn]['embedding_alignment'])
             data_test['topographic_rho'].append(fdata[r_nn]['topographic_rho'])
             data_test['pos_dis'].append(fdata[r_nn]['pos_dis'])

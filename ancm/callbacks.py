@@ -333,6 +333,8 @@ class TrainingMetricsCallback(Callback):
                 message, self.max_len, self.vocab_size, self.channel_type, self.error_prob)
             logs.aux['redund_smb_adj2'] = compute_redundancy_smb_adjusted(
                 message, self.max_len, self.vocab_size, self.channel_type, self.error_prob, alphabet=actual_vocab)
+            logs.aux['redund_smb_adj3'] = compute_redundancy_smb(
+                message, self.max_len, self.vocab_size, self.channel_type, self.error_prob, alphabet=actual_vocab)
 
             # compositinoality
             logs.aux['top_sim'] = compute_top_sim(logs.sender_input, logs.message)
@@ -366,6 +368,8 @@ class TrainingMetricsCallback(Callback):
             logs.aux['redund_smb_adj'] = compute_redundancy_smb_adjusted(
                 message, self.max_len, self.vocab_size, channel=None, error_prob=0.0)
             logs.aux['redund_smb_adj2'] = compute_redundancy_smb_adjusted(
+                message, self.max_len, self.vocab_size, channel=None, error_prob=0.0, alphabet=actual_vocab)
+            logs.aux['redund_smb_adj3'] = compute_redundancy_smb(
                 message, self.max_len, self.vocab_size, channel=None, error_prob=0.0, alphabet=actual_vocab)
 
             # compositionality
@@ -404,6 +408,8 @@ class TrainingMetricsCallback(Callback):
             logs.aux['redund_smb_adj'] = compute_redundancy_smb_adjusted(
                 message, self.max_len, self.vocab_size, self.channel_type, self.error_prob)
             logs.aux['redund_smb_adj2'] = compute_redundancy_smb_adjusted(
+                message, self.max_len, self.vocab_size, self.channel_type, self.error_prob, alphabet=actual_vocab)
+            logs.aux['redund_smb_adj3'] = compute_redundancy_smb(
                 message, self.max_len, self.vocab_size, self.channel_type, self.error_prob, alphabet=actual_vocab)
 
             # compositinoality

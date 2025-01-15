@@ -353,23 +353,26 @@ def main(params):
             messages, opts.max_len, opts.vocab_size, opts.channel, opts.error_prob)
         redund_smb_adj2 = compute_redundancy_smb_adjusted(
             messages, opts.max_len, opts.vocab_size, opts.channel, opts.error_prob, alphabet=actual_vocab)
+        redund_smb_adj3 = compute_redundancy_smb_adjusted(
+            messages, opts.max_len, opts.vocab_size, opts.channel, opts.error_prob, alphabet=actual_vocab)
         topographic_rho = compute_top_sim(sender_inputs, messages, opts.perceptual_dimensions)
         pos_dis = compute_posdis(sender_inputs, messages)
         bos_dis = compute_bosdis(sender_inputs, messages, opts.vocab_size)
         maxrep = torch.mean(compute_max_rep(messages).to(torch.float16)).item()
 
         output_dict['results']['accuracy'] = accuracy
+        output_dict['results']['accuracy2'] = accuracy2
         output_dict['results']['embedding_alignment'] = alignment
         output_dict['results']['redundancy_msg'] = redund_msg
         output_dict['results']['redundancy_smb'] = redund_smb
         output_dict['results']['redundancy_smb_adj'] = redund_smb_adj
         output_dict['results']['redundancy_smb_adj2'] = redund_smb_adj2
+        output_dict['results']['redundancy_smb_adj3'] = redund_smb_adj3
         output_dict['results']['topographic_rho'] = topographic_rho
         output_dict['results']['pos_dis'] = pos_dis
         output_dict['results']['bos_dis'] = bos_dis
         output_dict['results']['max_rep'] = maxrep
         output_dict['results']['actual_vocab_size'] = actual_vocab_size
-        output_dict['results']['accuracy2'] = accuracy2
 
         unique_dict = {}
         for elem in sender_inputs:
@@ -404,9 +407,8 @@ def main(params):
                     apply_noise=False,
                     variable_length=True, max_len=opts.max_len,
                     vocab_size=opts.vocab_size, device=device)
-            
-            padded_messages_nn = torch.nn.utils.rnn.pad_sequence(messages, batch_first=True)
 
+            padded_messages_nn = torch.nn.utils.rnn.pad_sequence(messages, batch_first=True)
 
             # to get new additional accuracy for truncated messages (where one symbol is removed)
             if opts.mode == 'rf':
@@ -456,23 +458,26 @@ def main(params):
                 messages_nn, opts.max_len, opts.vocab_size, None, 0.0)
             redund_smb_adj2_nn = compute_redundancy_smb_adjusted(
                 messages_nn, opts.max_len, opts.vocab_size, None, 0.0, actual_vocab_nn)
+            redund_smb_adj3_nn = compute_redundancy_smb(
+                messages_nn, opts.max_len, opts.vocab_size, None, 0.0, actual_vocab_nn)
             top_sim_nn = compute_top_sim(sender_inputs_nn, messages_nn, opts.perceptual_dimensions)
             pos_dis_nn = compute_posdis(sender_inputs_nn, messages_nn)
             bos_dis_nn = compute_bosdis(sender_inputs_nn, messages_nn, opts.vocab_size)
             max_rep_nn = torch.mean(compute_max_rep(messages_nn).to(torch.float16)).item()
 
             output_dict['results-no-noise']['accuracy'] = accuracy_nn
+            output_dict['results-no-noise']['accuracy2'] = accuracy2_nn
             output_dict['results-no-noise']['embedding_alignment'] = alignment
             output_dict['results-no-noise']['redundancy_msg'] = redund_msg_nn
             output_dict['results-no-noise']['redundancy_smb'] = redund_smb_nn
             output_dict['results-no-noise']['redundancy_smb_adj'] = redund_smb_adj_nn
             output_dict['results-no-noise']['redundancy_smb_adj2'] = redund_smb_adj2_nn
+            output_dict['results-no-noise']['redundancy_smb_adj3'] = redund_smb_adj3_nn
             output_dict['results-no-noise']['topographic_rho'] = top_sim_nn
             output_dict['results-no-noise']['pos_dis'] = pos_dis_nn
             output_dict['results-no-noise']['bos_dis'] = bos_dis_nn
             output_dict['results-no-noise']['max_rep'] = max_rep_nn
             output_dict['results-no-noise']['actual_vocab_size'] = actual_vocab_size_nn
-            output_dict['results-no-noise']['accuracy2'] = accuracy2_nn
 
             acc_str = f'{accuracy:.2f} / {accuracy_nn:.2f}'
             acc2_str = f'{accuracy2:.2f} / {accuracy2_nn:.2f}'

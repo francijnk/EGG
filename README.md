@@ -29,7 +29,7 @@ cd .. && python3 -m pip install --editable egg/ && cd ancm/
 
 ## Plots & alalyses
 
-`python3 -m ancm.analyse -i ancm/runs/preliminary_results -o ancm/analyses/preliminary_results [--recompute]`
+`python3 -m ancm.analyse -i ancm/runs/preliminary_results -o ancm/results/preliminary_results [--recompute]`
 
 ## Training
 
