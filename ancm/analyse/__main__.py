@@ -3,16 +3,14 @@ import argparse
 import pandas as pd
 import seaborn as sns
 
-from collections import namedtuple, defaultdict
-
 import ancm.analyse.style
 from ancm.analyse.util import load_data, get_long_val_data, close_plot
+
 
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('-i', type=str, required=True)
     parser.add_argument('-o', type=str, required=True)
-    parser.add_argument('--recompute', '-r', action='store_true')
     return parser.parse_args()
 
 
@@ -34,8 +32,8 @@ def plot_test(data_test, output_dir):
         df,
         x='error_prob', y='value',
         col='max_len', row='channel', style='noise',
-        kind='line', 
-        errorbar=None,  # ('se', 2), 
+        kind='line',
+        errorbar=None,  # ('se', 2),
         marker='o',
         markersize=8, hue='metric',
         facet_kws=dict(margin_titles=True), legend=True)
@@ -285,17 +283,17 @@ def main():
     args = parse_args()
 
     processed_data_path = os.path.join(args.i, 'processed')
-    if args.recompute or not os.path.isdir(processed_data_path):
-        # export data and save it
-        os.makedirs(processed_data_path, exist_ok=True)
-        data_test, data_val = load_data(args.i)
 
-        data_test.to_csv(os.path.join(args.i, 'processed', 'data_test.csv'))
-        data_val.to_csv(os.path.join(args.i, 'processed', 'data_val.csv'))
-    else:
-        # load already exported data
-        data_test = pd.read_csv(os.path.join(args.i, 'processed', 'data_test.csv'))
-        data_val = pd.read_csv(os.path.join(args.i, 'processed', 'data_val.csv'))
+    # export data and save it
+    os.makedirs(processed_data_path, exist_ok=True)
+    data_test, data_val = load_data(args.i)
+
+    data_test.to_csv(os.path.join(args.i, 'processed', 'data_test.csv'))
+    data_val.to_csv(os.path.join(args.i, 'processed', 'data_val.csv'))
+
+    # load already exported data
+    data_test = pd.read_csv(os.path.join(args.i, 'processed', 'data_test.csv'))
+    data_val = pd.read_csv(os.path.join(args.i, 'processed', 'data_val.csv'))
 
     os.makedirs(args.o, exist_ok=True)
 

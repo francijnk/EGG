@@ -69,8 +69,7 @@ def compute_max_rep(messages):
     """
 
     if isinstance(messages, list):
-        messages = [msg.argmax(dim=1) if msg.dim() == 2
-                    else msg for msg in messages]
+        assert messages[0].dim() == 2
         messages = torch.nn.utils.rnn.pad_sequence(messages, batch_first=True)
 
     all_symbols = torch.unique(torch.flatten(messages), dim=0)
@@ -80,7 +79,7 @@ def compute_max_rep(messages):
     for smb in non_eos_symbols:
         smb_tensor = smb.expand(messages.size(1))
         smb_tensor = smb_tensor.t().expand(*messages.size())
-        
+
         match = messages.eq(smb_tensor).to(torch.int)
         for i in range(0, messages.size(1) - 1):
             # search for a repeating subsequence of length i + 1

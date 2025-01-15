@@ -290,9 +290,10 @@ def main(params):
         output_dict = defaultdict(dict)
 
         # Standard evaluation – same setting as during training
+        apply_noise = opts.error_prob != 0. and opts.channel is not None
         sender_inputs, messages, one_hots, receiver_inputs, receiver_outputs, labels = \
             dump_sender_receiver(
-                game, test_data, opts.mode == 'gs', apply_noise=opts.error_prob != 0,
+                game, test_data, opts.mode == 'gs', apply_noise=apply_noise,
                 variable_length=True, max_len=opts.max_len, vocab_size=receiver_vocab_size,
                 device=device)
 
@@ -356,9 +357,9 @@ def main(params):
         redund_smb_adj3 = compute_redundancy_smb_adjusted(
             messages, opts.max_len, opts.vocab_size, opts.channel, opts.error_prob, alphabet=actual_vocab)
         topographic_rho = compute_top_sim(sender_inputs, messages, opts.perceptual_dimensions)
-        pos_dis = compute_posdis(sender_inputs, messages)
-        bos_dis = compute_bosdis(sender_inputs, messages, opts.vocab_size)
-        maxrep = torch.mean(compute_max_rep(messages).to(torch.float16)).item()
+        posdis = compute_posdis(sender_inputs, messages)
+        bosdis = compute_bosdis(sender_inputs, messages, opts.vocab_size)
+        maxrep = compute_max_rep(messages).mean().item()
 
         output_dict['results']['accuracy'] = accuracy
         output_dict['results']['accuracy2'] = accuracy2
@@ -369,8 +370,8 @@ def main(params):
         output_dict['results']['redundancy_smb_adj2'] = redund_smb_adj2
         output_dict['results']['redundancy_smb_adj3'] = redund_smb_adj3
         output_dict['results']['topographic_rho'] = topographic_rho
-        output_dict['results']['pos_dis'] = pos_dis
-        output_dict['results']['bos_dis'] = bos_dis
+        output_dict['results']['pos_dis'] = posdis
+        output_dict['results']['bos_dis'] = bosdis
         output_dict['results']['max_rep'] = maxrep
         output_dict['results']['actual_vocab_size'] = actual_vocab_size
 
@@ -391,8 +392,8 @@ def main(params):
         entropy_inp_dim = f"{[round(x, 3) for x in mi_result['entropy_inp_dim']]}"
         mi_dim = f'{[round(x, 3) for x in mi_result["mi_dim"]]}'
         t_rho = f'{topographic_rho:.3f}'
-        p_dis = f'{pos_dis:.3f}'
-        b_dis = f'{bos_dis:.3f}'
+        p_dis = f'{posdis:.3f}'
+        b_dis = f'{bosdis:.3f}'
         redund_msg = f'{redund_msg:.3f}'
         redund_smb = f'{redund_smb:.3f}'
         redund_smb_adj = f'{redund_smb_adj:.3f}'
@@ -461,9 +462,9 @@ def main(params):
             redund_smb_adj3_nn = compute_redundancy_smb(
                 messages_nn, opts.max_len, opts.vocab_size, None, 0.0, actual_vocab_nn)
             top_sim_nn = compute_top_sim(sender_inputs_nn, messages_nn, opts.perceptual_dimensions)
-            pos_dis_nn = compute_posdis(sender_inputs_nn, messages_nn)
-            bos_dis_nn = compute_bosdis(sender_inputs_nn, messages_nn, opts.vocab_size)
-            max_rep_nn = torch.mean(compute_max_rep(messages_nn).to(torch.float16)).item()
+            posdis_nn = compute_posdis(sender_inputs_nn, messages_nn)
+            bosdis_nn = compute_bosdis(sender_inputs_nn, messages_nn, opts.vocab_size)
+            max_rep_nn = compute_max_rep(messages_nn).mean().item()
 
             output_dict['results-no-noise']['accuracy'] = accuracy_nn
             output_dict['results-no-noise']['accuracy2'] = accuracy2_nn
@@ -474,8 +475,8 @@ def main(params):
             output_dict['results-no-noise']['redundancy_smb_adj2'] = redund_smb_adj2_nn
             output_dict['results-no-noise']['redundancy_smb_adj3'] = redund_smb_adj3_nn
             output_dict['results-no-noise']['topographic_rho'] = top_sim_nn
-            output_dict['results-no-noise']['pos_dis'] = pos_dis_nn
-            output_dict['results-no-noise']['bos_dis'] = bos_dis_nn
+            output_dict['results-no-noise']['pos_dis'] = posdis_nn
+            output_dict['results-no-noise']['bos_dis'] = bosdis_nn
             output_dict['results-no-noise']['max_rep'] = max_rep_nn
             output_dict['results-no-noise']['actual_vocab_size'] = actual_vocab_size_nn
 
@@ -488,8 +489,8 @@ def main(params):
             mi += f" / {mi_result_nn['mi']:.3f}"
             mi_dim_nn = f"{[round(x, 3) for x in mi_result_nn['mi_dim']]}"
             t_rho += f" / {top_sim_nn:.3f}"
-            p_dis += f'/ {pos_dis_nn:.3f}'
-            b_dis += f'/ {bos_dis_nn:.3f}'
+            p_dis += f'/ {posdis_nn:.3f}'
+            b_dis += f'/ {bosdis_nn:.3f}'
             redund_msg += f' / {redund_msg_nn:.3f}'
             redund_smb += f' / {redund_smb_nn:.3f}'
             redund_smb_adj += f' / {redund_smb_adj_nn:.3f}'
