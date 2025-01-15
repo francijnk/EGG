@@ -500,6 +500,7 @@ def main(params):
             print("|\033[1m Results (with noise / without noise)\033[0m\n|")
         else:
             acc_str = f'{accuracy:.2f}'
+            acc2_str = f'{accuracy2:.2f}'
             print("|\n|\033[1m Results\033[0m\n|")
 
         align = 40

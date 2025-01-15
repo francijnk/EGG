@@ -116,6 +116,7 @@ def sequence_entropy(messages, vocab_size, length=None, alphabet=None):
         alphabet_smb = (
             [[-1] + non_eos_alphabet] * length
             + [[0] + [-1] * len(non_eos_alphabet)] * (messages.size(1) - length))
+        alphabet_smb = np.array(alphabet_smb, dtype=np.int64)
         entropy = entropy_joint(
             messages.t().numpy(), estimator='JAMES-STEIN', Alphabet_X=alphabet_smb)
 
@@ -125,6 +126,7 @@ def sequence_entropy(messages, vocab_size, length=None, alphabet=None):
         alphabet_smb = (
             [[0] + non_eos_alphabet] * max_len
             + [[0] + [-1] * (vocab_size - 1)] * (messages.size(1) - max_len))
+        alphabet_smb = np.array(alphabet_smb, dtype=np.int64)
         entropy = entropy_joint(
             messages.t().numpy(), estimator='JAMES-STEIN', Alphabet_X=alphabet_smb)
 
@@ -210,7 +212,9 @@ def maximize_sequence_entropy(max_len, vocab_size, channel=None, error_prob=None
         max_len - 1, vocab_size, channel, error_prob, maxiter)
 
     def _sequence_entropy(eos_prob):
-        if channel == 'erasure' and error_prob > 0:
+        if vocab_size == 1:
+            return 0
+        elif channel == 'erasure' and error_prob > 0:
             return (
                 binary_entropy(eos_prob)
                 # + eos_prob * 0
@@ -266,6 +270,9 @@ def compute_redundancy_smb(messages, max_len, vocab_size, channel, error_prob, a
     The value returned is multiplied by a factor dependent on the maximum
     message length, so that the range of possible values is [0, 1].
     """
+    if vocab_size == 1:
+        return 1.
+
     if not isinstance(messages, torch.Tensor):
         messages = torch.nn.utils.rnn.pad_sequence(messages, batch_first=True)
 
@@ -289,6 +296,9 @@ def compute_redundancy_smb_adjusted(messages, max_len, vocab_size, channel, erro
     Computes a redundancy based on the symbol-level message entropy, adjusted
     not to depend on message length and to have values in range [0, 1].
     """
+
+    if vocab_size == 1:
+        return 1.
 
     if not isinstance(messages, torch.Tensor):
         messages = torch.nn.utils.rnn.pad_sequence(messages, batch_first=True)
