@@ -1,11 +1,24 @@
+import numpy as np
 import json
 import torch
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, DataLoader
 from itertools import combinations
 
 from typing import Optional
 
 from egg.core.util import move_to
+
+
+class ObjectDataset(Dataset):
+    def __init__(self, obj_sets, labels):
+        self.obj_sets = obj_sets
+        self.labels = labels
+
+    def __len__(self):
+        return len(self.obj_sets)
+
+    def __getitem__(self, idx):
+        return self.obj_sets[idx], self.labels[idx]
 
 
 class CustomDataset(Dataset):
@@ -26,6 +39,94 @@ class CustomDataset(Dataset):
         return self.messages[idx], self.receiver_inputs[idx]
 
 
+class DataHandler:
+    def __init__(self, opts):
+        self.data_path = opts.data_path
+        self.batch_size = opts.batch_size
+        self.shuffle_train_data = opts.no_shuffle
+        self.context_game = opts.context_game
+
+        self._n_features = None
+        self.n_distractors = None
+
+    @property
+    def n_features(self):
+        return self._n_features
+
+    @n_features.setter
+    def n_features(self, n_features):
+        self._n_features = n_features
+
+    def load_data(self, opts):
+        data = np.load(self.data_path)
+        train = data["train"], data["train_labels"]
+        val = data["valid"], data["valid_labels"]
+        test = data["test"], data["test_labels"]
+
+        self._n_features = train[0].shape[-1]
+        self.perceptual_dimensions = [-1] * self._n_features
+        self.train_samples = train[0].shape[0]
+        self.validation_samples = val[0].shape[0]
+        self.test_samples = test[0].shape[0]
+        self.n_distractors = train[0].shape[1] - 1
+
+        opts.perceptual_dimensions = self.perceptual_dimensions
+        opts.train_samples = self.train_samples
+        opts.validation_samples = self.validation_samples
+        opts.test_samples = self.test_samples
+        opts.n_distractors = self.n_distractors
+        opts.n_features = self.n_features
+
+        train_dataset = ObjectDataset(*train)
+        val_dataset = ObjectDataset(*val)
+        test_dataset = ObjectDataset(*test)
+
+        def _collate(batch):
+            obj_sets, target_ids = zip(*batch)
+            bs = self.batch_size
+
+            r_inputs, labels = np.vstack(np.expand_dims(obj_sets, 0)), np.array(target_ids)
+            targets = r_inputs[np.arange(bs), labels]
+            if self.context_game:
+                distractors = np.empty((bs, self.n_distractors, r_inputs.shape[2]))
+                for i in range(self.n_distractors):
+                    distr_ids = np.where(labels > i, i, i + 1)
+                    all_ids = np.arange(self.batch_size)
+                    distractors[all_ids, i] = r_inputs[all_ids, distr_ids]
+                targets = np.expand_dims(targets, axis=1)
+                s_inputs = np.concatenate([targets, distractors], axis=1)
+                return (
+                    torch.from_numpy(s_inputs).float(),
+                    torch.from_numpy(labels).long(),
+                    torch.from_numpy(r_inputs).float(),
+                )
+            else:
+                return (
+                    torch.from_numpy(targets).float(),
+                    torch.from_numpy(labels).long(),
+                    torch.from_numpy(r_inputs).float(),
+                )
+
+        train_dataloader = DataLoader(
+            train_dataset,
+            batch_size=self.batch_size,
+            collate_fn=_collate,
+            drop_last=True,
+            shuffle=self.shuffle_train_data)
+        val_dataloader = DataLoader(
+            val_dataset,
+            batch_size=self.batch_size,
+            collate_fn=_collate,
+            drop_last=True)
+        test_dataloader = DataLoader(
+            test_dataset,
+            batch_size=self.batch_size,
+            collate_fn=_collate,
+            drop_last=True)
+
+        return train_dataloader, val_dataloader, test_dataloader
+
+
 def is_jsonable(x):
     try:
         json.dumps(x)
@@ -37,19 +138,16 @@ def is_jsonable(x):
 def crop_messages(interaction):
     """
     Given an Interaction object, removes non EOS symbols after the first EOS.
-    Only works for the REINFORCE training mode.
     """
     assert interaction.message_length is not None
-    if interaction.message.dim() == 2:  # REINFORCE
-        for i in range(interaction.size):
-            length = interaction.message_length[i].long().item()
-            interaction.message[i, length:] = 0
+    for i in range(interaction.size):
+        length = interaction.message_length[i].long().item()
+        interaction.message[i, length:] = 0
 
 
 def dump_sender_receiver(
     game: torch.nn.Module,
     dataset: "torch.utils.data.DataLoader",
-    gs: bool,
     apply_noise: bool,
     variable_length: bool,
     max_len: int,
@@ -60,7 +158,6 @@ def dump_sender_receiver(
     A tool to dump the interaction between Sender and Receiver
     :param game: A Game instance
     :param dataset: Dataset of inputs to be used when analyzing the communication
-    :param gs: whether Gumbel-Softmax relaxation was used during training
     :param variable_length: whether variable-length communication is used
     :param max_entropy: needed to calculate redundancy of the message
     :param max_len: max message length
@@ -74,7 +171,6 @@ def dump_sender_receiver(
 
     sender_inputs, messages, receiver_inputs, receiver_outputs = [], [], [], []
     labels = []
-    one_hots = []
 
     with torch.no_grad():
         for batch in dataset:
@@ -84,21 +180,14 @@ def dump_sender_receiver(
 
             message = game.sender(sender_input)
 
-            # Under GS, the only output is a message; under Reinforce, two additional tensors are returned.
-            # We don't need them.
-            if gs:
-                log_prob, entropy = None, None
-            else:
-                message, log_prob, entropy = message
+            message, log_prob, entropy = message
 
             # Add noise to the message
             if game.channel:
                 message = game.channel(message, apply_noise=apply_noise)
 
             output = game.receiver(message, receiver_input)
-
-            if not gs:
-                output = output[0]
+            output = output[0]
 
             if batch[1] is not None:
                 labels.extend(batch[1])
@@ -110,12 +199,6 @@ def dump_sender_receiver(
 
             if receiver_input is not None:
                 receiver_inputs.extend(receiver_input)
-
-            if gs:
-                # so we can access these later
-                one_hots.extend(message)
-                message = message.argmax(dim=-1)
-                # actual symbols instead of one-hot encoded
 
             if not variable_length:
                 messages.extend(message)
@@ -135,25 +218,19 @@ def dump_sender_receiver(
                     else:
                         messages.append(message[i, : message_end + 1])
 
-                    if gs:
-                        receiver_outputs.append(output[i, message_end, ...])
-                    else:
-                        receiver_outputs.append(output[i, ...])
+                    receiver_outputs.append(output[i, ...])
 
     game.train(mode=train_state)
 
-    return sender_inputs, messages, one_hots, receiver_inputs, receiver_outputs, labels
+    return sender_inputs, messages, receiver_inputs, receiver_outputs, labels
 
 
-def truncate_messages(messages, receiver_input, labels, mode):
+def truncate_messages(messages, receiver_input, labels):
     new_messages = []
     new_r_input = []
     new_labels = []
     for i, message in enumerate(messages):
-        if mode == 'rf':
-            truncated = remove_n_items(message, 1)
-        elif mode == 'gs':
-            truncated = remove_n_dims(message, 1)
+        truncated = remove_n_items(message, 1)
         new_messages.extend(truncated)
         new_r_input.extend([receiver_input[i]] * len(truncated))
         new_labels.extend([labels[i]] * len(truncated))
@@ -187,38 +264,9 @@ def remove_n_items(tensor, n=1):
     result = []
     for indices in combos:
         mask = torch.ones(len(tensor), dtype=torch.bool)
-        mask[list(indices)] = False
+        mask[list(indices)] = True
         new = tensor[mask]
         new = new.to(torch.long)
-        result.append(new)
-
-    return result
-
-
-def remove_n_dims(tensor, n=1):
-
-    # Get the number of rows (N)
-    num_rows = tensor.shape[0]
-
-    # Ensure there are enough rows to remove `n` and keep the last row
-    if n >= num_rows:
-        raise ValueError("Cannot remove more rows than available (excluding the last row).")
-    if num_rows <= 1:
-        raise ValueError("The input tensor must have more than one row.")
-
-    # Get indices of rows that can be removed (exclude the last row)
-    removable_indices = list(range(num_rows - 1))  # Exclude last row
-
-    # Generate all combinations of `n` rows to remove
-    combos = list(combinations(removable_indices, n))
-
-    # Create new tensors with the selected rows removed
-    result = []
-    for combo in combos:
-        mask = torch.ones(num_rows, dtype=torch.bool)
-        mask[list(combo)] = False  # Set rows in the combo to False (remove them)
-        new = tensor[mask]
-        new = new.to(torch.float)
         result.append(new)
 
     return result

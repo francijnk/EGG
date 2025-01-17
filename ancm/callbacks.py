@@ -19,18 +19,16 @@ from ancm.metrics import (
     compute_max_rep,
     compute_redundancy_msg,
     compute_redundancy_smb,
-    compute_redundancy_smb_adjusted,
+    # compute_redundancy_smb_adjusted,
     compute_top_sim,
     compute_posdis,
     compute_bosdis,
 )
 
-from egg.core.util import find_lengths
+# from egg.core.util import find_lengths
 from egg.core.callbacks import Callback, CustomProgress
 from egg.core.interaction import Interaction
 
-
-WORLD_DIM_THRESHOLD = 16
 
 
 class EpochProgress(Progress):
@@ -66,7 +64,7 @@ class CustomProgressBarLogger(Callback):
         train_data_len: int = 0,
         test_data_len: int = 0,
         validation_freq: int = 1,
-        dump_results_folder=None,
+        results_folder=None,
         filename=None,
     ):
         """
@@ -79,7 +77,7 @@ class CustomProgressBarLogger(Callback):
         self.n_epochs = n_epochs
         self.train_data_len = train_data_len
         self.test_data_len = test_data_len
-        self.dump_results_folder = dump_results_folder
+        self.results_folder = results_folder
         self.filename = filename
         self.step = validation_freq
         self.history = defaultdict(lambda: defaultdict(dict))
@@ -270,7 +268,7 @@ class CustomProgressBarLogger(Callback):
         self.progress.stop()
         self.live.stop()
 
-        if self.dump_results_folder is not None:
+        if self.results_folder is not None:
             history_dfs = []
             history_keys = list(self.history.keys())
             if history_keys:
@@ -282,17 +280,18 @@ class CustomProgressBarLogger(Callback):
                         df[k] = [self.history[key][epoch][k] for epoch in self.history[key]]
                     history_dfs.append(df)
                 history_df = pd.concat(history_dfs)
-                dump_path = self.dump_results_folder / f'{self.filename}-training-history.csv'
+                dump_path = self.results_folder / f'{self.filename}-training-history.csv'
                 history_df.to_csv(dump_path, index=False)
-                print(f"| Training history saved to {self.dump_results_folder / self.filename}-training-history.csv")
+                print(f"| Training history saved to {self.results_folder / self.filename}-training-history.csv")
 
 
 class TrainingMetricsCallback(Callback):
-    def __init__(self, vocab_size, max_len, channel_type, error_prob, sender, receiver, dataloader, device, bs=32):
+    def __init__(self, vocab_size, max_len, channel_type, error_prob, context_game, sender, receiver, dataloader, device, bs=32):
         self.vocab_size = vocab_size
         self.max_len = max_len
         self.channel_type = channel_type
         self.error_prob = error_prob
+        self.context_game = context_game
 
         # to compute speaker-listener alignment
         self.sender = sender
@@ -303,18 +302,11 @@ class TrainingMetricsCallback(Callback):
 
     def on_validation_end(self, loss: float, logs: Interaction, epoch: int):
         if logs.message is not None:
-            if logs.message.dim() == 3:
-                # under GS, EOS might be followed by a non-EOS symbol
-                message = logs.message.argmax(-1)
-                lengths = find_lengths(message)
-                for i in range(message.size(0)):
-                    message[i, lengths[i]:] = 0
-            else:
-                message = logs.message
+            message = logs.message
 
-            vocab_size = self.vocab_size + 1 \
-                if self.channel_type == 'erasure' and self.error_prob > 0. \
-                else self.vocab_size
+            # vocab_size = self.vocab_size + 1 \
+            #    if self.channel_type == 'erasure' and self.error_prob > 0. \
+            #    else self.vocab_size
 
             lexicon_size = torch.unique(logs.message, dim=0).shape[0]
             actual_vocab = torch.unique(torch.flatten(message), dim=0)
@@ -322,35 +314,26 @@ class TrainingMetricsCallback(Callback):
 
             logs.aux['lexicon_size'] = int(lexicon_size)
             logs.aux['actual_vocab_size'] = int(actual_vocab_size)
-            logs.aux['alignment'] = compute_conceptual_alignment(self.dataloader, self.sender, self.receiver, self.device, self.bs)
+            # logs.aux['alignment'] = compute_conceptual_alignment(self.dataloader, self.sender, self.receiver, self.device, self.bs)
 
             # redundancy
             logs.aux['max_rep'] = compute_max_rep(message)
             logs.aux['redund_msg'] = compute_redundancy_msg(logs.message, self.max_len)
             logs.aux['redund_smb'] = compute_redundancy_smb(
                 message, self.max_len, self.vocab_size, self.channel_type, self.error_prob)
-            logs.aux['redund_smb_adj'] = compute_redundancy_smb_adjusted(
-                message, self.max_len, self.vocab_size, self.channel_type, self.error_prob)
-            logs.aux['redund_smb_adj2'] = compute_redundancy_smb_adjusted(
-                message, self.max_len, self.vocab_size, self.channel_type, self.error_prob, alphabet=actual_vocab)
-            logs.aux['redund_smb_adj3'] = compute_redundancy_smb(
+            logs.aux['redund_smb_adj'] = compute_redundancy_smb(
                 message, self.max_len, self.vocab_size, self.channel_type, self.error_prob, alphabet=actual_vocab)
 
             # compositinoality
             logs.aux['top_sim'] = compute_top_sim(logs.sender_input, logs.message)
-            logs.aux['pos_dis'] = compute_posdis(logs.sender_input, logs.message)
-            logs.aux['bos_dis'] = compute_bosdis(logs.sender_input, logs.message, vocab_size)
+            if self.context_game:
+                logs.aux['top_sim_c'] = compute_top_sim(logs.sender_input, logs.message, contextual=True)
+            # logs.aux['pos_dis'] = compute_posdis(logs.sender_input, logs.message)
+            # logs.aux['bos_dis'] = compute_bosdis(logs.sender_input, logs.message, vocab_size)
 
     def on_secondary_validation_end(self, loss: float, logs: Interaction, epoch: int):
         if logs.message is not None:
-            if logs.message.dim() == 3:
-                # under GS, EOS might be followed by a non-EOS symbol
-                message = logs.message.argmax(-1)
-                lengths = find_lengths(message)
-                for i in range(message.size(0)):
-                    message[i, lengths[i]:] = 0
-            else:
-                message = logs.message
+            message = logs.message
 
             lexicon_size = torch.unique(logs.message, dim=0).shape[0]
             actual_vocab = torch.unique(torch.flatten(message), dim=0)
@@ -358,35 +341,26 @@ class TrainingMetricsCallback(Callback):
 
             logs.aux['lexicon_size'] = int(lexicon_size)
             logs.aux['actual_vocab_size'] = int(actual_vocab_size)
-            logs.aux['alignment'] = compute_conceptual_alignment(self.dataloader, self.sender, self.receiver, self.device, self.bs)
+            # logs.aux['alignment'] = compute_conceptual_alignment(self.dataloader, self.sender, self.receiver, self.device, self.bs)
 
             # redundancy
             logs.aux['max_rep'] = compute_max_rep(message)
             logs.aux['redund_msg'] = compute_redundancy_msg(logs.message, self.max_len)
             logs.aux['redund_smb'] = compute_redundancy_smb(
                 message, self.max_len, self.vocab_size, channel=None, error_prob=0.0)
-            logs.aux['redund_smb_adj'] = compute_redundancy_smb_adjusted(
-                message, self.max_len, self.vocab_size, channel=None, error_prob=0.0)
-            logs.aux['redund_smb_adj2'] = compute_redundancy_smb_adjusted(
-                message, self.max_len, self.vocab_size, channel=None, error_prob=0.0, alphabet=actual_vocab)
-            logs.aux['redund_smb_adj3'] = compute_redundancy_smb(
+            logs.aux['redund_smb_adj'] = compute_redundancy_smb(
                 message, self.max_len, self.vocab_size, channel=None, error_prob=0.0, alphabet=actual_vocab)
 
             # compositionality
             logs.aux['top_sim'] = compute_top_sim(logs.sender_input, logs.message)
-            logs.aux['pos_dis'] = compute_posdis(logs.sender_input, logs.message)
-            logs.aux['bos_dis'] = compute_bosdis(logs.sender_input, logs.message, self.vocab_size)
+            if self.context_game:
+                logs.aux['top_sim_c'] = compute_top_sim(logs.sender_input, logs.message, contextual=True)
+            # logs.aux['pos_dis'] = compute_posdis(logs.sender_input, logs.message)
+            # logs.aux['bos_dis'] = compute_bosdis(logs.sender_input, logs.message, self.vocab_size)
 
     def on_epoch_end(self, loss: float, logs: Interaction, epoch: int):
         if logs.message is not None:
-            if logs.message.dim() == 3:
-                # under GS, EOS might be followed by a non-EOS symbol
-                message = logs.message.argmax(-1)
-                lengths = find_lengths(message)
-                for i in range(message.size(0)):
-                    message[i, lengths[i]:] = 0
-            else:
-                message = logs.message
+            message = logs.message
 
             # vocab_size = self.vocab_size + 1 \
             #     if self.channel_type == 'erasure' and self.error_prob > 0. \
@@ -398,21 +372,22 @@ class TrainingMetricsCallback(Callback):
 
             logs.aux['lexicon_size'] = int(lexicon_size)
             logs.aux['actual_vocab_size'] = int(actual_vocab_size)
-            logs.aux['alignment'] = None  # compute_conceptual_alignment(self.dataloader, self.sender, self.receiver, self.device, self.bs)
+            # logs.aux['alignment'] = None
+            # compute_conceptual_alignment(self.dataloader, self.sender, self.receiver, self.device, self.bs)
 
             # redundancy
             logs.aux['max_rep'] = compute_max_rep(message)
             logs.aux['redund_msg'] = None  # compute_redundancy_msg(logs.message, self.max_len)
             logs.aux['redund_smb'] = compute_redundancy_smb(
                 message, self.max_len, self.vocab_size, self.channel_type, self.error_prob)
-            logs.aux['redund_smb_adj'] = compute_redundancy_smb_adjusted(
-                message, self.max_len, self.vocab_size, self.channel_type, self.error_prob)
-            logs.aux['redund_smb_adj2'] = compute_redundancy_smb_adjusted(
-                message, self.max_len, self.vocab_size, self.channel_type, self.error_prob, alphabet=actual_vocab)
-            logs.aux['redund_smb_adj3'] = compute_redundancy_smb(
+            logs.aux['redund_smb_adj'] = compute_redundancy_smb(
                 message, self.max_len, self.vocab_size, self.channel_type, self.error_prob, alphabet=actual_vocab)
 
             # compositinoality
             logs.aux['top_sim'] = None  # top_sim(logs.sender_input, logs.message)
-            logs.aux['pos_dis'] = None  # posdis(logs.sender_input, logs.message)
-            logs.aux['bos_dis'] = None  # bosdis(logs.sender_input, logs.message, self.vocab_size)
+            if self.context_game:
+                logs.aux['top_sim_c'] = None  # compute_top_sim(logs.sender_input, logs.message, contextual=True)
+            # logs.aux['pos_dis'] = None
+            # posdis(logs.sender_input, logs.message)
+            # logs.aux['bos_dis'] = None
+            # bosdis(logs.sender_input, logs.message, self.vocab_size)

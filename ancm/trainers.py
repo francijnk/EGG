@@ -273,14 +273,14 @@ class Trainer:
         for callback in self.callbacks:
             callback.on_train_begin(self)
 
-        def wrap_tqdm(fn, total):
+        def tqdm_wrap(fn, total):
             opts = get_opts()
-            if opts.simple_logging and not opts.silent:
+            if opts.simple_logging:
                 return tqdm(fn, total=total)
             else:
                 return fn
 
-        for epoch in wrap_tqdm(range(self.start_epoch, n_epochs), total=n_epochs):
+        for epoch in tqdm_wrap(range(self.start_epoch, n_epochs), total=n_epochs):
             for callback in self.callbacks:
                 callback.on_epoch_begin(epoch + 1)
 

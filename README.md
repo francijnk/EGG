@@ -3,6 +3,8 @@
 > Emergence of Linguistic Communication from Referential Games with Symbolic and Pixel Input
 
 ## Contents
+- `ancm/data/` data export module,
+- `ancm/data/input_data` exported intput datasets
 - `ancm/runs/` contains raw results
 - `ancm/results/` contains plots and analyses
 
@@ -37,15 +39,11 @@ Check out `run_test.sh`.
 
 ## Data
 
-Exporting VISA to CSV:
+Exporting VISA to `ancm/data/input_data/visa-<n_distractors>-<n_samples_train>.npz`:
 ```bash
-python3 data/export_visa.py
+pytho3 -m ancm.data.visa -d <n_distractors> --n_samples_train <n_samples_train> 
 ```
 
-Exporting CSV to NPZ:
-```
-python3 reformat_visa.py -d <num. distractors> -s <num. samples> [-c <a category>]
-```
 A sample is a set of target concept + distractor concepts, sampled from the same category or the same categories (that can be changed by editing `reformat_visa.py`). 
 
 | **Category** | **Num. concepts**  |

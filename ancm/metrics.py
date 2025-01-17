@@ -4,9 +4,8 @@ import numpy as np
 from egg.core.util import find_lengths
 from scipy.optimize import minimize_scalar
 from pyitlib.discrete_random_variable import entropy_joint
-from collections import defaultdict
 from sklearn.metrics.pairwise import cosine_similarity
-from Levenshtein import distance
+from Levenshtein import distance  # , ratio
 from scipy.stats import pearsonr, spearmanr
 
 from egg.zoo.objects_game.util import mutual_info, entropy
@@ -36,8 +35,8 @@ def compute_conceptual_alignment(dataloader, sender, receiver, device, bs):
     """
     Computes speaker-listener alignment.
     """
-    all_features = dataloader.dataset.list_of_tuples
-    targets = dataloader.dataset.target_idxs
+    all_features = dataloader.dataset.obj_sets
+    targets = dataloader.dataset.labels
     obj_features = np.unique(all_features[:, targets[0], :], axis=0)
     obj_features = torch.tensor(obj_features, dtype=torch.float).to(device)
 
@@ -69,7 +68,6 @@ def compute_max_rep(messages):
     """
 
     if isinstance(messages, list):
-        assert messages[0].dim() == 2
         messages = torch.nn.utils.rnn.pad_sequence(messages, batch_first=True)
 
     all_symbols = torch.unique(torch.flatten(messages), dim=0)
@@ -281,7 +279,7 @@ def compute_redundancy_smb(messages, max_len, vocab_size, channel, error_prob, a
     The value returned is multiplied by a factor dependent on the maximum
     message length, so that the range of possible values is [0, 1].
     """
-    if vocab_size == 1:
+    if vocab_size == 1 or (alphabet is not None and len(alphabet) == 1):
         return 1.
 
     if not isinstance(messages, torch.Tensor):
@@ -298,131 +296,114 @@ def compute_redundancy_smb(messages, max_len, vocab_size, channel, error_prob, a
 
     H = sequence_entropy(messages, vocab_size, alphabet=alphabet)
     H_max, _ = maximize_sequence_entropy(max_len, vocab_size, channel, error_prob, maxiter)
-    H_max = max(H_max, H)  # the value of H is biased, and could exceed H_max
+    H_max = max(H_max, H)  # the value of H is biased, and could exceed H_max in some cases
     return 1 - H / H_max
 
 
-def compute_redundancy_smb_adjusted(messages, max_len, vocab_size, channel, error_prob, alphabet=None, maxiter=1000):
-    """
-    Computes a redundancy based on the symbol-level message entropy, adjusted
-    not to depend on message length and to have values in range [0, 1].
-    """
+# def compute_redundancy_smb_adjusted(messages, max_len, vocab_size, channel, error_prob, alphabet=None, maxiter=1000):
+#    """
+#    Computes a redundancy based on the symbol-level message entropy, adjusted
+#    not to depend on message length and to have values in range [0, 1].
+#    """
+#
+#    if vocab_size == 1:
+#        return 1.
+#
+#    if not isinstance(messages, torch.Tensor):
+#        messages = torch.nn.utils.rnn.pad_sequence(messages, batch_first=True)
+#
+#    lengths = find_lengths(messages) - 1
+#    n = messages.size(0)
+#
+#    len_probs_msg = defaultdict(int)
+#    len_probs_msg.update({
+#        l.item(): (lengths == l).to(torch.int).sum().item() / n
+#        for l in torch.unique(lengths)})
 
-    if vocab_size == 1:
-        return 1.
+#    if alphabet is not None:
+#        vocab_size = len(alphabet)
+#    elif channel == 'erasure' and error_prob > 0.:
+#        vocab_size += 1
 
-    if not isinstance(messages, torch.Tensor):
-        messages = torch.nn.utils.rnn.pad_sequence(messages, batch_first=True)
+#    # compute the maximum entropies for the erasure channel
+#    if channel == 'erasure' and error_prob > 0.:
+#        _, eos_probs = maximize_sequence_entropy(
+#            max_len, vocab_size - 1, channel, error_prob, maxiter)
+#        max_entropies = [0]
+#        for eos_prob in eos_probs[::-1]:
+#            max_entropy = (
+#                binary_entropy(error_prob)
+#                + error_prob * max_entropies[0]
+#                + (
+#                    binary_entropy(eos_prob)
+#                    # + eos_prob * 0
+#                    + (1 - eos_prob) * (
+#                        math.log(vocab_size - 2, 2)
+#                        + max_entropies[0]
+#                    )
+#                )
+#            )
+#            max_entropies = [max_entropy] + max_entropies
+#        max_entropies = max_entropies[:-1][::-1]
 
-    lengths = find_lengths(messages) - 1
-    n = messages.size(0)
+#    # compute redundancy
+#    redundancy = len_probs_msg[0]
+#    for i in range(1, max_len + 1):
+#        _messages = messages[(lengths == i), ...]
+#
+#        if _messages.size(0) == 0:
+#            continue
+#
+#        if channel == 'deletion' and error_prob > 0.:
+#            ent_msg = sequence_entropy(_messages, vocab_size, alphabet=alphabet)
+#        else:
+#            ent_msg = sequence_entropy(_messages, vocab_size, i, alphabet)
 
-    len_probs_msg = defaultdict(int)
-    len_probs_msg.update({
-        l.item(): (lengths == l).to(torch.int).sum().item() / n
-        for l in torch.unique(lengths)})
-
-    if alphabet is not None:
-        vocab_size = len(alphabet)
-    elif channel == 'erasure' and error_prob > 0.:
-        vocab_size += 1
-
-    # compute the maximum entropies for the erasure channel
-    if channel == 'erasure' and error_prob > 0.:
-        _, eos_probs = maximize_sequence_entropy(
-            max_len, vocab_size - 1, channel, error_prob, maxiter)
-        max_entropies = [0]
-        for eos_prob in eos_probs[::-1]:
-            max_entropy = (
-                binary_entropy(error_prob)
-                + error_prob * max_entropies[0]
-                + (
-                    binary_entropy(eos_prob)
-                    # + eos_prob * 0
-                    + (1 - eos_prob) * (
-                        math.log(vocab_size - 2, 2)
-                        + max_entropies[0]
-                    )
-                )
-            )
-            max_entropies = [max_entropy] + max_entropies
-        max_entropies = max_entropies[:-1][::-1]
-
-    # compute redundancy
-    redundancy = len_probs_msg[0]
-    for i in range(1, max_len + 1):
-        _messages = messages[(lengths == i), ...]
-
-        if _messages.size(0) == 0:
-            continue
-
-        if channel == 'deletion' and error_prob > 0.:
-            ent_msg = sequence_entropy(_messages, vocab_size, alphabet=alphabet)
-        else:
-            ent_msg = sequence_entropy(_messages, vocab_size, i, alphabet)
-
-        if channel == 'erasure' and error_prob > 0.:
-            ent_max = max_entropies[i - 1]
-        else:
-            ent_max = math.log(vocab_size - 1, 2) * i if vocab_size > 2 else 0.
-
-        # due to the bias of entropy estimators, the value of ent_msg could
-        # exceed the value of the maximum entropy value
-        ent_max = max(ent_max, ent_msg)
-
-        prob_msg = len_probs_msg[i]
-
-        if ent_max == 0.:
-            redundancy += prob_msg * 1.
-        else:
-            redundancy_msg = 1 - ent_msg / ent_max
-            if redundancy:
-                redundancy += prob_msg * redundancy_msg
-            else:
-                redundancy = prob_msg * redundancy_msg
-
-    return redundancy if redundancy is not None else 1.
+#        if channel == 'erasure' and error_prob > 0.:
+#            ent_max = max_entropies[i - 1]
+#        else:
+#            ent_max = math.log(vocab_size - 1, 2) * i if vocab_size > 2 else 0.
+#
+#        # due to the bias of entropy estimators, the value of ent_msg could
+#        # exceed the value of the maximum entropy value
+#        ent_max = max(ent_max, ent_msg)
+#
+#        prob_msg = len_probs_msg[i]
+#
+#        if ent_max == 0.:
+#            redundancy += prob_msg * 1.
+#        else:
+#            redundancy_msg = 1 - ent_msg / ent_max
+#            if redundancy:
+#                redundancy += prob_msg * redundancy_msg
+#            else:
+#                redundancy = prob_msg * redundancy_msg
+#
+#    return redundancy if redundancy is not None else 1.
 
 
 # Compositionality
-def compute_top_sim(sender_inputs, messages, dimensions=None):
+def compute_top_sim(sender_inputs, messages, contextual=False):
     """
     Computes topographic rho.
     """
 
-    # TODO switch to the implementation from objects game?
     obj_tensor = torch.stack(sender_inputs) \
         if isinstance(sender_inputs, list) else sender_inputs
 
-    if dimensions is None:
-        dimensions = []
-        for d in range(obj_tensor.size(1)):
-            dim = len(torch.unique(obj_tensor[:, d]))
-            dimensions.append(dim)
-
-    onehot = []
-    for i, dim in enumerate(dimensions):
-        if dim == 4:
-            # TODO remove?
-            # one-hot encode categorical dimensions
-            n1 = (np.logical_or(
-                obj_tensor[:, i].int() == 1, obj_tensor[:, i].int() == 2
-            )).int().reshape(obj_tensor.size(0), 1)
-            n2 = (np.logical_or(
-                obj_tensor[:, i].int() == 1, obj_tensor[:, i].int() == 3
-            )).int().reshape(obj_tensor.size(0), 1)
-            onehot.append(n1)
-            onehot.append(n2)
+    # handling the compare variant
+    if obj_tensor.dim() == 3:
+        if contextual:
+            obj_tensor = obj_tensor[:, 0] - obj_tensor[:, 1:].mean(dim=1)
         else:
-            # binary dimensions need not be transformed
-            onehot.append(obj_tensor[:, i:i + 1])
-    onehot = np.concatenate(onehot, axis=1)
+            obj_tensor = obj_tensor[:, 0]
 
-    messages = [msg.argmax(dim=1).tolist() if msg.dim() == 2
-                else msg.tolist() for msg in messages]
+    messages = [
+        [s.int().item() for s in msg if s > 0] + [0]
+        for msg in messages]
 
     # pairwise cosine similarity between object vectors
-    cos_sims = cosine_similarity(onehot)
+    cos_sims = cosine_similarity(obj_tensor)
 
     # pairwise Levenshtein distance between messages
     lev_dists = np.ones((len(messages), len(messages)), dtype='int')
@@ -433,13 +414,12 @@ def compute_top_sim(sender_inputs, messages, dimensions=None):
             elif i == j:
                 lev_dists[i][j] = 1
             else:
-                m1 = [str(int(x)) for x in msg_i]
-                m2 = [str(int(x)) for x in msg_j]
-                dist = distance(m1, m2)
+                dist = distance(msg_i, msg_j) * -1
+                # dist = ratio(msg_i, msg_j)  # normalized
                 lev_dists[i][j] = dist
                 lev_dists[j][i] = dist
 
-    rho = spearmanr(cos_sims, lev_dists, axis=None).statistic * -1
+    rho = spearmanr(cos_sims, lev_dists, axis=None).statistic
     return rho
 
 

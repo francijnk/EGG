@@ -11,7 +11,6 @@ import operator
 import pathlib
 import json
 import time
-# import math
 from datetime import timedelta
 from collections import defaultdict
 
@@ -19,14 +18,16 @@ import torch.utils.data
 
 import egg.core as core
 from egg.core.util import move_to
-from egg.zoo.objects_game.features import VectorsLoader
+# from egg.zoo.objects_game.features import VectorsLoader
+# from ancm.features import VectorsLoader
 
 from ancm.trainers import Trainer
 from ancm.util import (
     dump_sender_receiver,
     truncate_messages,
     is_jsonable,
-    CustomDataset
+    CustomDataset,
+    DataHandler,
 )
 from ancm.metrics import (
     compute_mi_input_msgs,
@@ -34,16 +35,16 @@ from ancm.metrics import (
     compute_max_rep,
     compute_redundancy_msg,
     compute_redundancy_smb,
-    compute_redundancy_smb_adjusted,
+    # compute_redundancy_smb_adjusted,
     compute_top_sim,
     compute_posdis,
     compute_bosdis,
 )
 from ancm.archs import (
-    SenderGS, ReceiverGS,
-    loss_gs, SenderReceiverRnnGS,
     SenderReinforce, ReceiverReinforce,
-    loss_reinforce, SenderReceiverRnnReinforce,
+    binary_loss_reinforce,
+    contextual_loss_reinforce,
+    SenderReceiverRnnReinforce,
 )
 from ancm.callbacks import (
     CustomProgressBarLogger,
@@ -54,14 +55,7 @@ from ancm.callbacks import (
 def get_params(params):
     parser = argparse.ArgumentParser()
 
-    input_data = parser.add_mutually_exclusive_group()
-    input_data.add_argument("--perceptual_dimensions", type=str, default="[4, 4, 4, 4, 4]", help="Number of features for every perceptual dimension")
-    input_data.add_argument("--load_data_path", type=str, default=None, help="Path to .npz data file to load")
-    parser.add_argument("--n_distractors", type=int, default=3, help="Number of distractor objects for the receiver (default: 3)")
-    parser.add_argument("--train_samples", type=float, default=1e5, help="Number of tuples in training data (default: 1e5)")
-    parser.add_argument("--validation_samples", type=float, default=1e3, help="Number of tuples in validation data (default: 1e4)")
-    parser.add_argument("--test_samples", type=float, default=1e3, help="Number of tuples in test data (default: 1e3)")
-    parser.add_argument("--data_seed", type=int, default=42, help="Seed for random creation of train, validation and test tuples (default: 42)")
+    parser.add_argument("--data_path", type=str, default=None, help="Path to .npz data file to load")
     parser.add_argument("--channel", type=str, default=None, help="Communication channel type {erasure, symmetric, deletion} (default: None)")
     parser.add_argument("--error_prob", type=float, default=0., help="Probability of error per symbol (default: 0.0)")
     parser.add_argument("--no_shuffle", action="store_false", default=True, help="Do not shuffle train data before every epoch (default: False)")
@@ -77,11 +71,10 @@ def get_params(params):
     parser.add_argument("--receiver_entropy_coeff", type=float, default=0.001)
     parser.add_argument("--lr_decay", type=float, default=None, help="LR decay, 1.0 for no decay (default: no decay)")
     parser.add_argument("--length_cost", type=float, default=1e-2, help="Message length cost")
-    parser.add_argument("--temperature", type=float, default=1.0, help="GS temperature for the sender (default: 1.0)")
-    parser.add_argument("--mode", type=str, default="gs", help="Selects whether Reinforce or GumbelSoftmax relaxation is used for (default: gs)")
+    parser.add_argument("--contextual_loss", action='store_true', default=False, help="Use contextual loss")
+    parser.add_argument("--context_game", action='store_true', default=False, help="Run the contextual variant of the game")
     parser.add_argument("--evaluate", action="store_true", default=False, help="Evaluate trained model on test data")
-    parser.add_argument("--dump_data_folder", type=str, default='data/input_data/', help="Folder where file with dumped data will be created")
-    parser.add_argument("--dump_results_folder", type=str, default='runs', help="Folder where file with dumped messages will be created")
+    parser.add_argument("--results_folder", type=str, default='runs', help="Folder where file with dumped messages will be created")
     parser.add_argument("--filename", type=str, default=None, help="Filename (no extension)")
     parser.add_argument("--debug", action="store_true", default=False, help="Run egg/objects_game with pdb enabled")
     parser.add_argument("--simple_logging", action="store_true", default=False, help="Use console logger instead of progress bar")
@@ -93,29 +86,13 @@ def get_params(params):
 
 
 def check_args(args):
-    args.train_samples, args.validation_samples, args.test_samples = (
-        int(args.train_samples), int(args.validation_samples), int(args.test_samples))
-
-    if args.dump_data_folder is not None:
-        os.makedirs(os.path.dirname(args.dump_data_folder), exist_ok=True)
-
-    if args.dump_results_folder is not None:
-        os.makedirs(os.path.dirname(args.dump_results_folder), exist_ok=True)
-
-    try:
-        args.perceptual_dimensions = eval(args.perceptual_dimensions)
-    except SyntaxError:
-        print("The format of the # of perceptual dimensions param is not correct. "
-              "Please change it to string representing a list of int. "
-              "Correct format: '[int, ..., int]' ")
-        exit(1)
+    if args.results_folder is not None:
+        os.makedirs(os.path.dirname(args.results_folder), exist_ok=True)
 
     if args.debug:
         import pdb
 
         pdb.set_trace()
-
-    args.n_features = len(args.perceptual_dimensions)
 
     args.channel = args.channel.lower() if args.channel else args.channel
     assert (
@@ -123,17 +100,13 @@ def check_args(args):
         or args.channel in ("erasure", "symmetric", "deletion", "truncation")
     ), 'The only channels implemented are "erasure", "symmetric", "deletion" and "truncation"'
 
-    # can't set data loading and data dumping at the same time
-    if args.load_data_path:
-        args.dump_data_folder = None
-
-    args.dump_results_folder = (
-        pathlib.Path(args.dump_results_folder) if args.dump_results_folder is not None else None
+    args.results_folder = (
+        pathlib.Path(args.results_folder) if args.results_folder is not None else None
     )
 
-    if (not args.evaluate) and args.dump_results_folder:
+    if (not args.evaluate) and args.results_folder:
         print(
-            "| WARNING --dump_results_folder was set without --evaluate. Evaluation will not be performed nor any results will be dumped. Please set --evaluate"
+            "| WARNING --results_folder was set without --evaluate. Evaluation will not be performed nor any results will be dumped. Please set --evaluate"
         )
 
 
@@ -143,100 +116,53 @@ def main(params):
     # device = torch.device("cuda" if opts.cuda else "cpu")
     device = torch.device("cpu")
 
-    data_loader = VectorsLoader(
-        perceptual_dimensions=opts.perceptual_dimensions,
-        n_distractors=opts.n_distractors,
-        batch_size=opts.batch_size,
-        train_samples=opts.train_samples,
-        validation_samples=opts.validation_samples,
-        test_samples=opts.test_samples,
-        shuffle_train_data=opts.no_shuffle,
-        dump_data_folder=opts.dump_data_folder,
-        load_data_path=opts.load_data_path,
-        seed=opts.data_seed)
-
-    train_data, validation_data, test_data = data_loader.get_iterators()
-
-    data_loader.upd_cl_options(opts)
+    data_handler = DataHandler(opts)
+    train_data, validation_data, test_data = data_handler.load_data(opts)
 
     if opts.channel == 'erasure' and opts.error_prob != 0:
         receiver_vocab_size = opts.vocab_size + 1
     else:
         receiver_vocab_size = opts.vocab_size
-    if opts.mode.lower() == "gs":
-        _sender = SenderGS(n_features=data_loader.n_features, n_hidden=opts.sender_hidden)
-        _receiver = ReceiverGS(n_features=data_loader.n_features, linear_units=opts.receiver_hidden)
-        sender = core.RnnSenderGS(
-            _sender,
-            opts.vocab_size,
-            opts.sender_embedding,
-            opts.sender_hidden,
-            opts.max_len,
-            opts.temperature,
-            opts.sender_cell)
-        receiver = core.RnnReceiverGS(
-            _receiver,
-            receiver_vocab_size,
-            opts.receiver_embedding,
-            opts.receiver_hidden,
-            opts.receiver_cell)
-        game = SenderReceiverRnnGS(
-            sender, receiver,
-            loss=loss_gs,
-            vocab_size=opts.vocab_size,
-            channel_type=opts.channel,
-            error_prob=opts.error_prob,
-            length_cost=opts.length_cost,
-            device=device,
-            seed=opts.random_seed)
-        optimizer = torch.optim.Adam([
-            {"params": game.sender.parameters(), "lr": opts.sender_lr},
-            {"params": game.receiver.parameters(), "lr": opts.receiver_lr},
-        ])
 
-    elif opts.mode.lower() == "rf":
-        _sender = SenderReinforce(n_features=data_loader.n_features, n_hidden=opts.sender_hidden)
-        _receiver = ReceiverReinforce(n_features=data_loader.n_features, linear_units=opts.receiver_hidden)
-        sender = core.RnnSenderReinforce(
-            _sender,
-            opts.vocab_size,
-            opts.sender_embedding,
-            opts.sender_hidden,
-            opts.max_len,
-            cell=opts.sender_cell)
-        receiver = core.RnnReceiverReinforce(
-            core.ReinforceWrapper(_receiver),
-            receiver_vocab_size,
-            opts.receiver_embedding,
-            opts.receiver_hidden,
-            cell=opts.receiver_cell)
-        game = SenderReceiverRnnReinforce(
-            sender, receiver,
-            loss=loss_reinforce,
-            vocab_size=opts.vocab_size,
-            channel_type=opts.channel,
-            error_prob=opts.error_prob,
-            length_cost=opts.length_cost,
-            sender_entropy_coeff=opts.sender_entropy_coeff,
-            receiver_entropy_coeff=opts.receiver_entropy_coeff,
-            device=device,
-            seed=opts.random_seed)
-        # TODO use the native egg optimizer mechanism
-        optimizer = torch.optim.RMSprop([
-            {"params": game.sender.parameters(), "lr": opts.sender_lr},
-            {"params": game.receiver.parameters(), "lr": opts.receiver_lr},
-        ])
-
+    if opts.contextual_loss:
+        _loss = contextual_loss_reinforce
     else:
-        raise NotImplementedError(f"Unknown training mode, {opts.mode}")
-
-    if opts.lr_decay is not None and opts.lr_decay != 1.:
-        scheduler = torch.optim.lr_scheduler.LinearLR(
-            optimizer, start_factor=1.,
-            end_factor=opts.lr_decay,
-            total_iters=opts.n_epochs)
-    else:
-        scheduler = None
+        _loss = binary_loss_reinforce
+    _sender = SenderReinforce(
+        n_features=data_handler.n_features,
+        n_hidden=opts.sender_hidden,
+        context_game=opts.context_game)
+    _receiver = ReceiverReinforce(
+        n_features=data_handler.n_features,
+        linear_units=opts.receiver_hidden)
+    sender = core.RnnSenderReinforce(
+        _sender,
+        opts.vocab_size,
+        opts.sender_embedding,
+        opts.sender_hidden,
+        opts.max_len,
+        cell=opts.sender_cell)
+    receiver = core.RnnReceiverReinforce(
+        core.ReinforceWrapper(_receiver),
+        receiver_vocab_size,
+        opts.receiver_embedding,
+        opts.receiver_hidden,
+        cell=opts.receiver_cell)
+    game = SenderReceiverRnnReinforce(
+        sender, receiver,
+        loss=_loss,
+        vocab_size=opts.vocab_size,
+        channel_type=opts.channel,
+        error_prob=opts.error_prob,
+        length_cost=opts.length_cost,
+        sender_entropy_coeff=opts.sender_entropy_coeff,
+        receiver_entropy_coeff=opts.receiver_entropy_coeff,
+        device=device,
+        seed=opts.random_seed)
+    optimizer = torch.optim.RMSprop([
+        {"params": game.sender.parameters(), "lr": opts.sender_lr},
+        {"params": game.receiver.parameters(), "lr": opts.receiver_lr},
+    ])
 
     callbacks = [
         TrainingMetricsCallback(
@@ -244,15 +170,13 @@ def main(params):
             max_len=opts.max_len,
             channel_type=opts.channel,
             error_prob=opts.error_prob,
+            context_game=opts.context_game,
             sender=_sender,
             receiver=_receiver,
             dataloader=validation_data,
             device=device,
             bs=opts.batch_size),
     ]
-
-    if opts.mode.lower() == "gs":
-        callbacks.append(core.TemperatureUpdater(agent=sender, decay=0.9, minimum=0.1))
 
     if opts.simple_logging:
         callbacks.append(core.ConsoleLogger(as_json=True))
@@ -262,14 +186,13 @@ def main(params):
             train_data_len=len(train_data),
             test_data_len=len(validation_data),
             validation_freq=opts.validation_freq,
-            dump_results_folder=opts.dump_results_folder,
+            results_folder=opts.results_folder,
             filename=opts.filename,
         ))
-
     trainer = Trainer(
         game=game,
         optimizer=optimizer,
-        optimizer_scheduler=scheduler,
+        optimizer_scheduler=None,
         train_data=train_data,
         validation_data=validation_data,
         callbacks=callbacks)
@@ -291,40 +214,24 @@ def main(params):
 
         # Standard evaluation – same setting as during training
         apply_noise = opts.error_prob != 0. and opts.channel is not None
-        sender_inputs, messages, one_hots, receiver_inputs, receiver_outputs, labels = \
+        sender_inputs, messages, receiver_inputs, receiver_outputs, labels = \
             dump_sender_receiver(
-                game, test_data, opts.mode == 'gs', apply_noise=apply_noise,
+                game, test_data, apply_noise=apply_noise,
                 variable_length=True, max_len=opts.max_len, vocab_size=receiver_vocab_size,
                 device=device)
 
         padded_messages = torch.nn.utils.rnn.pad_sequence(messages, batch_first=True)
         # to get new additional accuracy for truncated messages (where one symbol is removed)
-        if opts.mode == "rf":
-            new_messages, new_receiver_inputs, new_labels = truncate_messages(padded_messages, receiver_inputs, labels, opts.mode)
-        elif opts.mode == "gs":
-            new_messages, new_receiver_inputs, new_labels = truncate_messages(one_hots, receiver_inputs, labels, opts.mode)
+        new_messages, new_receiver_inputs, new_labels = truncate_messages(
+            padded_messages, receiver_inputs, labels)
 
         dataset = CustomDataset(new_messages, new_receiver_inputs)
         dataloader = torch.utils.data.DataLoader(dataset, batch_size=opts.batch_size, shuffle=False)
 
         predictions = []
-
-        for batch in dataloader:
-            batched_messages, batched_inputs = batch
-            outputs = receiver(batched_messages, batched_inputs)
-            if opts.mode == 'rf':
-                predictions.extend(outputs[0])
-            elif opts.mode == 'gs':
-                batched_messages = batched_messages.argmax(
-                    dim=-1
-                )
-                for i in range(batched_messages.size(0)):
-                    eos_positions = (batched_messages[i, :] == 0).nonzero()
-                    message_end = (
-                        eos_positions[0].item() if eos_positions.size(0) > 0 else -1
-                    )
-                    assert message_end == -1 or batched_messages[i, message_end] == 0
-                    predictions.append(outputs[i, message_end, ...].argmax(dim=-1).detach())
+        for b_messages, b_inputs in dataloader:
+            outputs = receiver(b_messages, b_inputs)
+            predictions.extend(outputs[0])
 
         predictions = torch.Tensor(predictions)
         new_labels = torch.Tensor((new_labels))
@@ -334,29 +241,25 @@ def main(params):
         actual_vocab = set(int(s) for m in messages for s in m.tolist())
         actual_vocab_size = len(actual_vocab)
 
-
         receiver_outputs = move_to(receiver_outputs, device)
         receiver_outputs = torch.stack(receiver_outputs)
         labels = move_to(labels, device)
         labels = torch.stack(labels)
 
-        preds = receiver_outputs.argmax(dim=1) if opts.mode.lower() == 'gs' \
-            else receiver_outputs
-
-        accuracy = torch.mean((preds == labels).float()).item()
+        accuracy = torch.mean((receiver_outputs == labels).float()).item()
         alignment = compute_conceptual_alignment(
             test_data, _receiver, _sender, device, opts.batch_size)
         redund_msg = compute_redundancy_msg(
             messages, opts.max_len)
         redund_smb = compute_redundancy_smb(
             messages, opts.max_len, opts.vocab_size, opts.channel, opts.error_prob)
-        redund_smb_adj = compute_redundancy_smb_adjusted(
-            messages, opts.max_len, opts.vocab_size, opts.channel, opts.error_prob)
-        redund_smb_adj2 = compute_redundancy_smb_adjusted(
+        #redund_smb_adj = compute_redundancy_smb_adjusted(
+        #    messages, opts.max_len, opts.vocab_size, opts.channel, opts.error_prob)
+        #redund_smb_adj2 = compute_redundancy_smb_adjusted(
+        #    messages, opts.max_len, opts.vocab_size, opts.channel, opts.error_prob, alphabet=actual_vocab)
+        redund_smb_adj = compute_redundancy_smb(
             messages, opts.max_len, opts.vocab_size, opts.channel, opts.error_prob, alphabet=actual_vocab)
-        redund_smb_adj3 = compute_redundancy_smb_adjusted(
-            messages, opts.max_len, opts.vocab_size, opts.channel, opts.error_prob, alphabet=actual_vocab)
-        topographic_rho = compute_top_sim(sender_inputs, messages, opts.perceptual_dimensions)
+        topographic_rho = compute_top_sim(sender_inputs, messages, data_handler.perceptual_dimensions)
         posdis = compute_posdis(sender_inputs, messages)
         bosdis = compute_bosdis(sender_inputs, messages, opts.vocab_size)
         maxrep = compute_max_rep(messages).mean().item()
@@ -367,8 +270,8 @@ def main(params):
         output_dict['results']['redundancy_msg'] = redund_msg
         output_dict['results']['redundancy_smb'] = redund_smb
         output_dict['results']['redundancy_smb_adj'] = redund_smb_adj
-        output_dict['results']['redundancy_smb_adj2'] = redund_smb_adj2
-        output_dict['results']['redundancy_smb_adj3'] = redund_smb_adj3
+        # output_dict['results']['redundancy_smb_adj2'] = redund_smb_adj2
+        # output_dict['results']['redundancy_smb_adj3'] = redund_smb_adj3
         output_dict['results']['topographic_rho'] = topographic_rho
         output_dict['results']['pos_dis'] = posdis
         output_dict['results']['bos_dis'] = bosdis
@@ -402,9 +305,9 @@ def main(params):
         # If we applied noise during training,
         # compute results after disabling noise in the test phase as well
         if opts.error_prob != 0:
-            sender_inputs_nn, messages_nn, one_hots_nn, receiver_inputs_nn, \
+            sender_inputs_nn, messages_nn, receiver_inputs_nn, \
                 receiver_outputs_nn, labels_nn = dump_sender_receiver(
-                    game, test_data, opts.mode.lower() == 'gs',
+                    game, test_data,
                     apply_noise=False,
                     variable_length=True, max_len=opts.max_len,
                     vocab_size=opts.vocab_size, device=device)
@@ -412,29 +315,13 @@ def main(params):
             padded_messages_nn = torch.nn.utils.rnn.pad_sequence(messages_nn, batch_first=True)
 
             # to get new additional accuracy for truncated messages (where one symbol is removed)
-            if opts.mode == 'rf':
-                new_messages_nn, new_receiver_inputs_nn, new_labels_nn = truncate_messages(padded_messages_nn, receiver_inputs_nn, labels_nn, opts.mode)
-            elif opts.mode == 'gs':
-                new_messages_nn, new_receiver_inputs_nn, new_labels_nn = truncate_messages(one_hots_nn, receiver_inputs_nn, labels_nn, opts.mode)
-            dataset_nn = CustomDataset(new_messages_nn, new_receiver_inputs_nn)
-            dataloader_nn = torch.utils.data.DataLoader(dataset_nn, batch_size=opts.batch_size, shuffle=False)
+            new_messages_nn, new_receiver_inputs_nn, new_labels_nn = truncate_messages(
+                padded_messages_nn, receiver_inputs_nn, labels_nn)
 
             predictions_nn = []
-
-            for batch_nn in dataloader_nn:
-                batched_messages_nn, batched_inputs_nn = batch_nn
-                outputs_nn = receiver(batched_messages_nn, batched_inputs_nn)
-                if opts.mode.lower() == 'rf':
-                    predictions_nn.extend(outputs_nn[0])
-                elif opts.mode.lower() == 'gs':
-                    batched_messages_nn = batched_messages_nn.argmax(dim=-1)
-                    for i in range(batched_messages_nn.size(0)):
-                        eos_positions = (batched_messages_nn[i, :] == 0).nonzero()
-                        message_end = (
-                            eos_positions[0].item() if eos_positions.size(0) > 0 else -1
-                        )
-                        assert message_end == -1 or batched_messages_nn[i, message_end] == 0
-                        predictions_nn.append(outputs_nn[i, message_end, ...].argmax(dim=-1).detach())
+            for b_messages, b_inputs in dataloader:
+                outputs = receiver(b_messages, b_inputs)
+                predictions_nn.extend(outputs[0])
 
             predictions_nn = torch.Tensor(predictions_nn)
             new_labels_nn = torch.Tensor((new_labels_nn))
@@ -449,19 +336,13 @@ def main(params):
             actual_vocab_nn = set(int(s) for m in messages_nn for s in m.tolist())
             actual_vocab_size_nn = len(actual_vocab_nn)
 
-            preds_nn = receiver_outputs_nn.argmax(dim=1) if opts.mode.lower() == 'gs' \
-                else receiver_outputs_nn
-            accuracy_nn = torch.mean((preds_nn == labels_nn).float()).item()
+            accuracy_nn = torch.mean((receiver_outputs_nn == labels_nn).float()).item()
             redund_msg_nn = compute_redundancy_msg(messages_nn, opts.max_len)
             redund_smb_nn = compute_redundancy_smb(
                 messages_nn, opts.max_len, opts.vocab_size, None, 0.0)
-            redund_smb_adj_nn = compute_redundancy_smb_adjusted(
-                messages_nn, opts.max_len, opts.vocab_size, None, 0.0)
-            redund_smb_adj2_nn = compute_redundancy_smb_adjusted(
+            redund_smb_adj_nn = compute_redundancy_smb(
                 messages_nn, opts.max_len, opts.vocab_size, None, 0.0, actual_vocab_nn)
-            redund_smb_adj3_nn = compute_redundancy_smb(
-                messages_nn, opts.max_len, opts.vocab_size, None, 0.0, actual_vocab_nn)
-            top_sim_nn = compute_top_sim(sender_inputs_nn, messages_nn, opts.perceptual_dimensions)
+            top_sim_nn = compute_top_sim(sender_inputs_nn, messages_nn, data_handler.perceptual_dimensions)
             posdis_nn = compute_posdis(sender_inputs_nn, messages_nn)
             bosdis_nn = compute_bosdis(sender_inputs_nn, messages_nn, opts.vocab_size)
             max_rep_nn = compute_max_rep(messages_nn).mean().item()
@@ -472,8 +353,6 @@ def main(params):
             output_dict['results-no-noise']['redundancy_msg'] = redund_msg_nn
             output_dict['results-no-noise']['redundancy_smb'] = redund_smb_nn
             output_dict['results-no-noise']['redundancy_smb_adj'] = redund_smb_adj_nn
-            output_dict['results-no-noise']['redundancy_smb_adj2'] = redund_smb_adj2_nn
-            output_dict['results-no-noise']['redundancy_smb_adj3'] = redund_smb_adj3_nn
             output_dict['results-no-noise']['topographic_rho'] = top_sim_nn
             output_dict['results-no-noise']['pos_dis'] = posdis_nn
             output_dict['results-no-noise']['bos_dis'] = bosdis_nn
@@ -529,8 +408,8 @@ def main(params):
         print("|" + "PosDis:".rjust(align) + f" {p_dis}")
         print("|" + "BosDis:".rjust(align) + f" {b_dis}")
 
-        if opts.dump_results_folder:
-            opts.dump_results_folder.mkdir(exist_ok=True)
+        if opts.results_folder:
+            opts.results_folder.mkdir(exist_ok=True)
 
             messages_dict = {}
 
@@ -609,10 +488,10 @@ def main(params):
                 'total': time_total,
                 'per_epoch': time_per_epoch}
 
-            with open(opts.dump_results_folder / f'{opts.filename}-results.json', 'w') as f:
+            with open(opts.results_folder / f'{opts.filename}-results.json', 'w') as f:
                 json.dump(output_dict, f, indent=4)
 
-            print(f"| Results saved to {opts.dump_results_folder / opts.filename}-results.json")
+            print(f"| Results saved to {opts.results_folder / opts.filename}-results.json")
 
     print('| Total training time:', time_total)
     print('| Training time per epoch:', time_per_epoch)
