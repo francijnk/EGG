@@ -78,6 +78,7 @@ def get_params(params):
     parser.add_argument("--filename", type=str, default=None, help="Filename (no extension)")
     parser.add_argument("--debug", action="store_true", default=False, help="Run egg/objects_game with pdb enabled")
     parser.add_argument("--simple_logging", action="store_true", default=False, help="Use console logger instead of progress bar")
+    parser.add_argument("--images",action="store_true", default=False, help="Run image data variant of the game")
 
     args = core.init(parser, params)
     check_args(args)
@@ -131,10 +132,12 @@ def main(params):
     _sender = SenderReinforce(
         n_features=data_handler.n_features,
         n_hidden=opts.sender_hidden,
-        context_game=opts.context_game)
+        context_game=opts.context_game,
+        image = opts.images)
     _receiver = ReceiverReinforce(
         n_features=data_handler.n_features,
-        linear_units=opts.receiver_hidden)
+        linear_units=opts.receiver_hidden,
+        image=opts.images)
     sender = core.RnnSenderReinforce(
         _sender,
         opts.vocab_size,
@@ -221,6 +224,7 @@ def main(params):
                 device=device)
 
         padded_messages = torch.nn.utils.rnn.pad_sequence(messages, batch_first=True)
+
         # to get new additional accuracy for truncated messages (where one symbol is removed)
         new_messages, new_receiver_inputs, new_labels = truncate_messages(
             padded_messages, receiver_inputs, labels)
@@ -272,7 +276,7 @@ def main(params):
         output_dict['results']['redundancy_smb_adj'] = redund_smb_adj
         # output_dict['results']['redundancy_smb_adj2'] = redund_smb_adj2
         # output_dict['results']['redundancy_smb_adj3'] = redund_smb_adj3
-        output_dict['results']['topographic_rho'] = topographic_rho
+        #output_dict['results']['topographic_rho'] = topographic_rho
         output_dict['results']['pos_dis'] = posdis
         output_dict['results']['bos_dis'] = bosdis
         output_dict['results']['max_rep'] = maxrep
@@ -294,7 +298,7 @@ def main(params):
         mi = f"{mi_result['mi']:.3f}"
         entropy_inp_dim = f"{[round(x, 3) for x in mi_result['entropy_inp_dim']]}"
         mi_dim = f'{[round(x, 3) for x in mi_result["mi_dim"]]}'
-        t_rho = f'{topographic_rho:.3f}'
+        #t_rho = f'{topographic_rho:.3f}'
         p_dis = f'{posdis:.3f}'
         b_dis = f'{bosdis:.3f}'
         redund_msg = f'{redund_msg:.3f}'

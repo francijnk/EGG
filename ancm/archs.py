@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+from torch.nn import functional as F
 
 from typing import Callable, Optional
 from collections import defaultdict
@@ -9,14 +10,69 @@ from egg.core.baselines import Baseline, MeanBaseline, BuiltInBaseline, NoBaseli
 from egg.core.interaction import LoggingStrategy
 from egg.core.util import find_lengths
 
+class SeeingConvNet(nn.Module):
+    def __init__(self):
+        super(SeeingConvNet, self).__init__()
+        
+        # Define the sequence of convolutional layers, same as Lazaridou paper 2018
+        self.conv_layers = nn.Sequential(
+            nn.Conv2d(in_channels=3, out_channels=32, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+
+            nn.Conv2d(in_channels=32, out_channels=32, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+
+            nn.Conv2d(in_channels=32, out_channels=32, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+
+            nn.Conv2d(in_channels=32, out_channels=32, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+
+            nn.Conv2d(in_channels=32, out_channels=32, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+
+            nn.Conv2d(in_channels=32, out_channels=32, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+
+            nn.Conv2d(in_channels=32, out_channels=32, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+
+            nn.Conv2d(in_channels=32, out_channels=32, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm2d(32),
+            nn.ReLU()
+        )
+    
+    def forward(self, x):
+        x = self.conv_layers(x)
+        return x
 
 class SenderReinforce(nn.Module):
-    def __init__(self, n_features, n_hidden, context_game):
+    def __init__(self, n_features, n_hidden, context_game, image=False):
         super(SenderReinforce, self).__init__()
         self.context_game = context_game
+        self.image = image
+
+        # Vision module for image-based inputs
+        if self.image:
+            self.vision_module = SeeingConvNet()
+            # Update input features for the fully connected layer
+            n_features = 2048  # Adjust this based on the output channels of SeeingConvNet
+
         self.fc1 = nn.Linear(n_features, n_hidden)
 
     def forward(self, x, _aux_input=None):
+        if self.image:
+            # Reshape to 4D for the vision module
+            x = self.vision_module(x)
+            x = x.flatten(start_dim=1)
+
         if self.context_game:
             return (
                 self.fc1(x[:, 0]).tanh()  # target embedding
@@ -29,17 +85,33 @@ class SenderReinforce(nn.Module):
 
 
 class ReceiverReinforce(nn.Module):
-    def __init__(self, n_features, linear_units):
+    def __init__(self, n_features, linear_units, image=False):
         super(ReceiverReinforce, self).__init__()
+        self.image = image
+
+        # Vision module for image-based inputs
+        if self.image:
+            self.vision_module = SeeingConvNet()
+            # Update input features for the fully connected layer
+            n_features = 2048 # Adjust this based on the output channels of SeeingConvNet
         self.fc1 = nn.Linear(n_features, linear_units)
         self.logsoft = nn.LogSoftmax(dim=1)
 
     def forward(self, x, _input, _aux_input=None):
+        if self.image:
+            # Pass input through the vision module
+
+            batch_size, n_distractors, channels, height, width = _input.shape
+            _input = _input.view(batch_size * n_distractors, channels, height, width)
+
+            _input = self.vision_module(_input)
+            _input = _input.flatten(start_dim=1)  # Flatten spatial dimensions
+            _input = _input.view(batch_size, n_distractors, -1) # reshape back to 5D
+
         embedded_input = self.fc1(_input).tanh()
         energies = torch.matmul(embedded_input, torch.unsqueeze(x, dim=-1))
         energies = energies.squeeze()
         return self.logsoft(energies)
-
 
 class RnnReceiverReinforce(nn.Module):
     """

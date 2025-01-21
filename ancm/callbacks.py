@@ -352,7 +352,7 @@ class TrainingMetricsCallback(Callback):
                 message, self.max_len, self.vocab_size, channel=None, error_prob=0.0, alphabet=actual_vocab)
 
             # compositionality
-            logs.aux['top_sim'] = compute_top_sim(logs.sender_input, logs.message)
+            #logs.aux['top_sim'] = compute_top_sim(logs.sender_input, logs.message)
             if self.context_game:
                 logs.aux['top_sim_c'] = compute_top_sim(logs.sender_input, logs.message, contextual=True)
             # logs.aux['pos_dis'] = compute_posdis(logs.sender_input, logs.message)
@@ -384,7 +384,7 @@ class TrainingMetricsCallback(Callback):
                 message, self.max_len, self.vocab_size, self.channel_type, self.error_prob, alphabet=actual_vocab)
 
             # compositinoality
-            logs.aux['top_sim'] = None  # top_sim(logs.sender_input, logs.message)
+            #logs.aux['top_sim'] = None  # top_sim(logs.sender_input, logs.message)
             if self.context_game:
                 logs.aux['top_sim_c'] = None  # compute_top_sim(logs.sender_input, logs.message, contextual=True)
             # logs.aux['pos_dis'] = None
