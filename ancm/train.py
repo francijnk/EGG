@@ -74,7 +74,7 @@ def get_params(params):
     parser.add_argument("--filename", type=str, default=None, help="Filename (no extension)")
     parser.add_argument("--debug", action="store_true", default=False, help="Run egg/objects_game with pdb enabled")
     parser.add_argument("--images", action="store_true", default=False, help="Run image data variant of the game")
-    parser.add_argument("--wandb_entity", type=str, default=None, help="WandB project name")
+    parser.add_argument("--wandb_entity", type=str, default=None, help="WandB entity name")
     parser.add_argument("--wandb_project", type=str, default=None, help="WandB project name")
     parser.add_argument("--wandb_run_id", type=str, default=None, help="WandB run id")
 
@@ -113,7 +113,20 @@ def main(params):
     opts = get_params(params)
 
     # device = torch.device("cuda" if opts.cuda else "cpu")
-    device = torch.device("cpu")
+    #device = torch.device("cpu")
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    # Seed manually to make runs reproducible
+    # You need to set this again if you do multiple runs of the same model
+    torch.manual_seed(42)
+
+    # When running on the CuDNN backend two further options must be set for reproducibility
+    if torch.cuda.is_available():
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+
+    model.to(device)
+    data = data.to(device)
 
     data_handler = DataHandler(opts)
     train_data, validation_data, test_data = data_handler.load_data(opts)
@@ -127,10 +140,12 @@ def main(params):
         n_features=data_handler.n_features,
         n_hidden=opts.sender_hidden,
         image = opts.images)
+    _sender = _sender.to(device)
     _receiver = ReceiverReinforce(
         n_features=data_handler.n_features,
         linear_units=opts.receiver_hidden,
         image=opts.images)
+    _receiver = _receiver.to(device)
     sender = core.RnnSenderReinforce(
         _sender,
         opts.vocab_size,
@@ -138,12 +153,14 @@ def main(params):
         opts.sender_hidden,
         opts.max_len,
         cell=opts.sender_cell)
+    sender = sender.to(device)
     receiver = core.RnnReceiverReinforce(
         agent=core.ReinforceWrapper(_receiver),
         vocab_size=receiver_vocab_size,
         embed_dim=opts.receiver_embedding,
         hidden_size=opts.receiver_hidden,
         cell=opts.receiver_cell)
+    receiver = receiver.to(device)
     game = SenderReceiverRnnReinforce(
         sender, receiver,
         loss=loss,
@@ -155,6 +172,7 @@ def main(params):
         receiver_entropy_coeff=opts.receiver_entropy_coeff,
         device=device,
         seed=opts.random_seed)
+    game = game.to(device)
     optimizer = build_optimizer(game, opts)
 
     callbacks = [
@@ -182,6 +200,7 @@ def main(params):
         train_data=train_data,
         validation_data=validation_data,
         callbacks=callbacks)
+    trainer = trainer.to(device)
 
     t_start = time.monotonic()
     if opts.error_prob == 0. or not opts.channel:
@@ -217,11 +236,15 @@ def main(params):
 
         predictions = []
         for b_messages, b_inputs in dataloader:
+            b_messages = b_messages.to(device)
+            b_inputs = b_inputs.to(device)
             outputs = receiver(b_messages, b_inputs)
             predictions.extend(outputs[0])
 
         predictions = torch.Tensor(predictions)
+        predictions = predictions.to(device)
         new_labels = torch.Tensor((new_labels))
+        new_labels = new_labels.to(device)
         compared = torch.eq(predictions, new_labels)
         accuracy2 = compared.float().mean().item()
 
@@ -302,6 +325,8 @@ def main(params):
 
             predictions_nn = []
             for b_messages, b_inputs in dataloader:
+                b_messages = b_messages.to(device)
+                b_inputs = b_inputs.to(device)
                 outputs = receiver(b_messages, b_inputs)
                 predictions_nn.extend(outputs[0])
 
