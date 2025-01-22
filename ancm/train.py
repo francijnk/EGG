@@ -32,7 +32,7 @@ from ancm.util import (
 )
 from ancm.metrics import (
     compute_mi_input_msgs,
-    compute_conceptual_alignment,
+    # compute_conceptual_alignment,
     compute_max_rep,
     compute_redundancy_msg,
     compute_redundancy_smb,
@@ -130,8 +130,7 @@ def main(params):
     _receiver = ReceiverReinforce(
         n_features=data_handler.n_features,
         linear_units=opts.receiver_hidden,
-        image=opts.images,
-        n_distractors=data_handler.n_distractors)
+        image=opts.images)
     sender = core.RnnSenderReinforce(
         _sender,
         opts.vocab_size,
@@ -241,8 +240,8 @@ def main(params):
         labels = torch.stack(labels)
 
         accuracy = torch.mean((receiver_outputs == labels).float()).item()
-        alignment = compute_conceptual_alignment(
-            test_data, _receiver, _sender, device, opts.batch_size)
+        # alignment = compute_conceptual_alignment(
+        #     test_data, _receiver, _sender, device, opts.batch_size)
         redund_msg = compute_redundancy_msg(messages)
         redund_smb = compute_redundancy_smb(
             messages, opts.max_len, opts.vocab_size, opts.channel, opts.error_prob)
@@ -255,7 +254,7 @@ def main(params):
 
         output_dict['results']['accuracy'] = accuracy
         output_dict['results']['accuracy2'] = accuracy2
-        output_dict['results']['embedding_alignment'] = alignment
+        # output_dict['results']['embedding_alignment'] = alignment
         output_dict['results']['redundancy_msg'] = redund_msg
         output_dict['results']['redundancy_smb'] = redund_smb
         output_dict['results']['redundancy_smb_adj'] = redund_smb_adj
@@ -338,7 +337,7 @@ def main(params):
 
             output_dict['results-no-noise']['accuracy'] = accuracy_nn
             output_dict['results-no-noise']['accuracy2'] = accuracy2_nn
-            output_dict['results-no-noise']['embedding_alignment'] = alignment
+            # output_dict['results-no-noise']['embedding_alignment'] = alignment
             output_dict['results-no-noise']['redundancy_msg'] = redund_msg_nn
             output_dict['results-no-noise']['redundancy_smb'] = redund_smb_nn
             output_dict['results-no-noise']['redundancy_smb_adj'] = redund_smb_adj_nn
@@ -388,7 +387,7 @@ def main(params):
         print("|" + "Accuracy:".rjust(align), acc_str)
         print("|" + "Accuracy2:".rjust(align), acc2_str)
         print("|")
-        print("|" + "Embedding alignment:".rjust(align) + f" {alignment:.2f}")
+        # print("|" + "Embedding alignment:".rjust(align) + f" {alignment:.2f}")
         print("|" + "Redundancy (message level):".rjust(align), redund_msg)
         print("|" + "Redundancy (symbol level):".rjust(align), redund_smb)
         print("|" + "Redundancy (symbol level, adjusted):".rjust(align), redund_smb_adj)
@@ -464,7 +463,7 @@ def main(params):
             output_dict['results']['unique_msg'] = len(msg_dict.keys())
             if opts.error_prob != 0:
                 output_dict['results']['unique_msg_no_noise'] = len(msg_dict_nn.keys())
-            output_dict['results']['embedding_alignment'] = alignment
+            # output_dict['results']['embedding_alignment'] = alignment
             output_dict['messages'] = [v for v in messages_dict.values()]
             output_dict['message_counts'] = sorted_msgs
             if opts.error_prob != 0:

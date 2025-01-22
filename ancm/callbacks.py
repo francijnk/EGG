@@ -15,7 +15,7 @@ from rich.table import Table
 from rich.text import Text
 
 from ancm.metrics import (
-    compute_conceptual_alignment,
+    # compute_conceptual_alignment,
     compute_max_rep,
     compute_redundancy_msg,
     compute_redundancy_smb,
@@ -368,7 +368,7 @@ class TrainingMetricsCallback(Callback):
             logs.aux['lexicon_size'] = int(lexicon_size)
             logs.aux['actual_vocab_size'] = int(actual_vocab_size)
             # logs.aux['alignment'] = None
-            compute_conceptual_alignment(self.dataloader, self.sender, self.receiver, self.device, self.bs)
+            # compute_conceptual_alignment(self.dataloader, self.sender, self.receiver, self.device, self.bs)
 
             # redundancy
             logs.aux['max_rep'] = compute_max_rep(message)

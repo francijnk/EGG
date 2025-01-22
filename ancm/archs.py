@@ -11,6 +11,7 @@ from egg.core.baselines import Baseline, BuiltInBaseline, NoBaseline, MeanBaseli
 from egg.core.interaction import LoggingStrategy
 from egg.core.util import find_lengths
 
+
 class SeeingConvNet(nn.Module):
     def __init__(self):
         super(SeeingConvNet, self).__init__()
@@ -82,7 +83,6 @@ class MovingAverageBaseline(Baseline):
 class SenderReinforce(nn.Module):
     def __init__(self, n_features, n_hidden, image=False):
         super(SenderReinforce, self).__init__()
-        self.fc1 = nn.Linear(n_features, n_hidden)
         self.image = image
 
         # Vision module for image-based inputs
@@ -91,9 +91,12 @@ class SenderReinforce(nn.Module):
             # Update input features for the fully connected layer
             n_features = 2048  # Adjust this based on the output channels of SeeingConvNet
 
-        return self.fc1(x).tanh()
+        self.fc1 = nn.Linear(n_features, n_hidden)
             
     def forward(self, x, _aux_input=None):
+        if self.image:
+            x = self.vision_module(x)
+            x = x.flatten(start_dim=1)
         return self.fc1(x).tanh()
 
 
