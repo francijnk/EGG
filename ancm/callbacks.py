@@ -19,7 +19,7 @@ from ancm.metrics import (
     compute_max_rep,
     compute_redundancy_msg,
     compute_redundancy_smb,
-    # compute_redundancy_smb_adjusted,
+    compute_redundancy_smb_adjusted,
     compute_top_sim,
     compute_posdis,
     compute_bosdis,
@@ -286,12 +286,11 @@ class CustomProgressBarLogger(Callback):
 
 
 class TrainingMetricsCallback(Callback):
-    def __init__(self, vocab_size, max_len, channel_type, error_prob, context_game, sender, receiver, dataloader, device, bs=32):
+    def __init__(self, vocab_size, max_len, channel_type, error_prob, sender, receiver, dataloader, device, bs=32):
         self.vocab_size = vocab_size
         self.max_len = max_len
         self.channel_type = channel_type
         self.error_prob = error_prob
-        self.context_game = context_game
 
         # to compute speaker-listener alignment
         self.sender = sender
@@ -318,18 +317,16 @@ class TrainingMetricsCallback(Callback):
 
             # redundancy
             logs.aux['max_rep'] = compute_max_rep(message)
-            logs.aux['redund_msg'] = compute_redundancy_msg(logs.message, self.max_len)
+            logs.aux['redund_msg'] = compute_redundancy_msg(logs.message)
             logs.aux['redund_smb'] = compute_redundancy_smb(
                 message, self.max_len, self.vocab_size, self.channel_type, self.error_prob)
-            logs.aux['redund_smb_adj'] = compute_redundancy_smb(
-                message, self.max_len, self.vocab_size, self.channel_type, self.error_prob, alphabet=actual_vocab)
+            logs.aux['redund_smb_adj'] = compute_redundancy_smb_adjusted(
+                message, self.channel_type, self.error_prob, alphabet=actual_vocab, erased_symbol=self.vocab_size)
 
             # compositinoality
             logs.aux['top_sim'] = compute_top_sim(logs.sender_input, logs.message)
-            if self.context_game:
-                logs.aux['top_sim_c'] = compute_top_sim(logs.sender_input, logs.message, contextual=True)
             # logs.aux['pos_dis'] = compute_posdis(logs.sender_input, logs.message)
-            # logs.aux['bos_dis'] = compute_bosdis(logs.sender_input, logs.message, vocab_size)
+            # logs.aux['bos_dis'] = compute_bosdis(logs.sender_input, logs.message, self.vocab_size)
 
     def on_secondary_validation_end(self, loss: float, logs: Interaction, epoch: int):
         if logs.message is not None:
@@ -345,16 +342,14 @@ class TrainingMetricsCallback(Callback):
 
             # redundancy
             logs.aux['max_rep'] = compute_max_rep(message)
-            logs.aux['redund_msg'] = compute_redundancy_msg(logs.message, self.max_len)
+            logs.aux['redund_msg'] = compute_redundancy_msg(logs.message)
             logs.aux['redund_smb'] = compute_redundancy_smb(
                 message, self.max_len, self.vocab_size, channel=None, error_prob=0.0)
-            logs.aux['redund_smb_adj'] = compute_redundancy_smb(
-                message, self.max_len, self.vocab_size, channel=None, error_prob=0.0, alphabet=actual_vocab)
+            logs.aux['redund_smb_adj'] = compute_redundancy_smb_adjusted(
+                message, channel=None, error_prob=0.0, alphabet=actual_vocab, erased_symbol=self.vocab_size)
 
             # compositionality
             logs.aux['top_sim'] = compute_top_sim(logs.sender_input, logs.message)
-            if self.context_game:
-                logs.aux['top_sim_c'] = compute_top_sim(logs.sender_input, logs.message, contextual=True)
             # logs.aux['pos_dis'] = compute_posdis(logs.sender_input, logs.message)
             # logs.aux['bos_dis'] = compute_bosdis(logs.sender_input, logs.message, self.vocab_size)
 
@@ -373,21 +368,17 @@ class TrainingMetricsCallback(Callback):
             logs.aux['lexicon_size'] = int(lexicon_size)
             logs.aux['actual_vocab_size'] = int(actual_vocab_size)
             # logs.aux['alignment'] = None
-            # compute_conceptual_alignment(self.dataloader, self.sender, self.receiver, self.device, self.bs)
+            compute_conceptual_alignment(self.dataloader, self.sender, self.receiver, self.device, self.bs)
 
             # redundancy
             logs.aux['max_rep'] = compute_max_rep(message)
-            logs.aux['redund_msg'] = None  # compute_redundancy_msg(logs.message, self.max_len)
+            logs.aux['redund_msg'] = None  # compute_redundancy_msg(logs.message)
             logs.aux['redund_smb'] = compute_redundancy_smb(
                 message, self.max_len, self.vocab_size, self.channel_type, self.error_prob)
-            logs.aux['redund_smb_adj'] = compute_redundancy_smb(
-                message, self.max_len, self.vocab_size, self.channel_type, self.error_prob, alphabet=actual_vocab)
+            logs.aux['redund_smb_adj'] = compute_redundancy_smb_adjusted(
+                message, self.channel_type, self.error_prob, alphabet=actual_vocab, erased_symbol=self.vocab_size)
 
             # compositinoality
             logs.aux['top_sim'] = None  # top_sim(logs.sender_input, logs.message)
-            if self.context_game:
-                logs.aux['top_sim_c'] = None  # compute_top_sim(logs.sender_input, logs.message, contextual=True)
-            # logs.aux['pos_dis'] = None
-            # posdis(logs.sender_input, logs.message)
-            # logs.aux['bos_dis'] = None
-            # bosdis(logs.sender_input, logs.message, self.vocab_size)
+            # logs.aux['pos_dis'] = None  # compute_posdis(logs.sender_input, logs.message)
+            # logs.aux['bos_dis'] = None  # compute_bosdis(logs.sender_input, logs.message, self.vocab_size)

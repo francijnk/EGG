@@ -6,7 +6,10 @@ from itertools import combinations
 
 from typing import Optional
 
-from egg.core.util import move_to
+from egg.core.util import move_to, get_opts
+
+
+common_opts = get_opts()
 
 
 class ObjectDataset(Dataset):
@@ -44,7 +47,6 @@ class DataHandler:
         self.data_path = opts.data_path
         self.batch_size = opts.batch_size
         self.shuffle_train_data = opts.no_shuffle
-        self.context_game = opts.context_game
 
         self._n_features = None
         self.n_distractors = None
@@ -87,25 +89,11 @@ class DataHandler:
 
             r_inputs, labels = np.vstack(np.expand_dims(obj_sets, 0)), np.array(target_ids)
             targets = r_inputs[np.arange(bs), labels]
-            if self.context_game:
-                distractors = np.empty((bs, self.n_distractors, r_inputs.shape[2]))
-                for i in range(self.n_distractors):
-                    distr_ids = np.where(labels > i, i, i + 1)
-                    all_ids = np.arange(self.batch_size)
-                    distractors[all_ids, i] = r_inputs[all_ids, distr_ids]
-                targets = np.expand_dims(targets, axis=1)
-                s_inputs = np.concatenate([targets, distractors], axis=1)
-                return (
-                    torch.from_numpy(s_inputs).float(),
-                    torch.from_numpy(labels).long(),
-                    torch.from_numpy(r_inputs).float(),
-                )
-            else:
-                return (
-                    torch.from_numpy(targets).float(),
-                    torch.from_numpy(labels).long(),
-                    torch.from_numpy(r_inputs).float(),
-                )
+            return (
+                torch.from_numpy(targets).float(),
+                torch.from_numpy(labels).long(),
+                torch.from_numpy(r_inputs).float(),
+            )
 
         train_dataloader = DataLoader(
             train_dataset,
@@ -133,6 +121,13 @@ def is_jsonable(x):
         return True
     except (TypeError, OverflowError):
         return False
+
+
+def build_optimizer(game, opts):
+    return torch.optim.RMSprop([
+        {"params": game.sender.parameters(), "lr": opts.sender_lr},
+        {"params": game.receiver.parameters(), "lr": opts.receiver_lr},
+    ])
 
 
 def crop_messages(interaction):
@@ -193,8 +188,12 @@ def dump_sender_receiver(
                 labels.extend(batch[1])
 
             if isinstance(sender_input, list) or isinstance(sender_input, tuple):
+                if sender_input[0].dim() == 3:
+                    sender_input = [item[:, 0] for item in sender_input]
                 sender_inputs.extend(zip(*sender_input))
             else:
+                if sender_input.dim() == 3:
+                    sender_input = sender_input[:, 0]
                 sender_inputs.extend(sender_input)
 
             if receiver_input is not None:

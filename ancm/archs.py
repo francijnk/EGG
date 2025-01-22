@@ -1,35 +1,53 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
+from torch.distributions import Categorical
 
 from typing import Callable, Optional
 from collections import defaultdict
 
 from egg.core.reinforce_wrappers import RnnEncoder
-from egg.core.baselines import Baseline, MeanBaseline, BuiltInBaseline, NoBaseline
+from egg.core.baselines import Baseline, BuiltInBaseline, NoBaseline, MeanBaseline
 from egg.core.interaction import LoggingStrategy
 from egg.core.util import find_lengths
 
 
+class MovingAverageBaseline(Baseline):
+    """Running mean baseline; all loss batches have equal importance/weight,
+    hence it is better if they are equally-sized.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.history = torch.zeros(1, requires_grad=False)
+        self.stride = 1000
+
+    def update(self, loss: torch.Tensor) -> None:
+        if self.history.device != loss.device:
+            self.history = self.history.to(loss.device)
+        if len(self.history) == self.stride:
+            self.history = self.history[1:]
+        self.history = torch.cat(
+            [self.history, loss.detach().mean().unsqueeze(0)],
+            dim=0)
+
+    def predict(self, loss: torch.Tensor) -> torch.Tensor:
+        if self.history.device != loss.device:
+            self.history = self.history.to(loss.device)
+        return self.history.detach().mean().unsqueeze(0)
+
+
 class SenderReinforce(nn.Module):
-    def __init__(self, n_features, n_hidden, context_game):
+    def __init__(self, n_features, n_hidden):
         super(SenderReinforce, self).__init__()
-        self.context_game = context_game
         self.fc1 = nn.Linear(n_features, n_hidden)
 
     def forward(self, x, _aux_input=None):
-        if self.context_game:
-            return (
-                self.fc1(x[:, 0]).tanh()  # target embedding
-                - torch.stack(
-                    [self.fc1(x[:, i]).tanh() for i in range(1, x.size(1))],
-                    dim=1).mean(dim=1)  # averaged distractor embeddings
-            )
-        else:
-            return self.fc1(x).tanh()
+        return self.fc1(x).tanh()
 
 
 class ReceiverReinforce(nn.Module):
-    def __init__(self, n_features, linear_units):
+    def __init__(self, n_features, linear_units, n_distractors):
         super(ReceiverReinforce, self).__init__()
         self.fc1 = nn.Linear(n_features, linear_units)
         self.logsoft = nn.LogSoftmax(dim=1)
@@ -41,63 +59,7 @@ class ReceiverReinforce(nn.Module):
         return self.logsoft(energies)
 
 
-class RnnReceiverReinforce(nn.Module):
-    """
-    Reinforce Wrapper for Receiver in variable-length message game. The wrapper
-    logic feeds the message into the cell and calls the wrapped agent on the
-    hidden state vector for the step that either corresponds to the EOS input
-    to the input that reaches the maximal length of the sequence. This output
-    is assumed to be the tuple of (output, logprob, entropy).
-    """
-
-    def __init__(
-        self, agent, vocab_size, embed_dim, hidden_size, cell="rnn", num_layers=1
-    ):
-        super(RnnReceiverReinforce, self).__init__()
-        self.agent = agent
-        self.encoder = RnnEncoder(
-            vocab_size, embed_dim, hidden_size, cell, num_layers)
-
-    def forward(self, message, _input=None, aux_input=None, lengths=None):
-        encoded = self.encoder(message, lengths)
-        sample, logits, entropy = self.agent(encoded, _input, aux_input)
-
-        return sample, logits, entropy
-
-
-def contextual_loss_reinforce(sender_input, _message, _receiver_input, receiver_output, _labels, _aux_input):
-    acc = (receiver_output == _labels).detach().float()
-    with torch.no_grad():
-        all_ids = torch.arange(_receiver_input.size(0))
-        target_obj = _receiver_input[all_ids, _labels]
-
-        selected_obj = _receiver_input[all_ids, receiver_output]
-        distractors = torch.empty((
-            _receiver_input.size(0),
-            _receiver_input.size(1) - 1,
-            _receiver_input.size(2))).float()
-        for i in range(distractors.size(1)):
-            distr_ids = torch.where(_labels > i, i, i + 1)
-            distractors[all_ids, i] = _receiver_input[all_ids, distr_ids]
-
-        # assumes binary input
-        means = torch.stack([
-            _receiver_input[i].mean(dim=0)
-            for i in all_ids])
-        relevant_features = (torch.logical_and(means < 1, means > 0).int().sum(dim=1))
-        irrelevant_features = (sender_input.size(-1) - relevant_features)
-        deg_cor = (
-            ((selected_obj == target_obj).int().sum(dim=1) - irrelevant_features)
-            / relevant_features)
-        loss = torch.where(acc == 1, acc, deg_cor.pow(2))
-        del all_ids, target_obj, selected_obj
-        del distractors, distr_ids, means, deg_cor
-        del relevant_features, irrelevant_features
-
-    return -loss, {'accuracy': acc * 100}
-
-
-def binary_loss_reinforce(sender_input, _message, _receiver_input, receiver_output, _labels, _aux_input):
+def loss(sender_input, _message, _receiver_input, receiver_output, _labels, _aux_input):
     acc = (receiver_output == _labels).detach().float()
     return -acc, {'accuracy': acc * 100}
 
@@ -155,7 +117,7 @@ class SenderReceiverRnnReinforce(nn.Module):
         sender_entropy_coeff: float = 0.0,
         receiver_entropy_coeff: float = 0.0,
         device: torch.device = torch.device("cpu"),
-        baseline_type: Baseline = MeanBaseline,  # BuiltInBaseline,  # MeanBaseline,
+        baseline_type: Baseline = MeanBaseline,
         train_logging_strategy: LoggingStrategy = None,
         test_logging_strategy: LoggingStrategy = None,
         seed: int = 42,
@@ -221,7 +183,7 @@ class CommunicationRnnReinforce(nn.Module):
         error_prob: float = 0.0,
         length_cost: float = 0.0,
         device: torch.device = torch.device('cpu'),
-        baseline_type: Baseline = BuiltInBaseline,  # MeanBaseline,
+        baseline_type: Baseline = MeanBaseline,
         train_logging_strategy: LoggingStrategy = None,
         test_logging_strategy: LoggingStrategy = None,
         seed: int = 42,
@@ -265,7 +227,7 @@ class CommunicationRnnReinforce(nn.Module):
         self,
         sender,
         receiver,
-        loss,
+        loss_fn,
         sender_input,
         labels,
         receiver_input=None,
@@ -284,7 +246,7 @@ class CommunicationRnnReinforce(nn.Module):
             message, receiver_input, aux_input, message_length
         )
 
-        loss, aux_info = loss(
+        loss, aux_info = loss_fn(
             sender_input, message, receiver_input, receiver_output, labels, aux_input
         )
 
@@ -309,18 +271,15 @@ class CommunicationRnnReinforce(nn.Module):
         log_prob = effective_log_prob_s + log_prob_r
 
         length_loss = message_length_nn.float() * self.length_cost
+        policy_length_loss = (length_loss * effective_log_prob_s).mean()
 
-        policy_length_loss = (
-            (length_loss - self.baselines["length"].predict(length_loss))
-            * effective_log_prob_s
-        ).mean()
-        policy_loss = (
-            (loss.detach() - self.baselines["loss"].predict(loss.detach())) * log_prob
-        ).mean()
+        baseline = self.baselines['loss'].predict(loss.detach())
+        policy_loss = ((loss.detach() - baseline) * log_prob).mean()
+
+        aux_info['rf'] = loss.detach()
+        aux_info['bs'] = baseline
 
         optimized_loss = policy_length_loss + policy_loss - weighted_entropy
-        # if the receiver is deterministic/differentiable, we apply the actual loss
-        optimized_loss += loss.mean()
 
         if self.training:
             self.baselines["loss"].update(loss)
@@ -333,6 +292,7 @@ class CommunicationRnnReinforce(nn.Module):
         logging_strategy = (
             self.train_logging_strategy if self.training else self.test_logging_strategy
         )
+
         interaction = logging_strategy.filtered_interaction(
             sender_input=sender_input,
             labels=labels,

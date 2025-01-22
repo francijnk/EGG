@@ -90,10 +90,7 @@ def extract_visa(args):
         print('')
 
 
-def reshape(data_concepts, n_distractors, n_features, n_samples, data_distractors=None):
-    if data_distractors is None:  # if no df for distractors is provided, use df for concepts
-        data_distractors = data_concepts
-
+def reshape(data_concepts, n_distractors, n_features, n_samples):
     labels = []
     # categories = data_concepts.iloc[:,0]
 
@@ -132,29 +129,40 @@ def export_visa(args):
     textlabels = visa.iloc[:, :1]
     n_features = features.shape[1] - 1  # exclude the category column
 
+    print('Total concepts:', features.shape[0])
+    print('Total features:', n_features)
+
     # divide 70% for train, 15% test and val
-    train_features, temp_features, train_textlabels, temp_labels = train_test_split(
-        features, textlabels, test_size=0.3)
-    val_features, test_features, val_textlabels, test_textlabels = train_test_split(
-        temp_features, temp_labels, test_size=0.5)
+    # train_features, temp_features, train_textlabels, temp_labels = train_test_split(
+    #     features, textlabels, test_size=0.3)
+    # val_features, test_features, val_textlabels, test_textlabels = train_test_split(
+    #     temp_features, temp_labels, test_size=0.5)
+
+    # 80% train, 20% test
+    train_features, test_features, train_textlabels, test_labels = train_test_split(
+        features, textlabels, test_size=0.2)
+
+    print('Train concepts:', len(train_features))
+    # print('Val concepts:', len(val_features))
+    print('Test concepts:', len(test_features))
 
     train, train_labels = reshape(
-        train_features, args.n_distractors, n_features, args.n_samples_train, features)
-    val, val_labels = reshape(
-        val_features, args.n_distractors, n_features, args.n_samples_val, features)
+        train_features, args.n_distractors, n_features, args.n_samples_train)
+    # val, val_labels = reshape(
+    #     val_features, args.n_distractors, n_features, args.n_samples_val, features)
     test, test_labels = reshape(
-        test_features, args.n_distractors, n_features, args.n_samples_test, features)
+        test_features, args.n_distractors, n_features, args.n_samples_test)
 
-    print('train:', len(train_labels))
-    print('val:', len(val_labels))
-    print('test:', len(test_labels))
+    print('Train samples:', len(train_labels))
+    # print('Val samples:', len(val_labels))
+    print('Test samples:', len(test_labels))
 
     npz_fname = f"visa-{args.n_distractors}-{args.n_samples_train}.npz"
     npz_fpath = os.path.join(current_dir, '..', 'input_data', npz_fname)
     np.savez_compressed(
         npz_fpath,
         train=train, train_labels=train_labels,
-        valid=val, valid_labels=val_labels,
+        valid=test, valid_labels=test_labels,
         test=test, test_labels=test_labels,
         n_distractors=args.n_distractors)
 

@@ -28,6 +28,7 @@ from ancm.util import (
     is_jsonable,
     CustomDataset,
     DataHandler,
+    build_optimizer,
 )
 from ancm.metrics import (
     compute_mi_input_msgs,
@@ -35,15 +36,14 @@ from ancm.metrics import (
     compute_max_rep,
     compute_redundancy_msg,
     compute_redundancy_smb,
-    # compute_redundancy_smb_adjusted,
+    compute_redundancy_smb_adjusted,
     compute_top_sim,
-    compute_posdis,
-    compute_bosdis,
+    # compute_posdis,
+    # compute_bosdis,
 )
 from ancm.archs import (
     SenderReinforce, ReceiverReinforce,
-    binary_loss_reinforce,
-    contextual_loss_reinforce,
+    loss,
     SenderReceiverRnnReinforce,
 )
 from ancm.callbacks import (
@@ -71,8 +71,6 @@ def get_params(params):
     parser.add_argument("--receiver_entropy_coeff", type=float, default=0.001)
     parser.add_argument("--lr_decay", type=float, default=None, help="LR decay, 1.0 for no decay (default: no decay)")
     parser.add_argument("--length_cost", type=float, default=1e-2, help="Message length cost")
-    parser.add_argument("--contextual_loss", action='store_true', default=False, help="Use contextual loss")
-    parser.add_argument("--context_game", action='store_true', default=False, help="Run the contextual variant of the game")
     parser.add_argument("--evaluate", action="store_true", default=False, help="Evaluate trained model on test data")
     parser.add_argument("--results_folder", type=str, default='runs', help="Folder where file with dumped messages will be created")
     parser.add_argument("--filename", type=str, default=None, help="Filename (no extension)")
@@ -124,17 +122,13 @@ def main(params):
     else:
         receiver_vocab_size = opts.vocab_size
 
-    if opts.contextual_loss:
-        _loss = contextual_loss_reinforce
-    else:
-        _loss = binary_loss_reinforce
     _sender = SenderReinforce(
         n_features=data_handler.n_features,
-        n_hidden=opts.sender_hidden,
-        context_game=opts.context_game)
+        n_hidden=opts.sender_hidden)
     _receiver = ReceiverReinforce(
         n_features=data_handler.n_features,
-        linear_units=opts.receiver_hidden)
+        linear_units=opts.receiver_hidden,
+        n_distractors=data_handler.n_distractors)
     sender = core.RnnSenderReinforce(
         _sender,
         opts.vocab_size,
@@ -143,14 +137,14 @@ def main(params):
         opts.max_len,
         cell=opts.sender_cell)
     receiver = core.RnnReceiverReinforce(
-        core.ReinforceWrapper(_receiver),
-        receiver_vocab_size,
-        opts.receiver_embedding,
-        opts.receiver_hidden,
+        agent=core.ReinforceWrapper(_receiver),
+        vocab_size=receiver_vocab_size,
+        embed_dim=opts.receiver_embedding,
+        hidden_size=opts.receiver_hidden,
         cell=opts.receiver_cell)
     game = SenderReceiverRnnReinforce(
         sender, receiver,
-        loss=_loss,
+        loss=loss,
         vocab_size=opts.vocab_size,
         channel_type=opts.channel,
         error_prob=opts.error_prob,
@@ -159,10 +153,7 @@ def main(params):
         receiver_entropy_coeff=opts.receiver_entropy_coeff,
         device=device,
         seed=opts.random_seed)
-    optimizer = torch.optim.RMSprop([
-        {"params": game.sender.parameters(), "lr": opts.sender_lr},
-        {"params": game.receiver.parameters(), "lr": opts.receiver_lr},
-    ])
+    optimizer = build_optimizer(game, opts)
 
     callbacks = [
         TrainingMetricsCallback(
@@ -170,7 +161,6 @@ def main(params):
             max_len=opts.max_len,
             channel_type=opts.channel,
             error_prob=opts.error_prob,
-            context_game=opts.context_game,
             sender=_sender,
             receiver=_receiver,
             dataloader=validation_data,
@@ -249,19 +239,14 @@ def main(params):
         accuracy = torch.mean((receiver_outputs == labels).float()).item()
         alignment = compute_conceptual_alignment(
             test_data, _receiver, _sender, device, opts.batch_size)
-        redund_msg = compute_redundancy_msg(
-            messages, opts.max_len)
+        redund_msg = compute_redundancy_msg(messages)
         redund_smb = compute_redundancy_smb(
             messages, opts.max_len, opts.vocab_size, opts.channel, opts.error_prob)
-        #redund_smb_adj = compute_redundancy_smb_adjusted(
-        #    messages, opts.max_len, opts.vocab_size, opts.channel, opts.error_prob)
-        #redund_smb_adj2 = compute_redundancy_smb_adjusted(
-        #    messages, opts.max_len, opts.vocab_size, opts.channel, opts.error_prob, alphabet=actual_vocab)
-        redund_smb_adj = compute_redundancy_smb(
-            messages, opts.max_len, opts.vocab_size, opts.channel, opts.error_prob, alphabet=actual_vocab)
+        redund_smb_adj = compute_redundancy_smb_adjusted(
+            messages, opts.channel, opts.error_prob, alphabet=actual_vocab, erased_symbol=opts.vocab_size)
         topographic_rho = compute_top_sim(sender_inputs, messages, data_handler.perceptual_dimensions)
-        posdis = compute_posdis(sender_inputs, messages)
-        bosdis = compute_bosdis(sender_inputs, messages, opts.vocab_size)
+        # posdis = compute_posdis(sender_inputs, messages)
+        # bosdis = compute_bosdis(sender_inputs, messages, opts.vocab_size)
         maxrep = compute_max_rep(messages).mean().item()
 
         output_dict['results']['accuracy'] = accuracy
@@ -270,17 +255,17 @@ def main(params):
         output_dict['results']['redundancy_msg'] = redund_msg
         output_dict['results']['redundancy_smb'] = redund_smb
         output_dict['results']['redundancy_smb_adj'] = redund_smb_adj
-        # output_dict['results']['redundancy_smb_adj2'] = redund_smb_adj2
-        # output_dict['results']['redundancy_smb_adj3'] = redund_smb_adj3
         output_dict['results']['topographic_rho'] = topographic_rho
-        output_dict['results']['pos_dis'] = posdis
-        output_dict['results']['bos_dis'] = bosdis
+        # output_dict['results']['pos_dis'] = posdis
+        # output_dict['results']['bos_dis'] = bosdis
         output_dict['results']['max_rep'] = maxrep
         output_dict['results']['actual_vocab_size'] = actual_vocab_size
 
         unique_dict = {}
         for elem in sender_inputs:
             target = ""
+            if elem.dim() == 2:
+                elem = elem[0]
             for dim in elem:
                 target += f"{str(int(dim.item()))}-"
             target = target[:-1]
@@ -291,12 +276,12 @@ def main(params):
         output_dict['results'].update(mi_result)
         entropy_msg = f"{mi_result['entropy_msg']:.3f}"
         entropy_inp = f"{mi_result['entropy_inp']:.3f}"
-        mi = f"{mi_result['mi']:.3f}"
+        mi = f"{mi_result['mi_msg_inp']:.3f}"
         entropy_inp_dim = f"{[round(x, 3) for x in mi_result['entropy_inp_dim']]}"
-        mi_dim = f'{[round(x, 3) for x in mi_result["mi_dim"]]}'
+        mi_dim = f'{[round(x, 3) for x in mi_result["mi_msg_inp_dim"]]}'
         t_rho = f'{topographic_rho:.3f}'
-        p_dis = f'{posdis:.3f}'
-        b_dis = f'{bosdis:.3f}'
+        # p_dis = f'{posdis:.3f}'
+        # b_dis = f'{bosdis:.3f}'
         redund_msg = f'{redund_msg:.3f}'
         redund_smb = f'{redund_smb:.3f}'
         redund_smb_adj = f'{redund_smb_adj:.3f}'
@@ -337,14 +322,14 @@ def main(params):
             actual_vocab_size_nn = len(actual_vocab_nn)
 
             accuracy_nn = torch.mean((receiver_outputs_nn == labels_nn).float()).item()
-            redund_msg_nn = compute_redundancy_msg(messages_nn, opts.max_len)
+            redund_msg_nn = compute_redundancy_msg(messages_nn)
             redund_smb_nn = compute_redundancy_smb(
                 messages_nn, opts.max_len, opts.vocab_size, None, 0.0)
-            redund_smb_adj_nn = compute_redundancy_smb(
-                messages_nn, opts.max_len, opts.vocab_size, None, 0.0, actual_vocab_nn)
+            redund_smb_adj_nn = compute_redundancy_smb_adjusted(
+                messages_nn, None, 0.0, actual_vocab_nn)
             top_sim_nn = compute_top_sim(sender_inputs_nn, messages_nn, data_handler.perceptual_dimensions)
-            posdis_nn = compute_posdis(sender_inputs_nn, messages_nn)
-            bosdis_nn = compute_bosdis(sender_inputs_nn, messages_nn, opts.vocab_size)
+            # posdis_nn = compute_posdis(sender_inputs_nn, messages_nn)
+            # bosdis_nn = compute_bosdis(sender_inputs_nn, messages_nn, opts.vocab_size)
             max_rep_nn = compute_max_rep(messages_nn).mean().item()
 
             output_dict['results-no-noise']['accuracy'] = accuracy_nn
@@ -354,8 +339,8 @@ def main(params):
             output_dict['results-no-noise']['redundancy_smb'] = redund_smb_nn
             output_dict['results-no-noise']['redundancy_smb_adj'] = redund_smb_adj_nn
             output_dict['results-no-noise']['topographic_rho'] = top_sim_nn
-            output_dict['results-no-noise']['pos_dis'] = posdis_nn
-            output_dict['results-no-noise']['bos_dis'] = bosdis_nn
+            # output_dict['results-no-noise']['pos_dis'] = posdis_nn
+            # output_dict['results-no-noise']['bos_dis'] = bosdis_nn
             output_dict['results-no-noise']['max_rep'] = max_rep_nn
             output_dict['results-no-noise']['actual_vocab_size'] = actual_vocab_size_nn
 
@@ -365,11 +350,11 @@ def main(params):
             output_dict['results-no-noise'].update(mi_result_nn)
             entropy_msg += f" / {mi_result_nn['entropy_msg']:.3f}"
             entropy_inp += f" / {mi_result_nn['entropy_inp']:.3f}"
-            mi += f" / {mi_result_nn['mi']:.3f}"
-            mi_dim_nn = f"{[round(x, 3) for x in mi_result_nn['mi_dim']]}"
+            mi += f" / {mi_result_nn['mi_msg_inp']:.3f}"
+            mi_dim_nn = f"{[round(x, 3) for x in mi_result_nn['mi_msg_inp_dim']]}"
             t_rho += f" / {top_sim_nn:.3f}"
-            p_dis += f'/ {posdis_nn:.3f}'
-            b_dis += f'/ {bosdis_nn:.3f}'
+            # p_dis += f'/ {posdis_nn:.3f}'
+            # b_dis += f'/ {bosdis_nn:.3f}'
             redund_msg += f' / {redund_msg_nn:.3f}'
             redund_smb += f' / {redund_smb_nn:.3f}'
             redund_smb_adj += f' / {redund_smb_adj_nn:.3f}'
@@ -405,8 +390,8 @@ def main(params):
         print("|" + "Redundancy (symbol level, adjusted):".rjust(align), redund_smb_adj)
         print("|" + "Max num. of symbol reps.:".rjust(align) + f" {max_repetitions}")
         print("|" + "Topographic rho:".rjust(align) + f" {t_rho}")
-        print("|" + "PosDis:".rjust(align) + f" {p_dis}")
-        print("|" + "BosDis:".rjust(align) + f" {b_dis}")
+        # print("|" + "PosDis:".rjust(align) + f" {p_dis}")
+        # print("|" + "BosDis:".rjust(align) + f" {b_dis}")
 
         if opts.results_folder:
             opts.results_folder.mkdir(exist_ok=True)
