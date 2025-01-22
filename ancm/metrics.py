@@ -466,6 +466,17 @@ def compute_top_sim(
     sender_inputs = torch.stack(sender_inputs) \
         if isinstance(sender_inputs, list) else sender_inputs
 
+    print(obj_tensor.dim())
+    # handling the compare variant
+    if obj_tensor.dim() == 3:
+        if contextual:
+            obj_tensor = obj_tensor[:, 0] - obj_tensor[:, 1:].mean(dim=1)
+        else:
+            obj_tensor = obj_tensor[:, 0]
+    elif obj_tensor.dim() == 4:
+        n_samples = obj_tensor.size(0)
+        obj_tensor = obj_tensor.reshape(n_samples, -1)
+
     messages = [
         [s.int().item() for s in msg if s > 0] + [0]
         for msg in messages]

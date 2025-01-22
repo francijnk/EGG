@@ -11,6 +11,48 @@ from egg.core.baselines import Baseline, BuiltInBaseline, NoBaseline, MeanBaseli
 from egg.core.interaction import LoggingStrategy
 from egg.core.util import find_lengths
 
+class SeeingConvNet(nn.Module):
+    def __init__(self):
+        super(SeeingConvNet, self).__init__()
+        
+        # Define the sequence of convolutional layers, same as Lazaridou paper 2018
+        self.conv_layers = nn.Sequential(
+            nn.Conv2d(in_channels=3, out_channels=32, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+
+            nn.Conv2d(in_channels=32, out_channels=32, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+
+            nn.Conv2d(in_channels=32, out_channels=32, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+
+            nn.Conv2d(in_channels=32, out_channels=32, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+
+            nn.Conv2d(in_channels=32, out_channels=32, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+
+            nn.Conv2d(in_channels=32, out_channels=32, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+
+            nn.Conv2d(in_channels=32, out_channels=32, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+
+            nn.Conv2d(in_channels=32, out_channels=32, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm2d(32),
+            nn.ReLU()
+        )
+    
+    def forward(self, x):
+        x = self.conv_layers(x)
+        return x
 
 class MovingAverageBaseline(Baseline):
     """Running mean baseline; all loss batches have equal importance/weight,
@@ -38,21 +80,47 @@ class MovingAverageBaseline(Baseline):
 
 
 class SenderReinforce(nn.Module):
-    def __init__(self, n_features, n_hidden):
+    def __init__(self, n_features, n_hidden, image=False):
         super(SenderReinforce, self).__init__()
         self.fc1 = nn.Linear(n_features, n_hidden)
+        self.image = image
 
+        # Vision module for image-based inputs
+        if self.image:
+            self.vision_module = SeeingConvNet()
+            # Update input features for the fully connected layer
+            n_features = 2048  # Adjust this based on the output channels of SeeingConvNet
+
+        return self.fc1(x).tanh()
+            
     def forward(self, x, _aux_input=None):
         return self.fc1(x).tanh()
 
 
 class ReceiverReinforce(nn.Module):
-    def __init__(self, n_features, linear_units, n_distractors):
+    def __init__(self, n_features, linear_units, image=False):
         super(ReceiverReinforce, self).__init__()
+        self.image = image
+
+        # Vision module for image-based inputs
+        if self.image:
+            self.vision_module = SeeingConvNet()
+            # Update input features for the fully connected layer
+            n_features = 2048 # Adjust this based on the output channels of SeeingConvNet
         self.fc1 = nn.Linear(n_features, linear_units)
         self.logsoft = nn.LogSoftmax(dim=1)
 
     def forward(self, x, _input, _aux_input=None):
+        if self.image:
+            # Pass input through the vision module
+
+            batch_size, n_distractors, channels, height, width = _input.shape
+            _input = _input.view(batch_size * n_distractors, channels, height, width)
+
+            _input = self.vision_module(_input)
+            _input = _input.flatten(start_dim=1)  # Flatten spatial dimensions
+            _input = _input.view(batch_size, n_distractors, -1) # reshape back to 5D
+
         embedded_input = self.fc1(_input).tanh()
         energies = torch.matmul(embedded_input, torch.unsqueeze(x, dim=-1))
         energies = energies.squeeze()
