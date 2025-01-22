@@ -294,6 +294,7 @@ class CustomProgressBarLogger(Callback):
 
     def on_train_begin(self, trainer_instance: 'Trainer'):
         self.trainer = trainer_instance
+        wandb.init()
         wandb.watch(self.trainer.game, log='all')
 
     def on_train_end(self):

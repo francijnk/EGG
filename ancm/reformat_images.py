@@ -96,7 +96,7 @@ def reformat(n_distractors, n_samples, seed=42):
 
     filename = get_filename(n_distractors, n_samples)
     os.makedirs(os.path.dirname(filename), exist_ok=True)
-    np.savez(filename, train=train, valid=valid, test=test,
+    np.savez_compressed(filename, train=train, valid=valid, test=test,
              train_labels=train_labels, valid_labels=valid_labels, test_labels=test_labels,
               n_distractors=n_distractors)
     print('dataset saved to ' + f"{filename}.npz")
