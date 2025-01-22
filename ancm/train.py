@@ -18,8 +18,6 @@ import torch.utils.data
 
 import egg.core as core
 from egg.core.util import move_to
-# from egg.zoo.objects_game.features import VectorsLoader
-# from ancm.features import VectorsLoader
 
 from ancm.trainers import Trainer
 from ancm.util import (
@@ -75,8 +73,10 @@ def get_params(params):
     parser.add_argument("--results_folder", type=str, default='runs', help="Folder where file with dumped messages will be created")
     parser.add_argument("--filename", type=str, default=None, help="Filename (no extension)")
     parser.add_argument("--debug", action="store_true", default=False, help="Run egg/objects_game with pdb enabled")
-    parser.add_argument("--simple_logging", action="store_true", default=False, help="Use console logger instead of progress bar")
-    parser.add_argument("--images",action="store_true", default=False, help="Run image data variant of the game")
+    parser.add_argument("--images", action="store_true", default=False, help="Run image data variant of the game")
+    parser.add_argument("--wandb_entity", type=str, default=None, help="WandB project name")
+    parser.add_argument("--wandb_project", type=str, default=None, help="WandB project name")
+    parser.add_argument("--wandb_run_id", type=str, default=None, help="WandB run id")
 
     args = core.init(parser, params)
     check_args(args)
@@ -170,17 +170,11 @@ def main(params):
             bs=opts.batch_size),
     ]
 
-    if opts.simple_logging:
-        callbacks.append(core.ConsoleLogger(as_json=True))
-    else:
-        callbacks.append(CustomProgressBarLogger(
-            n_epochs=opts.n_epochs,
-            train_data_len=len(train_data),
-            test_data_len=len(validation_data),
-            validation_freq=opts.validation_freq,
-            results_folder=opts.results_folder,
-            filename=opts.filename,
-        ))
+    callbacks.append(CustomProgressBarLogger(
+        opts,
+        train_data_len=len(train_data),
+        test_data_len=len(validation_data),
+    ))
     trainer = Trainer(
         game=game,
         optimizer=optimizer,
@@ -190,7 +184,7 @@ def main(params):
         callbacks=callbacks)
 
     t_start = time.monotonic()
-    if opts.simple_logging or opts.error_prob == 0. or not opts.channel:
+    if opts.error_prob == 0. or not opts.channel:
         trainer.train(n_epochs=opts.n_epochs, second_val=False)
     else:
         trainer.train(n_epochs=opts.n_epochs, second_val=True)
@@ -363,8 +357,7 @@ def main(params):
             redund_smb_adj += f' / {redund_smb_adj_nn:.3f}'
             max_repetitions += f' / {max_rep_nn:.2f}'
 
-            if not opts.simple_logging:
-                print("|")
+            print("|")
             print("|\033[1m Results (with noise / without noise)\033[0m\n|")
         else:
             acc_str = f'{accuracy:.2f}'

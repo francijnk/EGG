@@ -1,4 +1,6 @@
 import torch
+import wandb
+import argparse
 import pandas as pd
 
 from collections import OrderedDict, defaultdict
@@ -25,10 +27,10 @@ from ancm.metrics import (
     compute_bosdis,
 )
 
-# from egg.core.util import find_lengths
 from egg.core.callbacks import Callback, CustomProgress
 from egg.core.interaction import Interaction
 
+from typing import Dict, Any
 
 
 class EpochProgress(Progress):
@@ -60,12 +62,9 @@ class CustomProgressBarLogger(Callback):
 
     def __init__(
         self,
-        n_epochs: int,
+        opts: argparse.Namespace,
         train_data_len: int = 0,
         test_data_len: int = 0,
-        validation_freq: int = 1,
-        results_folder=None,
-        filename=None,
     ):
         """
         :param n_epochs: total number of epochs
@@ -74,12 +73,26 @@ class CustomProgressBarLogger(Callback):
         :param use_info_table: true to add an information table on top of the progress bar
         """
 
-        self.n_epochs = n_epochs
+        self.n_epochs = opts.n_epochs
         self.train_data_len = train_data_len
         self.test_data_len = test_data_len
-        self.results_folder = results_folder
-        self.filename = filename
-        self.step = validation_freq
+        self.results_folder = opts.results_folder
+        self.filename = opts.filename
+        self.step = opts.validation_freq
+        self.wandb = opts.wandb_project is not None
+
+        if self.wandb:
+            group = opts.channel \
+                if opts.channel is not None and opts.error_prob > 0. \
+                else 'baseline'
+            wandb.init(
+                project=opts.wandb_project,
+                group=group,
+                id=opts.wandb_run_id,
+                entity=opts.wandb_entity,
+            )
+            wandb.config.update(opts)
+
         self.history = defaultdict(lambda: defaultdict(dict))
         self.hide_cols = ['receiver_entropy', 'sender_entropy']
 
@@ -168,6 +181,9 @@ class CustomProgressBarLogger(Callback):
         else:
             return val
 
+    def log_to_wandb(self, data: Dict[str, Any], **kwargs):
+        wandb.log(data, **kwargs)
+
     def generate_live_table(self, od=None):
         live_table = Table(
             expand=True, box=None, show_header=False,
@@ -191,9 +207,10 @@ class CustomProgressBarLogger(Callback):
         self.progress.start_task(self.train_p)
         self.progress.update(self.train_p, visible=True)
 
-    def on_batch_end(self, logs: Interaction, loss: float, batch_id: int, is_training: bool = True):
+    def on_batch_end(self, logs: Interaction, loss: float, batch_id: int, is_training: bool = True): 
         if is_training:
             self.progress.update(self.train_p, refresh=True, advance=1)
+            self.log_to_wandb({"batch_loss": loss, "batch_id": batch_id}, commit=True)
         else:
             self.progress.update(self.test_p, refresh=True, advance=1)
 
@@ -205,6 +222,12 @@ class CustomProgressBarLogger(Callback):
             self.history['train'][epoch] = od
             row = self.get_row(od)
             self.console.print(row)
+
+        self.trainer = None
+        if self.wandb:
+            wb_dict = {'epoch': epoch}
+            wb_dict.update({f'train/{k}': v for k, v in od.items()})
+            self.log_to_wandb(wb_dict)
 
         self.progress.stop_task(self.train_p)
         self.progress.update(self.train_p, visible=False)
@@ -263,6 +286,15 @@ class CustomProgressBarLogger(Callback):
         self.history[p_key][epoch] = od
         row = self.get_row(od)
         self.console.print(row)
+
+        if self.wandb:
+            wb_dict = {f'epoch': epoch}
+            wb_dict.update({f'{p_key}/{k}': v for k, v in od.items()})
+            self.log_to_wandb(wb_dict)
+
+    def on_train_begin(self, trainer_instance: 'Trainer'):
+        self.trainer = trainer_instance
+        wandb.watch(self.trainer.game, log='all')
 
     def on_train_end(self):
         self.progress.stop()
