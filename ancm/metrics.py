@@ -370,7 +370,7 @@ def compute_redundancy_smb(messages, max_len, vocab_size, channel, error_prob, a
 
     if not isinstance(messages, torch.Tensor):
         messages = torch.nn.utils.rnn.pad_sequence(messages, batch_first=True)
-        messages = torch.cat([messages, torch.zeros_like(messages[:, 0])], dim=-1)
+        messages = torch.cat([messages, torch.zeros_like(messages[:, 0]).unsqueeze(-1)], dim=-1)
 
     if channel == 'erasure' and error_prob > 0.:
         vocab_size += 1

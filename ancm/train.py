@@ -244,7 +244,7 @@ def main(params):
             messages, opts.max_len, opts.vocab_size, opts.channel, opts.error_prob)
         redund_smb_adj = compute_redundancy_smb_adjusted(
             messages, opts.channel, opts.error_prob, alphabet=actual_vocab, erased_symbol=opts.vocab_size)
-        topographic_rho = compute_top_sim(sender_inputs, messages, data_handler.perceptual_dimensions)
+        topographic_rho = compute_top_sim(sender_inputs, messages)
         # posdis = compute_posdis(sender_inputs, messages)
         # bosdis = compute_bosdis(sender_inputs, messages, opts.vocab_size)
         maxrep = compute_max_rep(messages).mean().item()
@@ -327,7 +327,7 @@ def main(params):
                 messages_nn, opts.max_len, opts.vocab_size, None, 0.0)
             redund_smb_adj_nn = compute_redundancy_smb_adjusted(
                 messages_nn, None, 0.0, actual_vocab_nn)
-            top_sim_nn = compute_top_sim(sender_inputs_nn, messages_nn, data_handler.perceptual_dimensions)
+            top_sim_nn = compute_top_sim(sender_inputs_nn, messages_nn)
             # posdis_nn = compute_posdis(sender_inputs_nn, messages_nn)
             # bosdis_nn = compute_bosdis(sender_inputs_nn, messages_nn, opts.vocab_size)
             max_rep_nn = compute_max_rep(messages_nn).mean().item()
