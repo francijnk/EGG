@@ -13,7 +13,7 @@ def extract_label_from_filename(filename):
 
 def load_image_paths_and_labels(data_dir):
     transform = transforms.Compose([
-        transforms.Resize((128, 128)),  # Resize images to a fixed size (optional)
+        transforms.Resize((64, 64)),  # Resize images to a fixed size (optional)
         transforms.ToTensor()          # Convert to tensor
     ])
 
@@ -83,8 +83,8 @@ def reformat(n_distractors, n_samples, seed=42):
 
     # depending on the dimensions of your images
     dim = 3
-    height = 128
-    width = 128
+    height = 64
+    width = 64
 
     train, train_labels = reshape_make_tensor(train_imgs, n_distractors, n_samples, dim, height, width)
     valid, valid_labels = reshape_make_tensor(valid_imgs, n_distractors, n_samples, dim, height, width)

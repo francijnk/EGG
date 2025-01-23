@@ -15,7 +15,6 @@ from datetime import timedelta
 from collections import defaultdict
 
 import torch.utils.data
-import intel_extension_for_pytorch as ipex
 
 import egg.core as core
 from egg.core.util import move_to
