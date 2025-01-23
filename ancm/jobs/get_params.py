@@ -16,8 +16,10 @@ n_epochs = 40
 def get_opts(error_prob, channel, max_len, random_seed):
     if channel:
         _channel = f'{channel}_{error_prob:.2f}'
+        group = channel
     else:
         _channel = 'baseline'
+        group = 'baseline'
     filename = f'{_channel}_{max_len}_{random_seed}'
     opts = [
         f'--error_prob {error_prob}',
@@ -42,7 +44,7 @@ def get_opts(error_prob, channel, max_len, random_seed):
         '--validation_freq 1',
         '--wandb_project cezary_snellius ',
         '--wandb_entity koala-lab',
-        '--wandb_group 01_23',
+        f'--wandb_group {group}',
         f'--wandb_run_id {max_len}_{_channel}_{random_seed}'
         # '--results_folder runs_01_23/'
     ]

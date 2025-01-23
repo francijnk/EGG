@@ -32,13 +32,15 @@ rsync $HPARAMS_FILE $OUTPUT_DIR/job/
 rsync $JOB_FILE $OUTPUT_DIR/job/
 
 # Execute a Python program located in $HOME, that takes an input file and output directory as arguments.
-for i in {1..10}; do
+for i in {0..9}; do
     for ((j=48*i; j<48*(i+1); j++)); do
-        srun --ntasks=1 --exclusive \
-        python -m ancm.train \
-        --data_path $INPUT_FILE \
-        --results_folder $OUTPUT_DIR \
-        $(head -$j $HPARAMS_FILE | tail -1) &
+        if ((j <= 475)); then
+            srun --ntasks=1 --exclusive \
+            python -m ancm.train \
+            --data_path $INPUT_FILE \
+            --results_folder $OUTPUT_DIR \
+            $(head -$j $HPARAMS_FILE | tail -1) &
+        fi
     done
     wait
 done
