@@ -11,6 +11,8 @@ from collections import defaultdict
 
 from typing import List, Optional, Union
 
+from ancm.util import truncate_messages, CustomDataset
+
 
 # Entropy, Mutual information
 def binary_entropy(p: float):
@@ -357,6 +359,29 @@ def maximize_sequence_entropy(max_len, vocab_size, channel=None, error_prob=None
     eos_probs = [optimal_eos_prob.x] + eos_probs
 
     return _sequence_entropy(optimal_eos_prob.x), eos_probs
+
+
+def compute_accuracy2(messages, receiver_inputs, labels, receiver, batch_size):
+    messages = torch.nn.utils.rnn.pad_sequence(messages, batch_first=True)
+    messages, receiver_inputs, labels = truncate_messages(messages, receiver_inputs, labels)
+
+    dataset = CustomDataset(messages, receiver_inputs)
+    dataloader = torch.utils.data.DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        drop_last=True)
+
+    predictions = []
+    for b_messages, b_inputs in dataloader:
+        outputs, _, _ = receiver(b_messages, b_inputs)
+        predictions.append(outputs.reshape((-1, 1)))
+
+    predictions = torch.cat(predictions, dim=0)
+    labels = torch.stack(labels[:len(predictions)])
+
+    return (predictions == labels).float().mean().item()
+
 
 
 def compute_redundancy_smb(messages, max_len, vocab_size, channel, error_prob, alphabet=None, maxiter=1000):
