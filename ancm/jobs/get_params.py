@@ -40,6 +40,10 @@ def get_opts(error_prob, channel, max_len, random_seed):
         '--receiver_cell lstm',
         '--evaluate',
         '--validation_freq 1',
+        '--wandb_project cezary_snellius ',
+        '--wandb_entity koala-lab',
+        '--wandb_group 01_23',
+        f'--wandb_run_id {max_len}_{_channel}_{random_seed}'
         # '--results_folder runs_01_23/'
     ]
     if channel is not None:
@@ -49,13 +53,14 @@ def get_opts(error_prob, channel, max_len, random_seed):
 
 if __name__ == '__main__':
     all_params = []
-    if 0. in error_probs:
-        for max_len in max_lengths:
+    for max_len in max_lengths:
+        # baseline (0 error prob)
+        if 0. in error_probs:
             for rs in random_seeds:
                 params = get_opts(0., None, max_len, rs)
                 all_params.append(' '.join(params))
 
-    for max_len in max_lengths:
+        # nonzero error probs for each channel
         for channel in channels:
             for pr in [p for p in error_probs if p > 0]:
                 for rs in random_seeds:
