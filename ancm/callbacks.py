@@ -80,11 +80,16 @@ class CustomProgressBarLogger(Callback):
         self.filename = opts.filename
         self.step = opts.validation_freq
         self.wandb = opts.wandb_project is not None
+        self.current_step = 0
 
         if self.wandb:
-            group = opts.channel \
-                if opts.channel is not None and opts.error_prob > 0. \
-                else 'baseline'
+            if opts.wandb_group is None:
+                group = opts.channel \
+                    if opts.channel is not None and opts.error_prob > 0. \
+                    else 'baseline'
+            else:
+                group = opts.wandb_group
+
             wandb.init(
                 project=opts.wandb_project,
                 group=group,
@@ -182,7 +187,8 @@ class CustomProgressBarLogger(Callback):
             return val
 
     def log_to_wandb(self, data: Dict[str, Any], **kwargs):
-        wandb.log(data, **kwargs)
+        if self.wandb:
+            wandb.log(data, **kwargs)
 
     def generate_live_table(self, od=None):
         live_table = Table(
@@ -209,8 +215,14 @@ class CustomProgressBarLogger(Callback):
 
     def on_batch_end(self, logs: Interaction, loss: float, batch_id: int, is_training: bool = True): 
         if is_training:
+            self.current_step += 1
             self.progress.update(self.train_p, refresh=True, advance=1)
-            self.log_to_wandb({"batch_loss": loss, "batch_id": batch_id}, commit=True)
+            self.log_to_wandb({
+                "batch_loss": loss,
+                "batch_step": self.current_step,
+                "batch_reinf_sg": torch.mean(logs.aux['reinf_sg']).item(),
+                "batch_baseline": logs.aux['baseline'],
+            }, commit=True)
         else:
             self.progress.update(self.test_p, refresh=True, advance=1)
 
@@ -294,7 +306,8 @@ class CustomProgressBarLogger(Callback):
 
     def on_train_begin(self, trainer_instance: 'Trainer'):
         self.trainer = trainer_instance
-        wandb.watch(self.trainer.game, log='all')
+        if self.wandb:
+            wandb.watch(self.trainer.game, log='all')
 
     def on_train_end(self):
         self.progress.stop()

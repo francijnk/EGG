@@ -1,3 +1,4 @@
+annotated-types==0.7.0
 bayesian-optimization==1.4.3
 certifi==2024.8.30
 charset-normalizer==3.4.0
@@ -9,6 +10,7 @@ cycler==0.12.1
 dataclasses==0.6
 docker-pycreds==0.4.0
 editdistance==0.8.1
+eval_type_backport==0.2.2
 exceptiongroup==1.2.2
 filelock==3.16.1
 fonttools==4.54.1
@@ -49,6 +51,8 @@ platformdirs==4.3.6
 pluggy==1.5.0
 protobuf==5.28.2
 psutil==6.0.0
+pydantic==2.10.5
+pydantic_core==2.27.2
 Pygments==2.18.0
 pyitlib==0.2.3
 pyparsing==3.1.4
@@ -77,5 +81,5 @@ triton==3.0.0
 typing_extensions==4.12.2
 tzdata==2024.2
 urllib3==2.2.3
-wandb==0.18.3
+wandb==0.19.4
 zipp==3.20.2

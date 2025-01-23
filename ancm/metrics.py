@@ -112,7 +112,7 @@ def mutual_info(x: torch.Tensor, y: torch.Tensor):
     H_xy = sequence_entropy(xy)
 
     mi = (H_x + H_y - H_xy).item()
-    mi = max(0, min(1., mi))  # estimated entropy is biased and in come cases could result in negative MI
+    mi = max(0., min(1., mi))  # estimated entropy is biased and in come cases could result in negative MI
     return mi
 
 

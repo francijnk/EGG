@@ -77,6 +77,7 @@ def get_params(params):
     parser.add_argument("--wandb_entity", type=str, default=None, help="WandB project name")
     parser.add_argument("--wandb_project", type=str, default=None, help="WandB project name")
     parser.add_argument("--wandb_run_id", type=str, default=None, help="WandB run id")
+    parser.add_argument("--wandb_group", type=str, default=None, help="WandB project name")
 
     args = core.init(parser, params)
     check_args(args)

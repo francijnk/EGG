@@ -1,6 +1,6 @@
 import sys
 
-random_seeds = [i + 1 for i in range(3)]
+random_seeds = [i + 1 for i in range(5)]
 error_probs = [0.00, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30]
 channels = 'erasure deletion symmetric'.split()
 max_lengths = [2, 3, 4, 5, 8]
@@ -10,7 +10,7 @@ rlr = 1e-3
 length_cost = 0.01
 vocab_size = 10
 hidden_units = 50
-n_epochs = 20
+n_epochs = 40
 
 
 def get_opts(error_prob, channel, max_len, random_seed):
@@ -31,16 +31,16 @@ def get_opts(error_prob, channel, max_len, random_seed):
         f'--random_seed {random_seed}',
         f'--filename {filename}',
         f'--n_epochs {n_epochs}',
-        '--data_path {ancm/data/input_data/visa-4-500.npz}',
-        '--sender_embedding 16',
-        '--receiver_embedding 16',
+        # '--data_path ancm/data/input_data/visa-4-500.npz',
+        '--sender_embedding 10',
+        '--receiver_embedding 10',
         '--sender_entropy_coeff 0.01',
         '--receiver_entropy_coeff 0.001',
         '--sender_cell lstm',
         '--receiver_cell lstm',
         '--evaluate',
         '--validation_freq 1',
-        '--results_folder runs_01_12'
+        # '--results_folder runs_01_23/'
     ]
     if channel is not None:
         opts.append(f'--channel {channel}')

@@ -55,6 +55,60 @@ class SeeingConvNet(nn.Module):
         x = self.conv_layers(x)
         return x
 
+
+class ModMeanBaseline(Baseline):
+    """Running mean baseline; all loss batches have equal importance/weight,
+    hence it is better if they are equally-sized.
+    """
+
+    def __init__(self):
+        super().__init__()
+
+        self.mean_baseline = torch.zeros(1, requires_grad=False)
+        self.n_points = 0.0
+
+    def update(self, loss: torch.Tensor) -> None:
+        self.n_points += 1
+        if self.mean_baseline.device != loss.device:
+            self.mean_baseline = self.mean_baseline.to(loss.device)
+
+        self.mean_baseline += (
+            loss.detach().mean().item() - self.mean_baseline
+        ) / (self.n_points ** 0.5)
+
+    def predict(self, loss: torch.Tensor) -> torch.Tensor:
+        if self.mean_baseline.device != loss.device:
+            self.mean_baseline = self.mean_baseline.to(loss.device)
+        return self.mean_baseline
+
+
+class BoundedMeanBaseline(Baseline):
+    """Running mean baseline; all loss batches have equal importance/weight,
+    hence it is better if they are equally-sized.
+    """
+
+    def __init__(self):
+        super().__init__()
+
+        self.mean_baseline = torch.zeros(1, requires_grad=False)
+        self.n_points = 0.0
+
+    def update(self, loss: torch.Tensor) -> None:
+        if self.n_points < 5000:
+            self.n_points += 1
+        if self.mean_baseline.device != loss.device:
+            self.mean_baseline = self.mean_baseline.to(loss.device)
+
+        self.mean_baseline += (
+            loss.detach().mean().item() - self.mean_baseline
+        ) / self.n_points
+
+    def predict(self, loss: torch.Tensor) -> torch.Tensor:
+        if self.mean_baseline.device != loss.device:
+            self.mean_baseline = self.mean_baseline.to(loss.device)
+        return self.mean_baseline
+
+
 class MovingAverageBaseline(Baseline):
     """Running mean baseline; all loss batches have equal importance/weight,
     hence it is better if they are equally-sized.
@@ -188,7 +242,7 @@ class SenderReceiverRnnReinforce(nn.Module):
         sender_entropy_coeff: float = 0.0,
         receiver_entropy_coeff: float = 0.0,
         device: torch.device = torch.device("cpu"),
-        baseline_type: Baseline = MeanBaseline,
+        baseline_type: Baseline = ModMeanBaseline,
         train_logging_strategy: LoggingStrategy = None,
         test_logging_strategy: LoggingStrategy = None,
         seed: int = 42,
@@ -254,7 +308,7 @@ class CommunicationRnnReinforce(nn.Module):
         error_prob: float = 0.0,
         length_cost: float = 0.0,
         device: torch.device = torch.device('cpu'),
-        baseline_type: Baseline = MeanBaseline,
+        baseline_type: Baseline = ModMeanBaseline,
         train_logging_strategy: LoggingStrategy = None,
         test_logging_strategy: LoggingStrategy = None,
         seed: int = 42,
@@ -347,8 +401,8 @@ class CommunicationRnnReinforce(nn.Module):
         baseline = self.baselines['loss'].predict(loss.detach())
         policy_loss = ((loss.detach() - baseline) * log_prob).mean()
 
-        aux_info['rf'] = loss.detach()
-        aux_info['bs'] = baseline
+        aux_info['reinf_sg'] = loss.detach()
+        aux_info['baseline'] = baseline
 
         optimized_loss = policy_length_loss + policy_loss - weighted_entropy
 
