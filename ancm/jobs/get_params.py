@@ -1,4 +1,5 @@
 import sys
+from uuid import uuid4
 
 random_seeds = [i + 1 for i in range(5)]
 error_probs = [0.00, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30]
@@ -45,7 +46,7 @@ def get_opts(error_prob, channel, max_len, random_seed):
         '--wandb_project cezary_snellius ',
         '--wandb_entity koala-lab',
         f'--wandb_group {group}',
-        f'--wandb_run_id {max_len}_{_channel}_{random_seed}'
+        f'--wandb_run_id {max_len}_{_channel}_{random_seed}_{uuid4()}'
         # '--results_folder runs_01_23/'
     ]
     if channel is not None:
