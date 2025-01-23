@@ -89,7 +89,7 @@ class SenderReinforce(nn.Module):
         if self.image:
             self.vision_module = SeeingConvNet()
             # Update input features for the fully connected layer
-            n_features = 512  # Adjust this based on the output channels of SeeingConvNet
+            n_features = 2048  # Adjust this based on the output channels of SeeingConvNet
 
         self.fc1 = nn.Linear(n_features, n_hidden)
             
@@ -109,7 +109,7 @@ class ReceiverReinforce(nn.Module):
         if self.image:
             self.vision_module = SeeingConvNet()
             # Update input features for the fully connected layer
-            n_features = 512 # Adjust this based on the output channels of SeeingConvNet
+            n_features = 2048 # Adjust this based on the output channels of SeeingConvNet
         self.fc1 = nn.Linear(n_features, linear_units)
         self.logsoft = nn.LogSoftmax(dim=1)
 
