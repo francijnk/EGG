@@ -15,6 +15,7 @@ from datetime import timedelta
 from collections import defaultdict
 
 import torch.utils.data
+import intel_extension_for_pytorch as ipex
 
 import egg.core as core
 from egg.core.util import move_to
@@ -125,9 +126,6 @@ def main(params):
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
 
-    model.to(device)
-    data = data.to(device)
-
     data_handler = DataHandler(opts)
     train_data, validation_data, test_data = data_handler.load_data(opts)
 
@@ -200,7 +198,6 @@ def main(params):
         train_data=train_data,
         validation_data=validation_data,
         callbacks=callbacks)
-    trainer = trainer.to(device)
 
     t_start = time.monotonic()
     if opts.error_prob == 0. or not opts.channel:

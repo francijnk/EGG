@@ -65,7 +65,7 @@ def reshape_make_tensor(img_data, n_distractors, n_samples, dim=3, height=128, w
     return data_reshaped, labels
 
 def get_filename(n_distractors, n_samples, extension=False):
-    filename = f"ancm//data/input_data//img-{n_distractors+1}-{n_samples}" 
+    filename = f"ancm/data/input_data/img-{n_distractors+1}-{n_samples}" 
     if extension:
         filename += '.npz'
     return filename
@@ -74,7 +74,7 @@ def reformat(n_distractors, n_samples, seed=42):
     np.random.seed(seed)
     random.seed(seed)
 
-    data_dir = "ancm\\data\\image_data"  # Path to folder
+    data_dir = "ancm/data/image_data"  # Path to folder
     tensors, labels = load_image_paths_and_labels(data_dir)
 
     # divide 70% for train, 15% test and valid
