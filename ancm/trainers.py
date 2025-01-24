@@ -8,6 +8,7 @@ import pathlib
 from typing import List, Optional
 from tqdm import tqdm
 
+
 try:
     # requires python >= 3.7
     from contextlib import nullcontext

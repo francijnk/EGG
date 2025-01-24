@@ -15,6 +15,8 @@ from datetime import timedelta
 from collections import defaultdict
 
 import torch.utils.data
+import torch.optim as optim
+import torch.optim.lr_scheduler as lr_scheduler
 
 import egg.core as core
 from egg.core.util import move_to
@@ -171,6 +173,7 @@ def main(params):
         seed=opts.random_seed)
     game = game.to(device)
     optimizer = build_optimizer(game, opts)
+    scheduler = lr_scheduler.LinearLR(optimizer, start_factor=1.0, end_factor=0.1, total_iters=5)
 
     callbacks = [
         TrainingMetricsCallback(
@@ -193,7 +196,7 @@ def main(params):
     trainer = Trainer(
         game=game,
         optimizer=optimizer,
-        optimizer_scheduler=None,
+        optimizer_scheduler=scheduler,
         train_data=train_data,
         validation_data=validation_data,
         callbacks=callbacks)
@@ -277,7 +280,7 @@ def main(params):
         output_dict['results']['max_rep'] = maxrep
         output_dict['results']['actual_vocab_size'] = actual_vocab_size
 
-        unique_dict = {}
+        '''unique_dict = {}
         for elem in sender_inputs:
             target = ""
             if elem.dim() == 2:
@@ -286,15 +289,16 @@ def main(params):
                 target += f"{str(int(dim.item()))}-"
             target = target[:-1]
             if target not in unique_dict:
-                unique_dict[target] = True
+                unique_dict[target] = True'''
 
-        mi_result = compute_mi_input_msgs(sender_inputs, messages)
-        output_dict['results'].update(mi_result)
-        entropy_msg = f"{mi_result['entropy_msg']:.3f}"
-        entropy_inp = f"{mi_result['entropy_inp']:.3f}"
-        mi = f"{mi_result['mi_msg_inp']:.3f}"
-        entropy_inp_dim = f"{[round(x, 3) for x in mi_result['entropy_inp_dim']]}"
-        mi_dim = f'{[round(x, 3) for x in mi_result["mi_msg_inp_dim"]]}'
+        
+        #mi_result = compute_mi_input_msgs(sender_inputs, messages)
+        #output_dict['results'].update(mi_result)
+        #entropy_msg = f"{mi_result['entropy_msg']:.3f}"
+        #entropy_inp = f"{mi_result['entropy_inp']:.3f}"
+        #mi = f"{mi_result['mi_msg_inp']:.3f}"
+        #entropy_inp_dim = f"{[round(x, 3) for x in mi_result['entropy_inp_dim']]}"
+        #mi_dim = f'{[round(x, 3) for x in mi_result["mi_msg_inp_dim"]]}'
         t_rho = f'{topographic_rho:.3f}'
         # p_dis = f'{posdis:.3f}'
         # b_dis = f'{bosdis:.3f}'
@@ -364,12 +368,12 @@ def main(params):
 
             acc_str = f'{accuracy:.2f} / {accuracy_nn:.2f}'
             acc2_str = f'{accuracy2:.2f} / {accuracy2_nn:.2f}'
-            mi_result_nn = compute_mi_input_msgs(sender_inputs_nn, messages_nn)
-            output_dict['results-no-noise'].update(mi_result_nn)
-            entropy_msg += f" / {mi_result_nn['entropy_msg']:.3f}"
-            entropy_inp += f" / {mi_result_nn['entropy_inp']:.3f}"
-            mi += f" / {mi_result_nn['mi_msg_inp']:.3f}"
-            mi_dim_nn = f"{[round(x, 3) for x in mi_result_nn['mi_msg_inp_dim']]}"
+            #mi_result_nn = compute_mi_input_msgs(sender_inputs_nn, messages_nn)
+            #output_dict['results-no-noise'].update(mi_result_nn)
+            #entropy_msg += f" / {mi_result_nn['entropy_msg']:.3f}"
+            #entropy_inp += f" / {mi_result_nn['entropy_inp']:.3f}"
+            #mi += f" / {mi_result_nn['mi_msg_inp']:.3f}"
+            #mi_dim_nn = f"{[round(x, 3) for x in mi_result_nn['mi_msg_inp_dim']]}"
             t_rho += f" / {top_sim_nn:.3f}"
             # p_dis += f'/ {posdis_nn:.3f}'
             # b_dis += f'/ {bosdis_nn:.3f}'
@@ -460,12 +464,12 @@ def main(params):
 
             if opts.error_prob == 0 or opts.channel is None:
                 print("|")
-                print("|" + "Unique target objects:".rjust(align), len(unique_dict.keys()))
+                #print("|" + "Unique target objects:".rjust(align), len(unique_dict.keys()))
                 print("|" + "Lexicon size:".rjust(align), lexicon_size)
                 print("|" + "Vocab size:".rjust(align), f"{actual_vocab_size}/{opts.vocab_size}")
             else:
                 print("|")
-                print("|" + "Unique target objects:".rjust(align), len(unique_dict.keys()))
+                #print("|" + "Unique target objects:".rjust(align), len(unique_dict.keys()))
                 print("|" + "Lexicon size:".rjust(align), lexicon_size)
 
                 if receiver_vocab_size != opts.vocab_size:
@@ -473,7 +477,7 @@ def main(params):
                 else:
                     print("|" + "Vocab size:".rjust(align), f"{actual_vocab_size}/{opts.vocab_size}")
 
-            output_dict['results']['unique_targets'] = len(unique_dict.keys())
+            #output_dict['results']['unique_targets'] = len(unique_dict.keys())
             output_dict['results']['unique_msg'] = len(msg_dict.keys())
             if opts.error_prob != 0:
                 output_dict['results']['unique_msg_no_noise'] = len(msg_dict_nn.keys())
