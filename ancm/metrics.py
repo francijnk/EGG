@@ -9,7 +9,9 @@ from Levenshtein import distance  # , ratio
 from scipy.stats import pearsonr, spearmanr
 from collections import defaultdict
 
-from typing import List, Optional, Union
+from typing import List, Optional, Union, Iterable
+
+from ancm.util import truncate_messages, CustomDataset
 
 
 # Entropy, Mutual information
@@ -43,10 +45,10 @@ def tensor_entropy(tensor: torch.Tensor):
 
 
 def sequence_entropy(
-        sequences: Union[torch.Tensor, List[torch.Tensor]],
+        sequences: Iterable[torch.Tensor],  # Union[torch.Tensor, List[torch.Tensor]],
         vocab_size: Optional[int] = None,
         length: Optional[int] = None,
-        alphabet: Optional[List[int]] = None):
+        alphabet: Optional[List[float]] = None):
     """
     Computes entropy of the sequences, where each symbol is treated as a
     distinct random variable. The entropy is approximated from the sample of
@@ -187,13 +189,13 @@ def compute_conceptual_alignment(
 
 
 # Redundancy
-def compute_max_rep(messages: Union[torch.Tensor, List[torch.Tensor]]):
+def compute_max_rep(messages: Iterable[torch.Tensor]):  # ,  # Union[torch.Tensor, List[torch.Tensor]]):
     """
     Computes the number of occurrences of the most frequent symbol in each
     message (0 for messages that consist of EOS symbols only).
     """
 
-    if isinstance(messages, list):
+    if not isinstance(messages, torch.Tensor):
         messages = torch.nn.utils.rnn.pad_sequence(messages, batch_first=True)
 
     all_symbols = torch.unique(torch.flatten(messages), dim=0)
@@ -217,11 +219,11 @@ def compute_max_rep(messages: Union[torch.Tensor, List[torch.Tensor]]):
     return output
 
 
-def compute_redundancy_msg(messages: Union[torch.Tensor, List[torch.Tensor]]):
+def compute_redundancy_msg(messages: Iterable[torch.Tensor]):  # Union[torch.Tensor, List[torch.Tensor]]):
     """
     Computes redundancy at the message level.
     """
-    if isinstance(messages, list):
+    if not isinstance(messages, torch.Tensor):
         messages = torch.nn.utils.rnn.pad_sequence(messages, batch_first=True)
     H = tensor_entropy(messages)
     H_max = math.log(len(messages), 2)
@@ -359,7 +361,43 @@ def maximize_sequence_entropy(max_len, vocab_size, channel=None, error_prob=None
     return _sequence_entropy(optimal_eos_prob.x), eos_probs
 
 
-def compute_redundancy_smb(messages, max_len, vocab_size, channel, error_prob, alphabet=None, maxiter=1000):
+def compute_accuracy2(
+        messages: Iterable[torch.Tensor],
+        receiver_inputs: Iterable[torch.Tensor],
+        labels: Iterable[torch.Tensor],
+        receiver: torch.nn.Module,
+        batch_size: int):
+
+    if not isinstance(messages, torch.Tensor):
+        messages = torch.nn.utils.rnn.pad_sequence(messages, batch_first=True)
+    messages, receiver_inputs, labels = truncate_messages(messages, receiver_inputs, labels)
+
+    dataset = CustomDataset(messages, receiver_inputs)
+    dataloader = torch.utils.data.DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        drop_last=True)
+
+    predictions = []
+    for b_messages, b_inputs in dataloader:
+        outputs, _, _ = receiver(b_messages, b_inputs)
+        predictions.append(outputs.reshape(-1, 1))
+
+    predictions = torch.cat(predictions, dim=0)
+    labels = torch.stack(labels)[:len(predictions)]
+
+    return (predictions == labels).float().mean().item()
+
+
+def compute_redundancy_smb(
+        messages: Iterable[torch.Tensor],
+        max_len: int,
+        vocab_size: int,
+        channel: Optional[str],
+        error_prob: float,
+        alphabet: Optional[Iterable[float]] = None,
+        maxiter: int = 1000):
     """
     Computes a redundancy based on the symbol-level message entropy.
     The value returned is multiplied by a factor dependent on the maximum
@@ -388,7 +426,13 @@ def compute_redundancy_smb(messages, max_len, vocab_size, channel, error_prob, a
     return 1 - H / H_max
 
 
-def compute_redundancy_smb_adjusted(messages, channel, error_prob, alphabet, erased_symbol=None, maxiter=1000):
+def compute_redundancy_smb_adjusted(
+        messages: Iterable[torch.Tensor],
+        channel: Optional[str],
+        error_prob: float,
+        alphabet: Optional[Iterable[float]],
+        erased_symbol: Optional[float] = None,
+        maxiter: int = 1000):
     """
     Computes a redundancy based on the symbol-level message entropy, adjusted
     not to depend on message length.
@@ -457,14 +501,14 @@ def compute_redundancy_smb_adjusted(messages, channel, error_prob, alphabet, era
 
 # Compositionality
 def compute_top_sim(
-        sender_inputs: Union[torch.Tensor, List[torch.Tensor]],
-        messages: Union[torch.Tensor, List[torch.Tensor]]):
+        sender_inputs: Iterable[torch.Tensor],  # Union[torch.Tensor, List[torch.Tensor]],
+        messages: Iterable[torch.Tensor]):  #,  # Union[torch.Tensor, List[torch.Tensor]]):
     """
     Computes topographic rho.
     """
 
     sender_inputs = torch.stack(sender_inputs) \
-        if isinstance(sender_inputs, list) else sender_inputs
+        if not isinstance(sender_inputs, torch.Tensor) else sender_inputs
 
     # handling the compare variant
     if sender_inputs.dim() == 4:
@@ -497,16 +541,16 @@ def compute_top_sim(
 
 
 def compute_posdis(
-        sender_inputs: Union[torch.Tensor, List[torch.Tensor]],
-        messages: Union[torch.Tensor, List[torch.Tensor]]):
+        sender_inputs: Iterable[torch.Tensor],  # Union[torch.Tensor, List[torch.Tensor]],
+        messages: Iterable[torch.Tensor]):  # ,  # Union[torch.Tensor, List[torch.Tensor]]):
     """
     Computes PosDis.
     """
-    if isinstance(messages, list):
+    if not isinstance(messages, torch.Tensor):
         messages = torch.nn.utils.rnn.pad_sequence(messages, batch_first=True)
 
     attributes = torch.stack(sender_inputs) \
-        if isinstance(sender_inputs, list) else sender_inputs
+        if not isinstance(sender_inputs, torch.Tensor) else sender_inputs
 
     gaps = torch.zeros(messages.size(1))
     non_constant_positions = 0.0
@@ -532,9 +576,9 @@ def compute_posdis(
 
 
 def histogram(
-        messages: Union[torch.Tensor, List[torch.Tensor]],
+        messages: Iterable[torch.Tensor],  # Union[torch.Tensor, List[torch.Tensor]],
         vocab_size: int):
-    if isinstance(messages, list):
+    if not isinstance(messages, torch.Tensor):
         messages = torch.nn.utils.rnn.pad_sequence(messages, batch_first=True)
 
     # Handle messages with added noise
@@ -554,8 +598,8 @@ def histogram(
 
 
 def compute_bosdis(
-        sender_inputs: Union[torch.Tensor, List[torch.Tensor]],
-        messages: Union[torch.Tensor, List[torch.Tensor]],
+        sender_inputs: Iterable[torch.Tensor],  # Union[torch.Tensor, List[torch.Tensor]],
+        messages: Iterable[torch.Tensor],  # Union[torch.Tensor, List[torch.Tensor]],
         vocab_size: int):
     """
     Computes BosDis.

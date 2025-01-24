@@ -35,6 +35,7 @@ from ancm.metrics import (
     compute_redundancy_msg,
     compute_redundancy_smb,
     compute_redundancy_smb_adjusted,
+    compute_accuracy2,
     compute_top_sim,
     # compute_posdis,
     # compute_bosdis,
@@ -207,24 +208,8 @@ def main(params):
                 variable_length=True, max_len=opts.max_len, vocab_size=receiver_vocab_size,
                 device=device)
 
-        padded_messages = torch.nn.utils.rnn.pad_sequence(messages, batch_first=True)
-
-        # to get new additional accuracy for truncated messages (where one symbol is removed)
-        new_messages, new_receiver_inputs, new_labels = truncate_messages(
-            padded_messages, receiver_inputs, labels)
-
-        dataset = CustomDataset(new_messages, new_receiver_inputs)
-        dataloader = torch.utils.data.DataLoader(dataset, batch_size=opts.batch_size, shuffle=False)
-
-        predictions = []
-        for b_messages, b_inputs in dataloader:
-            outputs = receiver(b_messages, b_inputs)
-            predictions.extend(outputs[0])
-
-        predictions = torch.Tensor(predictions)
-        new_labels = torch.Tensor((new_labels))
-        compared = torch.eq(predictions, new_labels)
-        accuracy2 = compared.float().mean().item()
+        accuracy2 = compute_accuracy2(
+            messages, receiver_inputs, labels, receiver, opts.batch_size)
 
         actual_vocab = set(int(s) for m in messages for s in m.tolist())
         actual_vocab_size = len(actual_vocab)
@@ -295,21 +280,9 @@ def main(params):
                     variable_length=True, max_len=opts.max_len,
                     vocab_size=opts.vocab_size, device=device)
 
-            padded_messages_nn = torch.nn.utils.rnn.pad_sequence(messages_nn, batch_first=True)
-
-            # to get new additional accuracy for truncated messages (where one symbol is removed)
-            new_messages_nn, new_receiver_inputs_nn, new_labels_nn = truncate_messages(
-                padded_messages_nn, receiver_inputs_nn, labels_nn)
-
-            predictions_nn = []
-            for b_messages, b_inputs in dataloader:
-                outputs = receiver(b_messages, b_inputs)
-                predictions_nn.extend(outputs[0])
-
-            predictions_nn = torch.Tensor(predictions_nn)
-            new_labels_nn = torch.Tensor((new_labels_nn))
-            compared_nn = torch.eq(predictions_nn, new_labels_nn)
-            accuracy2_nn = compared_nn.float().mean().item()
+            accuracy2_nn = compute_accuracy2(
+                messages_nn, receiver_inputs_nn, labels_nn,
+                receiver, opts.batch_size)
 
             receiver_outputs_nn = move_to(receiver_outputs_nn, device)
             receiver_outputs_nn = torch.stack(receiver_outputs_nn)

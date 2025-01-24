@@ -23,7 +23,7 @@ def get_opts(error_prob, channel, max_len, random_seed):
         group = 'baseline'
     filename = f'{_channel}_{max_len}_{random_seed}'
     opts = [
-        f'--error_prob {error_prob}',
+        f'--error_prob {error_prob:.2f}',
         f'--max_len {max_len}',
         f'--vocab_size {vocab_size}',
         f'--sender_lr {slr}',
