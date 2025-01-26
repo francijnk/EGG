@@ -168,7 +168,7 @@ class CustomProgressBarLogger(Callback):
                 *[self.format_metric_val(v) for k, v in od.items()
                   if k not in self.hide_cols],
                 style=self.style[od['phase']])
-        return row
+        #return row
 
     @staticmethod
     def format_metric_val(val):
@@ -204,8 +204,8 @@ class CustomProgressBarLogger(Callback):
             n_epochs=self.n_epochs,
             mode="Train",
         )
-        self.progress.start_task(self.train_p)
-        self.progress.update(self.train_p, visible=True)
+        #self.progress.start_task(self.train_p)
+        #self.progress.update(self.train_p, visible=True)
 
     def on_batch_end(self, logs: Interaction, loss: float, batch_id: int, is_training: bool = True): 
         if is_training:

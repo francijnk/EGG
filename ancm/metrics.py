@@ -207,7 +207,9 @@ def compute_max_rep(messages: Union[torch.Tensor, List[torch.Tensor]]):
     all_symbols = torch.unique(torch.flatten(messages), dim=0)
     non_eos_symbols = all_symbols[all_symbols != 0]
 
+    messages = messages.cpu()
     output = torch.zeros(messages.size(0))
+    output = output.cpu()
     for smb in non_eos_symbols:
         smb_tensor = smb.expand(messages.size(1))
         smb_tensor = smb_tensor.t().expand(*messages.size())
