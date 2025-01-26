@@ -11,6 +11,7 @@ from tqdm import tqdm
 from ancm.data.obverter.render import (
     colors,
     object_types,
+    render_scene,
     render_scenes,
     get_object_fname,
 )
@@ -31,15 +32,43 @@ def parse_args():
     return args
 
 
-def load_image(color, obj_type, resolution, idx=None, n_img=None):
+def load_image(color, shape, location=None, idx=None, resolution=None):
     transform = transforms.Compose([
         transforms.Resize((resolution, resolution)),
         transforms.ToTensor(),
     ])
     assets_dir = os.path.join(current_dir, 'assets')
-    fname = get_object_fname(color, obj_type, idx, n_img)
-    color, obj_type, _, xpos, ypos, rotation = \
-        fname.split('.')[0].split('_')
+
+    fname = get_object_fname(color, shape, location, idx)
+    if fname is not None:
+        color, obj_type, _, xpos, ypos, rotation = \
+            fname.split('.')[0].split('_')
+    else:
+        idx = 0
+        while get_object_fname(color, shape, idx=idx) is not None:
+            idx += 1
+        rotation = random.uniform(0, 360)
+        bounds = {
+            -2: (-3., -1.8),
+            -1: (-1.8, -0.6),
+            0: (-0.6, 0.6),
+            1: (0.6, 1.8),
+            2: (1.8, 3.)
+        }
+        x, y = bounds[location[0]], bounds[location[1]]
+        _location = [
+            random.uniform(x[0], x[1]),
+            random.uniform(y[0], y[1]),
+        ]
+        print(
+            'Rendering a missing scene...'
+            f'({color}, {shape}, {location}, {rotation})'
+        )
+        render_scene(idx, shape, color, _location, rotation, resolution)
+
+        fname = get_object_fname(color, shape, location, None)
+        color, obj_type, _, xpos, ypos, rotation = \
+            fname.split('.')[0].split('_')
 
     image = Image.open(os.path.join(assets_dir, fname)).convert("RGB")
     image = transform(image)
@@ -77,15 +106,16 @@ def pick_random_shape(exclude=None):
 def export_input_data(n_distractors, n_samples, n_img, resolution):
     sample_sets, labels, attributes = [], [], defaultdict(list)
 
-    n_same_shape = int(0.15 * n_samples)
+    n_same_shape = int(0.1 * n_samples)
     n_same_color = int(0.1 * n_samples)
+    n_same_location = int(0.2 * n_samples)
 
     for shape in tqdm(object_types):
         for color in colors:
             for i in range(n_samples):
                 image_idx = i % n_img
                 target_image, (color, shape, xpos, ypos, rotation) = \
-                    load_image(color, shape, resolution, image_idx)
+                    load_image(color, shape, None, image_idx, resolution)
 
                 target_pos = np.random.randint(0, n_distractors + 1)
                 distractor_pos = [i for i in range(n_distractors + 1) if i != target_pos]
@@ -101,23 +131,29 @@ def export_input_data(n_distractors, n_samples, n_img, resolution):
                         exclude = [item[1] for item in used_combinations]
                         distr_shape = shape
                         distr_color = pick_random_color(exclude)
-                    elif i - n_same_shape < n_same_color:
+                        distr_location = None
+                    elif i < n_same_color + n_same_shape:
                         # same color
                         exclude = [item[0] for item in used_combinations]
                         distr_color = color
                         distr_shape = pick_random_shape(exclude)
+                        distr_location = None
                     else:
-                        # random choice
                         distr_shape = pick_random_shape()
                         exclude = [
                             item[1] for item in used_combinations
                             if item[0] == distr_shape]
                         distr_color = pick_random_color(exclude=color)
+                        if i < n_same_color + n_same_shape + n_same_location:
+                            distr_location = (xpos, ypos)  # same location
+                        else:
+                            distr_location = None  # random choice
+
 
                     used_combinations.append((distr_shape, distr_color))
-
                     distr_image, (_, _, distr_xpos, distr_ypos, distr_rot) = \
-                        load_image(distr_color, distr_shape, resolution, image_idx)
+                        load_image(distr_color, distr_shape, distr_location,
+                                   None, resolution)
                     sample_set[0, distractor_pos[j]] = distr_image
 
                     attributes[f'distr_{j}_color'].append(distr_color)
