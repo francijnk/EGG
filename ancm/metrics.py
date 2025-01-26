@@ -207,19 +207,16 @@ def compute_max_rep(messages: Union[torch.Tensor, List[torch.Tensor]]):
     all_symbols = torch.unique(torch.flatten(messages), dim=0)
     non_eos_symbols = all_symbols[all_symbols != 0]
 
-    messages = messages.cpu()
     output = torch.zeros(messages.size(0))
-    output = output.cpu()
+
     for smb in non_eos_symbols:
         smb_tensor = smb.expand(messages.size(1))
         smb_tensor = smb_tensor.t().expand(*messages.size())
-        smb_tensor = smb_tensor.cpu()
         match = messages.eq(smb_tensor).to(torch.int)
         for i in range(0, messages.size(1) - 1):
             # search for a repeating subsequence of length i + 1
             matching_msg = match.max(dim=1).values.to(torch.bool)
             length = torch.where(matching_msg, i + 1, 0)
-            length - length.cpu()
             if torch.all(length == 0):  # if no message has any matches, continue
                 break
             output = torch.where(length > output, length, output)

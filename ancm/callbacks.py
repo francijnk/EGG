@@ -204,8 +204,8 @@ class CustomProgressBarLogger(Callback):
             n_epochs=self.n_epochs,
             mode="Train",
         )
-        #self.progress.start_task(self.train_p)
-        #self.progress.update(self.train_p, visible=True)
+        self.progress.start_task(self.train_p)
+        self.progress.update(self.train_p, visible=True)
 
     def on_batch_end(self, logs: Interaction, loss: float, batch_id: int, is_training: bool = True): 
         if is_training:
