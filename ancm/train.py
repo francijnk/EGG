@@ -427,10 +427,9 @@ def main(params):
                 if opts.images:
                     sender_input = sender_input.flatten()
                     receiver_input = receiver_input.flatten()
-                    candidate_vex = [','.join([str(x) for x in receiver_input.tolist()])
-                                 for candidate in receiver_input.tolist()]
+                    candidate_vex = ','.join([str(x) for x in receiver_input.tolist()])
                 else:
-                    candidate_vex = [','.join([str(x) for x in receiver_input.tolist()])
+                    candidate_vex = [','.join([str(x) for x in candidate.tolist()])
                                  for candidate in receiver_input.tolist()]
         
                 target_vec = ','.join([str((x))for x in sender_input.tolist()])
@@ -460,10 +459,9 @@ def main(params):
                     if opts.images:
                         sender_input = sender_input.flatten()
                         receiver_input = receiver_input.flatten()
-                        candidate_vex = [','.join([str(x) for x in receiver_input.tolist()])
-                                    for candidate in receiver_input.tolist()]
+                        candidate_vex = ','.join([str(x) for x in receiver_input.tolist()])
                     else:
-                        candidate_vex = [','.join([str(x) for x in receiver_input.tolist()])
+                        candidate_vex = [','.join([str(x) for x in candidate.tolist()])
                                     for candidate in receiver_input.tolist()]
             
                     target_vec = ','.join([str((x))for x in sender_input.tolist()])
