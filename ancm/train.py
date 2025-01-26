@@ -173,7 +173,7 @@ def main(params):
         seed=opts.random_seed)
     game = game.to(device)
     optimizer = build_optimizer(game, opts)
-    #scheduler = lr_scheduler.LinearLR(optimizer, start_factor=1.0, end_factor=0.3, total_iters=10)
+    scheduler = lr_scheduler.LinearLR(optimizer, start_factor=1.0, end_factor=0.1, total_iters=10)
 
     callbacks = [
         TrainingMetricsCallback(
@@ -196,7 +196,7 @@ def main(params):
     trainer = Trainer(
         game=game,
         optimizer=optimizer,
-        optimizer_scheduler=None,
+        optimizer_scheduler=scheduler,
         train_data=train_data,
         validation_data=validation_data,
         callbacks=callbacks)
