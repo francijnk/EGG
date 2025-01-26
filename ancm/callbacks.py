@@ -216,8 +216,8 @@ class CustomProgressBarLogger(Callback):
 
     def on_epoch_end(self, loss: float, logs: Interaction, epoch: int):
         od = self.build_od(logs, loss, epoch, 'train')
-        if epoch == self.step or self.step == 1:
-            self.live.update(self.generate_live_table(od))
+        #if epoch == self.step or self.step == 1:
+            #self.live.update(self.generate_live_table(od))
         if epoch % self.step == 0:
             self.history['train'][epoch] = od
             row = self.get_row(od)

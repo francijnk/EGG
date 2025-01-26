@@ -219,6 +219,7 @@ def compute_max_rep(messages: Union[torch.Tensor, List[torch.Tensor]]):
             # search for a repeating subsequence of length i + 1
             matching_msg = match.max(dim=1).values.to(torch.bool)
             length = torch.where(matching_msg, i + 1, 0)
+            length - length.cpu()
             if torch.all(length == 0):  # if no message has any matches, continue
                 break
             output = torch.where(length > output, length, output)
