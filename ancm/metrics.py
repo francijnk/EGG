@@ -204,6 +204,7 @@ def compute_max_rep(messages: Union[torch.Tensor, List[torch.Tensor]]):
     if isinstance(messages, list):
         messages = torch.nn.utils.rnn.pad_sequence(messages, batch_first=True)
 
+    messages = messages.cpu()
     all_symbols = torch.unique(torch.flatten(messages), dim=0)
     non_eos_symbols = all_symbols[all_symbols != 0]
 
