@@ -446,7 +446,8 @@ def compute_redundancy_smb_adjusted(messages, channel, error_prob, alphabet, era
         _messages = messages[(lengths == i), ...]
         if _messages.size(0) == 0:
             continue
-
+        
+        _messages = _messages.cpu()
         ent_msg = sequence_entropy(_messages, vocab_size, i, alphabet)
 
         if channel == 'erasure' and error_prob > 0.:

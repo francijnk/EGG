@@ -221,7 +221,7 @@ class CustomProgressBarLogger(Callback):
         if epoch % self.step == 0:
             self.history['train'][epoch] = od
             row = self.get_row(od)
-            self.console.print(row)
+            #self.console.print(row)
 
         self.trainer = None
         if self.wandb:
@@ -285,7 +285,7 @@ class CustomProgressBarLogger(Callback):
         od = self.build_od(logs, loss, epoch, phase)
         self.history[p_key][epoch] = od
         row = self.get_row(od)
-        self.console.print(row)
+        #self.console.print(row)
 
         if self.wandb:
             wb_dict = {f'epoch': epoch}
