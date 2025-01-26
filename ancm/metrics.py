@@ -485,6 +485,7 @@ def compute_top_sim(
         [s.int().item() for s in msg if s > 0] + [0]
         for msg in messages]
 
+    sender_input = sender_inputs.cpu()
     # pairwise cosine similarity between object vectors
     cos_sims = cosine_similarity(sender_inputs)
 
