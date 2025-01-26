@@ -424,10 +424,19 @@ def main(params):
                     in zip(
                         sender_inputs, messages, receiver_inputs,
                         receiver_outputs, labels):
-                target_vec = ','.join([str(int(x)) for x in sender_input.tolist()])
-                message = ','.join([str(int(x)) for x in message.tolist()])
-                candidate_vex = [','.join([str(int(x)) for x in candidate])
+                if opts.images:
+                    sender_input = sender_input.flatten()
+                    receiver_input = receiver_input.flatten()
+                    candidate_vex = [','.join([str(x) for x in receiver_input.tolist()])
                                  for candidate in receiver_input.tolist()]
+                else:
+                    candidate_vex = [','.join([str(x) for x in receiver_input.tolist()])
+                                 for candidate in receiver_input.tolist()]
+        
+                target_vec = ','.join([str((x))for x in sender_input.tolist()])
+                
+                message = ','.join([str(int(x)) for x in message.tolist()])
+                
                 message_log = {
                     'target_vec': target_vec,
                     'candidate_vex': candidate_vex,
@@ -448,9 +457,17 @@ def main(params):
                         in zip(
                             sender_inputs_nn, messages_nn, receiver_inputs_nn,
                             receiver_outputs_nn, labels_nn):
-                    target_vec = ','.join([str(int(x)) for x in sender_input.tolist()])
-                    candidate_vex = [','.join([str(int(c)) for c in candidate])
-                                     for candidate in receiver_input.tolist()]
+                    if opts.images:
+                        sender_input = sender_input.flatten()
+                        receiver_input = receiver_input.flatten()
+                        candidate_vex = [','.join([str(x) for x in receiver_input.tolist()])
+                                    for candidate in receiver_input.tolist()]
+                    else:
+                        candidate_vex = [','.join([str(x) for x in receiver_input.tolist()])
+                                    for candidate in receiver_input.tolist()]
+            
+                    target_vec = ','.join([str((x))for x in sender_input.tolist()])
+                    
                     message = ','.join([str(int(x)) for x in message.tolist()])
 
                     m_key = f'{target_vec}#' + ';'.join(candidate_vex)
