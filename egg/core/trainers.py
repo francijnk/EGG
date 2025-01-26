@@ -6,7 +6,6 @@
 import os
 import pathlib
 from typing import List, Optional
-from tqdm import tqdm
 
 try:
     # requires python >= 3.7
@@ -267,14 +266,7 @@ class Trainer:
         for callback in self.callbacks:
             callback.on_train_begin(self)
 
-        def wrap_tqdm(fn, n):
-            opts = get_opts()
-            if opts.tqdm:
-                return tqdm(fn, total=n)
-            else:
-                return fn
-
-        for epoch in wrap_tqdm(range(self.start_epoch, n_epochs), total=n_epochs):
+        for epoch in range(self.start_epoch, n_epochs):
             for callback in self.callbacks:
                 callback.on_epoch_begin(epoch + 1)
 

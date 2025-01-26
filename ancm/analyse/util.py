@@ -22,6 +22,7 @@ def parse_fname(fname):
 
 def load_data(input_dir):
 
+    data_train = defaultdict(list)
     data_val = defaultdict(list)
     data_test = defaultdict(list)
 
@@ -31,6 +32,7 @@ def load_data(input_dir):
             channel, error_prob, max_len, seed = parse_fname(fname)
             df = pd.read_csv(fpath)
 
+            df_train = df[df.phase == 'train']
             if error_prob != 0.:
                 df_noise = df[df.phase == 'val']
                 df_no_noise = df[df.phase == 'val (nn)']
@@ -48,6 +50,7 @@ def load_data(input_dir):
 
             data_val[(max_len, channel, error_prob)].append(df_noise)
             data_val[(max_len, channel, error_prob)].append(df_no_noise)
+            data_train[(max_len, channel, error_prob)].append(df_train)
 
         elif fname.endswith('json'):
             channel, error_prob, max_len, seed = parse_fname(fname)
@@ -64,13 +67,13 @@ def load_data(input_dir):
             data_test['accuracy2'].append(fdata['results']['accuracy2'])
             data_test['redundancy_message'].append(fdata['results']['redundancy_msg'])
             data_test['redundancy_symbol'].append(fdata['results']['redundancy_smb'])
-            data_test['redundancy_symbol_adj1'].append(fdata['results']['redundancy_smb_adj'])
-            data_test['redundancy_symbol_adj2'].append(fdata['results']['redundancy_smb_adj2'])
+            data_test['redundancy_symbol_adj'].append(fdata['results']['redundancy_smb_adj'])
+            # data_test['redundancy_symbol_adj2'].append(fdata['results']['redundancy_smb_adj2'])
             data_test['max_rep'].append(fdata['results']['max_rep'])
-            data_test['embedding_alignment'].append(fdata['results']['embedding_alignment'])
+            # data_test['embedding_alignment'].append(fdata['results']['embedding_alignment'])
             data_test['topographic_rho'].append(fdata['results']['topographic_rho'])
-            data_test['pos_dis'].append(fdata['results']['pos_dis'])
-            data_test['bos_dis'].append(fdata['results']['bos_dis'])
+            # data_test['pos_dis'].append(fdata['results']['pos_dis'])
+            # data_test['bos_dis'].append(fdata['results']['bos_dis'])
             data_test['unique_targets'].append(fdata['results']['unique_targets'])
             data_test['unique_messages'].append(fdata['results']['unique_msg'])
             avg_len = np.mean([m['message'].count(',')  for m in fdata['messages']]).item()
@@ -85,13 +88,13 @@ def load_data(input_dir):
             data_test['accuracy2'].append(fdata[r_nn]['accuracy2'])
             data_test['redundancy_message'].append(fdata[r_nn]['redundancy_msg'])
             data_test['redundancy_symbol'].append(fdata[r_nn]['redundancy_smb'])
-            data_test['redundancy_symbol_adj1'].append(fdata[r_nn]['redundancy_smb_adj'])
-            data_test['redundancy_symbol_adj2'].append(fdata[r_nn]['redundancy_smb_adj2'])
+            data_test['redundancy_symbol_adj'].append(fdata[r_nn]['redundancy_smb_adj'])
+            # data_test['redundancy_symbol_adj2'].append(fdata[r_nn]['redundancy_smb_adj2'])
             data_test['max_rep'].append(fdata[r_nn]['max_rep'])
-            data_test['embedding_alignment'].append(fdata[r_nn]['embedding_alignment'])
+            # data_test['embedding_alignment'].append(fdata[r_nn]['embedding_alignment'])
             data_test['topographic_rho'].append(fdata[r_nn]['topographic_rho'])
-            data_test['pos_dis'].append(fdata[r_nn]['pos_dis'])
-            data_test['bos_dis'].append(fdata[r_nn]['bos_dis'])
+            # data_test['pos_dis'].append(fdata[r_nn]['pos_dis'])
+            # data_test['bos_dis'].append(fdata[r_nn]['bos_dis'])
             data_test['unique_targets'].append(fdata['results']['unique_targets'])
             if 'unique_msg_no_noise' in fdata['results']:
                 data_test['unique_messages'].append(fdata['results']['unique_msg_no_noise'])
@@ -114,14 +117,21 @@ def load_data(input_dir):
         for c in channels:
             new_key = (max_len, c, error_prob)
             data_val[new_key] = data_val[key]
+            data_train[new_key] = data_train[key]
         del data_val[key]
+        del data_train[key]
 
     for max_len, channel, error_prob in data_val:
         for df in data_val[(max_len, channel, error_prob)]:
             df['max_len'] = max_len
             df['channel'] = channel
             df['error_prob'] = error_prob
+        for df in data_train[(max_len, channel, error_prob)]:
+            df['max_len'] = max_len
+            df['channel'] = channel
+            df['error_prob'] = error_prob
     data_val = pd.concat([df for key in data_val for df in data_val[key]], ignore_index=True)
+    data_train = pd.concat([df for key in data_val for df in data_val[key]], ignore_index=True)
 
     # data_test: export to DataFrame and handle baseline results
     data_test = pd.DataFrame(data_test)
@@ -137,7 +147,16 @@ def load_data(input_dir):
         data_test[data_test['channel'] == 'baseline'].index)
     data_test = pd.concat([baseline_df, data_test], ignore_index=True)
 
-    return data_test, data_val
+    return data_train, data_val, data_test
+
+
+def get_long_train_data(data_train, metrics):
+    data_long = pd.melt(
+        data_val,
+        id_vars='epoch max_len channel error_prob'.split(),
+        value_vars=metrics, var_name='metric', value_name='value', ignore_index=True)
+    # data_long.dropna(inplace=True)
+    return data_long
 
 
 def get_long_val_data(data_val, metrics):
@@ -147,6 +166,13 @@ def get_long_val_data(data_val, metrics):
         value_vars=metrics, var_name='metric', value_name='value', ignore_index=True)
     # data_long.dropna(inplace=True)
     return data_long
+
+
+def get_long_data(data, metrics):
+    if 'noise' in data.columns:
+        return get_long_val_data(data, metrics)
+    else:
+        return get_long_train_data(data, metrics)
 
 
 def close_plot(plot):

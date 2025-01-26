@@ -27,7 +27,7 @@ def plot_test(data_test, output_dir):
     value_x_tick = [0, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30]
 
     # (1) Accuracy
-    df = test_long[test_long.metric.isin(['accuracy', 'accuracy2', 'embedding_alignment'])]
+    df = test_long[test_long.metric.isin(['accuracy', 'accuracy2', 'topographic_rho'])]  #  'embedding_alignment'])]
     plot = sns.relplot(
         df,
         x='error_prob', y='value',
@@ -49,8 +49,9 @@ def plot_test(data_test, output_dir):
     df = test_long[test_long.metric.isin([
         'redundancy_message',
         'redundancy_symbol',
-        'redundancy_symbol_adj1',
-        'redundancy_symbol_adj2'])]
+        'redundancy_symbol_adj',
+        # 'redundancy_symbol_adj2',
+    ])]
     plot = sns.relplot(
         df,
         x='error_prob', y='value', hue='metric',
@@ -80,24 +81,25 @@ def plot_test(data_test, output_dir):
     close_plot(plot)
 
     # (4) Compositionality
-    df = test_long[(test_long.metric.isin('topographic_rho pos_dis bos_dis'.split()))]
+    # df = test_long[(test_long.metric.isin('topographic_rho pos_dis bos_dis'.split()))]
     # sns.set_palette(sns.color_palette("Set2", 3))
-    plot = sns.relplot(
-        df,
-        x='error_prob', y='value', style='noise',
-        col='max_len', row='channel',
-        errorbar=None, # errorbar=('se',2),
-        marker='o', markersize=8, kind='line',
-        hue='metric', facet_kws=dict(margin_titles=True), legend=True)
+    # plot = sns.relplot(
+    #     df,
+    #     x='error_prob', y='value', style='noise',
+    #     col='max_len', row='channel',
+    #     errorbar=None, # errorbar=('se',2),
+    #     marker='o', markersize=8, kind='line',
+    #     hue='metric', facet_kws=dict(margin_titles=True), legend=True)
     # sns.move_legend(
     #    plot, "upper center", bbox_to_anchor=(.5, 1.04), ncol=3,
     #    title="max message length", frameon=False,)
-    plot.set(xticks=value_x_tick)
-    plot.savefig(os.path.join(output_dir, "test_compositionality.png"), dpi=400)
-    close_plot(plot)
+    # plot.set(xticks=value_x_tick)
+    # plot.savefig(os.path.join(output_dir, "test_compositionality.png"), dpi=400)
+    # close_plot(plot)
 
 
-def plot_training(data_val, output_dir):
+def plot_training(data_val, output_dir, val):
+    key = 'val' if val else 'train' 
     metrics = ['accuracy']
     df = get_long_val_data(data_val, metrics)
 
@@ -109,25 +111,25 @@ def plot_training(data_val, output_dir):
         errorbar=None,  # errorbar=('se', 2),
         kind='line', facet_kws=dict(margin_titles=True))
     plot.set_titles("{col_name}")
-    plot.savefig(os.path.join(output_dir, "training_accuracy.png"))
+    plot.savefig(os.path.join(output_dir, f"{key}_accuracy.png"))
     close_plot(plot)
 
-    metrics = ['alignment']
-    df = get_long_val_data(data_val, metrics)
+    # metrics = ['alignment']
+    # df = get_long_val_data(data_val, metrics)
 
-    sns.set_palette(sns.husl_palette(4, 0.76))
-    plot = sns.relplot(
-        legend=True, data=df,
-        x='epoch', y='value', hue='channel',
-        row='max_len', col='error_prob', style='noise',
-        errorbar=None,  # errorbar=('se', 2),
-        kind='line', facet_kws=dict(margin_titles=True))
-    plot.set_titles("{col_name}")
-    plot.savefig(os.path.join(output_dir, "training_alignment.png"))
-    close_plot(plot)
+    # sns.set_palette(sns.husl_palette(4, 0.76))
+    # plot = sns.relplot(
+    #     legend=True, data=df,
+    #     x='epoch', y='value', hue='channel',
+    #     row='max_len', col='error_prob', style='noise',
+    #     errorbar=None,  # errorbar=('se', 2),
+    #     kind='line', facet_kws=dict(margin_titles=True))
+    # plot.set_titles("{col_name}")
+    # plot.savefig(os.path.join(output_dir, "training_alignment.png"))
+    # close_plot(plot)
 
     # redundancy
-    metrics = ['redund_msg', 'redund_smb', 'redund_smb_adj', 'redund_smb_adj2']
+    metrics = ['redund_msg', 'redund_smb', 'redund_smb_adj']  # 'redund_smb_adj2']
     df = get_long_val_data(data_val, metrics)
 
     for channel in pd.unique(df.channel):
@@ -142,7 +144,7 @@ def plot_training(data_val, output_dir):
             # errorbar=('se', 2),
             facet_kws=dict(margin_titles=True))
         plot.set_titles("{col_name}")
-        plot.savefig(os.path.join(output_dir, f"training_redundancy_{channel}.png"))
+        plot.savefig(os.path.join(output_dir, f"{key}_redundancy_{channel}.png"))
         close_plot(plot)
 
     # lexicon size
@@ -159,7 +161,7 @@ def plot_training(data_val, output_dir):
         # errorbar=('se', 2),
         facet_kws=dict(margin_titles=True))
     plot.set_titles("{col_name}")
-    plot.savefig(os.path.join(output_dir, "training_lexicon.png"))
+    plot.savefig(os.path.join(output_dir, f"{key}_lexicon.png"))
     close_plot(plot)
 
     metrics = ['actual_vocab_size']
@@ -173,7 +175,7 @@ def plot_training(data_val, output_dir):
         errorbar=None,  # errorbar=('se', 2),
         kind='line', facet_kws=dict(margin_titles=True))
     plot.set_titles("{col_name}")
-    plot.savefig(os.path.join(output_dir, "training_actual_vs.png"))
+    plot.savefig(os.path.join(output_dir, f"{key}_actual_vs.png"))
     close_plot(plot)
 
     # length, max rep, actual_vs
@@ -192,11 +194,11 @@ def plot_training(data_val, output_dir):
             # errorbar=('se', 2),
             facet_kws=dict(margin_titles=True))
         plot.set_titles("{col_name}")
-        plot.savefig(os.path.join(output_dir, f"training_msg_len_{channel}.png"))
+        plot.savefig(os.path.join(output_dir, f"{key}_msg_len_{channel}.png"))
         close_plot(plot)
 
     # compositionality
-    metrics = 'top_sim pos_dis bos_dis'.split()
+    metrics = ['top_sim']  # 'top_sim pos_dis bos_dis'.split()
     df = get_long_val_data(data_val, metrics)
     for channel in pd.unique(df.channel):
         df_channel = df[df.channel == channel]
@@ -209,7 +211,7 @@ def plot_training(data_val, output_dir):
             errorbar=None,
             facet_kws=dict(margin_titles=True, legend_out=True))
         plot.set_titles("{col_name}")
-        plot.savefig(os.path.join(output_dir, f"training_compositionality_{channel}.png"))
+        plot.savefig(os.path.join(output_dir, f"{key}_compositionality_{channel}.png"))
         close_plot(plot)
 
 
@@ -286,19 +288,17 @@ def main():
 
     # export data and save it
     os.makedirs(processed_data_path, exist_ok=True)
-    data_test, data_val = load_data(args.i)
+    data_train, data_val, data_test = load_data(args.i)
 
+    data_train.to_csv(os.path.join(args.i, 'processed', 'data_train.csv'))
     data_test.to_csv(os.path.join(args.i, 'processed', 'data_test.csv'))
     data_val.to_csv(os.path.join(args.i, 'processed', 'data_val.csv'))
-
-    # load already exported data
-    data_test = pd.read_csv(os.path.join(args.i, 'processed', 'data_test.csv'))
-    data_val = pd.read_csv(os.path.join(args.i, 'processed', 'data_val.csv'))
 
     os.makedirs(args.o, exist_ok=True)
 
     plot_test(data_test, args.o)
-    plot_training(data_val, args.o)
+    plot_training(data_train, args.o, val=False)
+    plot_training(data_val, args.o, val=True)
     analyse(data_test, args.o)
 
 

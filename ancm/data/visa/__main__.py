@@ -91,33 +91,68 @@ def extract_visa(args):
 
 
 def reshape(data_concepts, n_distractors, n_features, n_samples):
-    labels = []
-    # categories = data_concepts.iloc[:,0]
+    sample_sets, labels, categories = [], [], defaultdict(list)
 
+    data_categories = data_concepts.iloc[:, 0]#.astype('category')
+    # data_categories = data_categories.cat.set_categories(
+    #     new_categories=data_categories.unique(),
+    #     ordered=True)
+    # data_categories = data_categories.cat.codes
     data_concepts = np.array(data_concepts.iloc[:, 1:].values, dtype='int')
-    sample_sets = []
+
     for concept_i in range(len(data_concepts)):
-        # category = categories.iloc[concept_i]  # data_concepts.iloc[concept_i,0]
-        distractors_i = np.delete(data_concepts, concept_i, axis=0)
+        target_category = data_categories.iloc[concept_i]  # data_concepts.iloc[concept_i,0]
+
+        distractor_ids = np.delete(np.arange(len(data_concepts)), concept_i, axis=0)
+        assert concept_i not in distractor_ids
+
         for sample_j in range(n_samples):
 
-            idx = np.random.randint(distractors_i.shape[0], size=n_distractors)
-            distractors_ij = distractors_i[idx]
-
             target_pos = np.random.randint(0, n_distractors + 1)
+
+            distractor_ind = np.random.choice(distractor_ids, size=n_distractors, replace=False)
             distractor_pos = [i for i in range(n_distractors + 1) if i != target_pos]
 
             sample_set = np.zeros((1, n_distractors + 1, n_features), dtype=np.int64)
             sample_set[0, target_pos] = data_concepts[concept_i]
-            for distr_k, distr_pos in enumerate(distractor_pos):
-                sample_set[0, distr_pos] = distractors_ij[distr_k]
+            for distr_pos, distr_ind in zip(distractor_pos, distractor_ind):
+                sample_set[0, distr_pos] = data_concepts[distr_ind]
 
-            labels.append(target_pos)
             sample_sets.append(sample_set)
+            labels.append(target_pos)
+            # categories.append((category, *distractor_categories))
 
-    data_reshaped = np.vstack(sample_sets)
+            categories['target'].append(target_category)
+            for k, distr_ind in enumerate(distractor_ind):
+                distr_cat = data_categories.iloc[distr_ind]
+                categories[f'distr_{k}_category'].append(distr_cat)
 
-    return data_reshaped, labels
+    input_data = np.vstack(sample_sets)
+
+    labels = np.array(labels, dtype=np.int64)
+    # categories = np.array(
+    #    categories, dtype=np.dtype([('category', np.int64)]))
+
+    # create a DataFrame & code categories as integers
+    category_df = pd.DataFrame(categories, dtype='category')
+    new_categories = pd.unique(category_df.values.ravel('K'))
+    for col in category_df.columns:
+        category_df[col] = category_df[col].cat.set_categories(
+            new_categories=new_categories,
+            ordered=True)
+        category_df[col] = category_df[col].cat.codes
+
+    # export to Numpy
+    categories = np.array(category_df, dtype=np.int64)
+    categories = np.array(
+        list(map(tuple, categories)),
+        dtype=np.dtype([
+            (col, np.int64)
+            for col in category_df.columns
+        ])
+    )
+
+    return input_data, labels, categories
 
 
 def export_visa(args):
@@ -146,24 +181,29 @@ def export_visa(args):
     # print('Val concepts:', len(val_features))
     print('Test concepts:', len(test_features))
 
-    train, train_labels = reshape(
+    train, train_labels, train_categories = reshape(
         train_features, args.n_distractors, n_features, args.n_samples_train)
+    # train_eval – n_samples_test samples of objects from the train set
+    train_eval, train_eval_labels, train_eval_categories = reshape(
+        train_features, args.n_distractors, n_features, args.n_samples_test)
     # val, val_labels = reshape(
     #     val_features, args.n_distractors, n_features, args.n_samples_val, features)
-    test, test_labels = reshape(
+    test, test_labels, test_categories = reshape(
         test_features, args.n_distractors, n_features, args.n_samples_test)
 
     print('Train samples:', len(train_labels))
     # print('Val samples:', len(val_labels))
-    print('Test samples:', len(test_labels))
+    print('Test/Eval samples:', len(test_labels))
 
     npz_fname = f"visa-{args.n_distractors}-{args.n_samples_train}.npz"
     npz_fpath = os.path.join(current_dir, '..', 'input_data', npz_fname)
     np.savez_compressed(
         npz_fpath,
-        train=train, train_labels=train_labels,
-        valid=test, valid_labels=test_labels,
-        test=test, test_labels=test_labels,
+        train=train, train_labels=train_labels, train_attributes=train_categories,
+        valid=test, valid_labels=test_labels, valid_attributes=test_categories,
+        test=test, test_labels=test_labels, test_attributes=test_categories,
+        train_eval=train_eval, train_eval_labels=train_eval_labels,
+        train_eval_attributes=train_eval_categories,
         n_distractors=args.n_distractors)
 
 

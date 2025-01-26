@@ -13,7 +13,7 @@ from egg.core.util import find_lengths
 
 
 class SeeingConvNet(nn.Module):
-    def __init__(self):
+    def __init__(self, n_hidden):
         super(SeeingConvNet, self).__init__()
         
         # Define the sequence of convolutional layers, same as Lazaridou paper 2018
@@ -50,10 +50,60 @@ class SeeingConvNet(nn.Module):
             nn.BatchNorm2d(32),
             nn.ReLU()
         )
-    
+        params = sum(p.numel() for p in self.conv_layers.parameters())
+        self.conv_layers = None
+        print('Lazaridou', (params), 'parameters')
+
+        # Denamganaï, Missaoui and Walker, 2023 (https://arxiv.org/pdf/2304.14511)
+        # https://github.com/Near32/ReferentialGym/blob/develop/ReferentialGym/networks/networks.py
+
+        input_shape = 64
+        n_filters = 32
+        k = 3
+        s = 2
+        p = 1
+
+        self.conv_net = nn.Sequential(
+            nn.Conv2d(3, n_filters, kernel_size=k, stride=s, padding=p, bias=False, dilation=p),
+            nn.BatchNorm2d(n_filters),
+            nn.ReLU(),
+
+            nn.Conv2d(n_filters, n_filters, kernel_size=k, stride=s, padding=p, bias=False, dilation=p),
+            nn.BatchNorm2d(n_filters),
+            nn.ReLU(),
+
+            nn.Conv2d(n_filters, n_filters * 2, kernel_size=k, stride=s, padding=p, bias=False, dilation=p),
+            nn.BatchNorm2d(n_filters * 2),
+            nn.ReLU(),
+
+            nn.Conv2d(n_filters * 2, n_filters * 2, kernel_size=k, stride=s, padding=p, bias=False, dilation=p),
+            nn.BatchNorm2d(n_filters * 2),
+            nn.ReLU(),
+        )
+        params = sum(p.numel() for p in self.conv_net.parameters())
+        print('ReferentialGym', (params), 'parameters')
+
+        out_features = ((input_shape - k + 2 * p) // s + 1) ** 2
+
+        self.fc = nn.Sequential(
+            nn.Linear(out_features, n_hidden),
+            nn.ReLU(),
+            nn.Linear(n_hidden, n_hidden),
+            nn.ReLU(),
+        )
+        # Choi & Lazaridou (2018) use one layer of 256 hidden units? (https://arxiv.org/pdf/1804.02341)
+        # Denamganaï, Missaoui and Walker use 2 x 128 instead 
+        # self.fc = nn.Linear(out_features, n_hidden)
+
     def forward(self, x):
-        x = self.conv_layers(x)
-        return x
+        if x.dim() == 5:
+            batch_size, n_candidates, *image_dims = x.shape
+            x = self.conv_net(x.view(batch_size * n_candidates, *image_dims))
+            return self.fc(x.view(batch_size, n_candidates, -1))
+        else:
+            x = self.conv_net(x)
+            x = x.view(x.size(0), -1)
+            return self.fc(x)
 
 
 class ModMeanBaseline(Baseline):
@@ -82,6 +132,9 @@ class ModMeanBaseline(Baseline):
         return self.mean_baseline
 
 
+update_bound = None
+
+
 class BoundedMeanBaseline(Baseline):
     """Running mean baseline; all loss batches have equal importance/weight,
     hence it is better if they are equally-sized.
@@ -94,7 +147,8 @@ class BoundedMeanBaseline(Baseline):
         self.n_points = 0.0
 
     def update(self, loss: torch.Tensor) -> None:
-        if self.n_points < 5000:
+        global update_bound
+        if self.n_points < update_bound:
             self.n_points += 1
         if self.mean_baseline.device != loss.device:
             self.mean_baseline = self.mean_baseline.to(loss.device)
@@ -135,51 +189,31 @@ class MovingAverageBaseline(Baseline):
 
 
 class SenderReinforce(nn.Module):
-    def __init__(self, n_features, n_hidden, image=False):
+    def __init__(self, n_features, n_hidden, image_input=False):
         super(SenderReinforce, self).__init__()
-        self.image = image
+        if image_input:
+            self.encoder = SeeingConvNet(n_hidden)
+        else:
+            self.encoder = nn.Linear(n_features, n_hidden)
 
-        # Vision module for image-based inputs
-        if self.image:
-            self.vision_module = SeeingConvNet()
-            # Update input features for the fully connected layer
-            n_features = 2048  # Adjust this based on the output channels of SeeingConvNet
-
-        self.fc1 = nn.Linear(n_features, n_hidden)
-            
     def forward(self, x, _aux_input=None):
-        if self.image:
-            x = self.vision_module(x)
-            x = x.flatten(start_dim=1)
-        return self.fc1(x).tanh()
+        return self.encoder(x).tanh()
 
 
 class ReceiverReinforce(nn.Module):
-    def __init__(self, n_features, linear_units, image=False):
+    def __init__(self, n_features, linear_units, image_input=False):
         super(ReceiverReinforce, self).__init__()
-        self.image = image
+        self.image_input = image_input
 
-        # Vision module for image-based inputs
-        if self.image:
-            self.vision_module = SeeingConvNet()
-            # Update input features for the fully connected layer
-            n_features = 2048 # Adjust this based on the output channels of SeeingConvNet
-        self.fc1 = nn.Linear(n_features, linear_units)
+        if self.image_input:
+            self.encoder = SeeingConvNet(linear_units)
+        else:
+            self.encoder = nn.Linear(n_features, linear_units)
         self.logsoft = nn.LogSoftmax(dim=1)
 
-    def forward(self, x, _input, _aux_input=None):
-        if self.image:
-            # Pass input through the vision module
-
-            batch_size, n_distractors, channels, height, width = _input.shape
-            _input = _input.view(batch_size * n_distractors, channels, height, width)
-
-            _input = self.vision_module(_input)
-            _input = _input.flatten(start_dim=1)  # Flatten spatial dimensions
-            _input = _input.view(batch_size, n_distractors, -1) # reshape back to 5D
-
-        embedded_input = self.fc1(_input).tanh()
-        energies = torch.matmul(embedded_input, torch.unsqueeze(x, dim=-1))
+    def forward(self, encoded_msg, _input, _aux_input=None):
+        embedded_input = self.encoder(_input).tanh()
+        energies = torch.matmul(embedded_input, encoded_msg.unsqueeze(-1))
         energies = energies.squeeze()
         return self.logsoft(energies)
 
@@ -359,6 +393,11 @@ class CommunicationRnnReinforce(nn.Module):
         aux_input=None,
         apply_noise=True,
     ):
+        global update_bound
+
+        if update_bound is None:
+            update_bound = 2 ** 16 / sender_input.size(0)
+
         message, log_prob_s, entropy_s = sender(sender_input, aux_input)
         message_length_nn = find_lengths(message)
         if self.channel:
@@ -504,7 +543,6 @@ class DeletionChannel(Channel):
             delete_ids = torch.logical_and(target_ids, not_eosed)
             keep_ids = torch.logical_not(delete_ids)
             num_deleted = torch.sum(delete_ids.int(), dim=1)
-
             message = torch.stack([
                 torch.cat(
                     [message[i][keep_ids[i]], torch.zeros(num_deleted[i], dtype=torch.int)])
@@ -550,7 +588,7 @@ class SymmetricChannel(Channel):
 
             # select replacement symbols
             replacement_ids = torch.stack([
-                torch.tensor([i, j, replacement_indices[i, j]], dtype=torch.int)
+                torch.tensor([i, j, replacement_indices[i, j]], dtype=torch.float)
                 for i in range(msg.size(0))
                 for j in range(msg.size(1))
             ])
