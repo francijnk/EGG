@@ -126,11 +126,19 @@ def compute_mi_input_msgs(sender_inputs: List[torch.Tensor], messages: List[torc
     messages = torch.nn.utils.rnn.pad_sequence(messages, batch_first=True)
     messages = torch.cat([messages, torch.zeros_like(messages[:, :1])], dim=-1)
 
+    
     # for the context game, only consider target objects
     sender_inputs = torch.stack(sender_inputs)
+
+    if sender_inputs.dim() == 4:
+        n_samples = sender_inputs.size(0)
+        sender_inputs = sender_inputs.reshape(n_samples, -1)
+
     target_objs = sender_inputs \
         if sender_inputs.dim() == 2 \
         else sender_inputs[:, 0]
+    
+    
 
     to_values = torch.empty(len(target_objs), dtype=torch.int)
     for i, val in enumerate(torch.unique(target_objs, dim=0)):
@@ -382,6 +390,7 @@ def compute_redundancy_smb(messages, max_len, vocab_size, channel, error_prob, a
     if alphabet is not None:
         vocab_size = len(alphabet)
 
+    messages = messages.cpu()
     H = sequence_entropy(messages, vocab_size, alphabet=alphabet)
     H_max, _ = maximize_sequence_entropy(max_len, vocab_size, channel, error_prob, maxiter)
     H_max = max(H_max, H)  # the value of H is biased, and could exceed H_max in some cases

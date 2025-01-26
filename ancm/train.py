@@ -173,7 +173,7 @@ def main(params):
         seed=opts.random_seed)
     game = game.to(device)
     optimizer = build_optimizer(game, opts)
-    scheduler = lr_scheduler.LinearLR(optimizer, start_factor=1.0, end_factor=0.1, total_iters=5)
+    #scheduler = lr_scheduler.LinearLR(optimizer, start_factor=1.0, end_factor=0.3, total_iters=10)
 
     callbacks = [
         TrainingMetricsCallback(
@@ -196,7 +196,7 @@ def main(params):
     trainer = Trainer(
         game=game,
         optimizer=optimizer,
-        optimizer_scheduler=scheduler,
+        optimizer_scheduler=None,
         train_data=train_data,
         validation_data=validation_data,
         callbacks=callbacks)
@@ -390,17 +390,17 @@ def main(params):
             print("|\n|\033[1m Results\033[0m\n|")
 
         align = 40
-        print("|" + "H(msg) =".rjust(align), entropy_msg)
-        print("|" + "H(target objs) =".rjust(align), entropy_inp)
-        print("|" + "I(target objs; msg) =".rjust(align), mi)
+        #print("|" + "H(msg) =".rjust(align), entropy_msg)
+        #print("|" + "H(target objs) =".rjust(align), entropy_inp)
+        #print("|" + "I(target objs; msg) =".rjust(align), mi)
         print("|\n| Separately for each object vector dimension")
-        if opts.error_prob != 0:
-            print("|" + "H(target objs) =".rjust(align), entropy_inp_dim)
-            print("|" + "I(target objs; msg) =".rjust(align), mi_dim, "(with noise)")
-            print("|" + "I(target objs; msg) =".rjust(align), mi_dim_nn, "(no noise)")
-        else:
-            print("|" + "H(target objs) =".rjust(align), entropy_inp_dim)
-            print("|" + "I(target objs; msg) =".rjust(align), mi_dim)
+        #if opts.error_prob != 0:
+            #print("|" + "H(target objs) =".rjust(align), entropy_inp_dim)
+            #print("|" + "I(target objs; msg) =".rjust(align), mi_dim, "(with noise)")
+            #print("|" + "I(target objs; msg) =".rjust(align), mi_dim_nn, "(no noise)")
+        #else:
+            #print("|" + "H(target objs) =".rjust(align), entropy_inp_dim)
+            #print("|" + "I(target objs; msg) =".rjust(align), mi_dim)
         print('|')
         print("|" + "Accuracy:".rjust(align), acc_str)
         print("|" + "Accuracy2:".rjust(align), acc2_str)
