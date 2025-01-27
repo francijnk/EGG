@@ -26,9 +26,10 @@ from ancm.util import (
     is_jsonable,
 )
 from ancm.archs import (
-    SenderReinforce, ReceiverReinforce,
-    loss,
+    Sender, Receiver,
+    loss_rf, loss_gs,
     SenderReceiverRnnReinforce,
+    SenderReceiverRnnGS,
 )
 from ancm.callbacks import (
     CustomProgressBarLogger,
@@ -55,7 +56,10 @@ def get_params(params):
     parser.add_argument("--receiver_entropy_coeff", type=float, default=0.001)
     parser.add_argument("--lr_decay", type=float, default=None, help="LR decay, 1.0 for no decay (default: no decay)")
     parser.add_argument("--length_cost", type=float, default=1e-2, help="Message length cost")
+    parser.add_argument("--mode", type=str, default="gs", help="Selects whether Reinforce or GumbelSoftmax relaxation is used for training {gs only at the moment} (default: rf)")
+
     parser.add_argument("--optim", type=str, default="rmsprop", help="Optimizer to use [adam, rmsprop] (default: rmsprop)")
+    parser.add_argument("--temperature", type=float, default=1.0, help="GS temperature for the sender (default: 1.0)")
     parser.add_argument("--results_folder", type=str, default='runs', help="Folder where file with dumped messages will be created")
     parser.add_argument("--filename", type=str, default=None, help="Filename (no extension)")
     parser.add_argument("--debug", action="store_true", default=False, help="Run egg/objects_game with pdb enabled")
@@ -72,13 +76,6 @@ def get_params(params):
 
 
 def check_args(args):
-    if args.results_folder is not None:
-        os.makedirs(os.path.dirname(args.results_folder), exist_ok=True)
-
-    if args.debug:
-        import pdb
-
-        pdb.set_trace()
 
     args.channel = args.channel.lower() if args.channel else args.channel
     assert (
@@ -86,9 +83,19 @@ def check_args(args):
         or args.channel in ("erasure", "symmetric", "deletion")
     ), 'The only channels implemented are "erasure", "symmetric", "deletion"'
 
-    args.results_folder = (
-        pathlib.Path(args.results_folder) if args.results_folder is not None else None
-    )
+    args.mode = args.mode.lower()
+    assert args.mode in ("rf", "gs")
+
+    if args.results_folder is not None:
+        os.makedirs(os.path.dirname(args.results_folder), exist_ok=True)
+
+    args.results_folder = pathlib.Path(args.results_folder) \
+        if args.results_folder is not None else None
+
+    if args.debug:
+        import pdb
+
+        pdb.set_trace()
 
 
 def main(params):
@@ -106,38 +113,64 @@ def main(params):
     else:
         receiver_vocab_size = opts.vocab_size
 
-    _sender = SenderReinforce(
+    _sender = Sender(
         n_features=data_handler.n_features,
         n_hidden=opts.sender_hidden,
         image_input=opts.image_input)
-    _receiver = ReceiverReinforce(
+    _receiver = Receiver(
         n_features=data_handler.n_features,
         linear_units=opts.receiver_hidden,
         image_input=opts.image_input)
-    sender = core.RnnSenderReinforce(
-        _sender,
-        opts.vocab_size,
-        opts.sender_embedding,
-        opts.sender_hidden,
-        opts.max_len,
-        cell=opts.sender_cell)
-    receiver = core.RnnReceiverReinforce(
-        agent=core.ReinforceWrapper(_receiver),
-        vocab_size=receiver_vocab_size,
-        embed_dim=opts.receiver_embedding,
-        hidden_size=opts.receiver_hidden,
-        cell=opts.receiver_cell)
-    game = SenderReceiverRnnReinforce(
-        sender, receiver,
-        loss=loss,
-        vocab_size=opts.vocab_size,
-        channel_type=opts.channel,
-        error_prob=opts.error_prob,
-        length_cost=opts.length_cost,
-        sender_entropy_coeff=opts.sender_entropy_coeff,
-        receiver_entropy_coeff=opts.receiver_entropy_coeff,
-        device=device,
-        seed=opts.random_seed)
+    if opts.mode == 'rf':
+        sender = core.RnnSenderReinforce(
+            _sender,
+            opts.vocab_size,
+            opts.sender_embedding,
+            opts.sender_hidden,
+            opts.max_len,
+            cell=opts.sender_cell)
+        receiver = core.RnnReceiverReinforce(
+            agent=core.ReinforceWrapper(_receiver),
+            vocab_size=receiver_vocab_size,
+            embed_dim=opts.receiver_embedding,
+            hidden_size=opts.receiver_hidden,
+            cell=opts.receiver_cell)
+        game = SenderReceiverRnnReinforce(
+            sender, receiver,
+            loss=loss_rf,
+            vocab_size=opts.vocab_size,
+            channel_type=opts.channel,
+            error_prob=opts.error_prob,
+            length_cost=opts.length_cost,
+            sender_entropy_coeff=opts.sender_entropy_coeff,
+            receiver_entropy_coeff=opts.receiver_entropy_coeff,
+            device=device,
+            seed=opts.random_seed)
+    elif opts.mode == 'gs':
+        sender = core.RnnSenderGS(
+            _sender,
+            opts.vocab_size,
+            opts.sender_embedding,
+            opts.sender_hidden,
+            opts.max_len,
+            opts.temperature,
+            opts.sender_cell)
+        receiver = core.RnnReceiverGS(
+            _receiver,
+            receiver_vocab_size,
+            opts.receiver_embedding,
+            opts.receiver_hidden,
+            opts.receiver_cell)
+        game = SenderReceiverRnnGS(
+            sender, receiver,
+            loss=loss_gs,
+            vocab_size=opts.vocab_size,
+            channel_type=opts.channel,
+            error_prob=opts.error_prob,
+            length_cost=opts.length_cost,
+            device=device,
+            seed=opts.random_seed)
+
     optimizer = build_optimizer(game, opts)
 
     callbacks = [
@@ -152,13 +185,15 @@ def main(params):
             device=device,
             image_input=opts.image_input,
             bs=opts.batch_size),
+        CustomProgressBarLogger(
+            opts,
+            train_data_len=len(train_data),
+            test_data_len=len(validation_data)),
     ]
 
-    callbacks.append(CustomProgressBarLogger(
-        opts,
-        train_data_len=len(train_data),
-        test_data_len=len(validation_data),
-    ))
+    if opts.mode == "gs":
+        callbacks.append(core.TemperatureUpdater(agent=sender, decay=0.9, minimum=0.1))
+
     trainer = Trainer(
         game=game,
         optimizer=optimizer,
