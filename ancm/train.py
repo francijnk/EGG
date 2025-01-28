@@ -64,7 +64,7 @@ def get_params(params):
     parser.add_argument("--receiver_embedding", type=int, default=10, help="Dimensionality of the embedding hidden layer for Receiver (default: 10)")
     parser.add_argument("--sender_cell", type=str, default="rnn", help="Type of the cell used for Sender {rnn, gru, lstm} (default: rnn)")
     parser.add_argument("--receiver_cell", type=str, default="rnn", help="Type of the cell used for Receiver {rnn, gru, lstm} (default: rnn)")
-    parser.add_argument("--sender_lr", type=float, help="Learning rate for Sender's parameters (default: 1e-1)")
+    parser.add_argument("--sender_lr", type=float, default=1e-1, help="Learning rate for Sender's parameters (default: 1e-1)")
     parser.add_argument("--receiver_lr", type=float, default=1e-1, help="Learning rate for Receiver's parameters (default: 1e-1)")
     parser.add_argument("--sender_entropy_coeff", type=float, default=0.01)
     parser.add_argument("--receiver_entropy_coeff", type=float, default=0.001)
@@ -141,7 +141,7 @@ def main(params):
         opts.max_len,
         cell=opts.sender_cell)
     receiver = core.RnnReceiverReinforce(
-        agent= core.ReinforceWrapper(_receiver),
+        agent=core.ReinforceWrapper(_receiver),
         vocab_size=receiver_vocab_size,
         embed_dim=opts.receiver_embedding,
         hidden_size=opts.receiver_hidden,
