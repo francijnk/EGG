@@ -189,6 +189,7 @@ class CustomProgressBarLogger(Callback):
     def log_to_wandb(self, data: Dict[str, Any], **kwargs):
         if self.wandb:
             wandb.log(data, **kwargs)
+            wandb.run.summary["data"] = data
 
     def generate_live_table(self, od=None):
         live_table = Table(
@@ -239,6 +240,7 @@ class CustomProgressBarLogger(Callback):
         if self.wandb:
             wb_dict = {'epoch': epoch}
             wb_dict.update({f'train/{k}': v for k, v in od.items()})
+            wandb.log({"train_accuracy": logs, "epoch": epoch})
             self.log_to_wandb(wb_dict)
 
         self.progress.stop_task(self.train_p)
@@ -302,6 +304,7 @@ class CustomProgressBarLogger(Callback):
         if self.wandb:
             wb_dict = {f'epoch': epoch}
             wb_dict.update({f'{p_key}/{k}': v for k, v in od.items()})
+            wandb.log({"val_accuracy": logs, "epoch": epoch})
             self.log_to_wandb(wb_dict)
 
     def on_train_begin(self, trainer_instance: 'Trainer'):

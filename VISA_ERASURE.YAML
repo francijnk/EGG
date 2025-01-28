@@ -1,0 +1,42 @@
+program: train.py
+name: visa_erasure_val
+method: bayes
+metric:
+  goal: maximize
+  name: val_accuracy
+parameters:
+  sender_lr:
+    min: 0.0001
+    max: 0.1
+  receiver_lr:
+    min: 0.0001
+    max: 0.1
+  batch_size:
+    values: [16, 32, 64]
+  n_epochs:
+    values: [30, 40, 50]
+  max_len:
+    values: [1, 2, 3, 5, 8]
+  vocab_size:
+    values: [10, 15, 20]
+  length_cost:
+    min: 0.00001
+    max: 0.01
+  random_seed:
+   values: [1, 2, 3, 4, 5]
+
+early_terminate:
+  type: hyperband
+  min_iter: 3
+
+command:  
+- python3
+- -m 
+- ancm.train
+- --results_folder=runs/
+- --data_path=ancm/data/input_data/visa-4-250.npz
+- --wandb_entity=koala_lab
+- --wandb_group=cezary_test
+- --evaluate
+- --channel=erasure
+- ${args}
