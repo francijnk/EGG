@@ -227,7 +227,6 @@ class CustomProgressBarLogger(Callback):
         if self.wandb:
             wb_dict = {'epoch': epoch}
             wb_dict.update({f'train/{k}': v for k, v in od.items()})
-            wandb.log({'training_accuracy': logs}, epoch)
             self.log_to_wandb(wb_dict)
 
         self.progress.stop_task(self.train_p)
@@ -291,7 +290,6 @@ class CustomProgressBarLogger(Callback):
         if self.wandb:
             wb_dict = {f'epoch': epoch}
             wb_dict.update({f'{p_key}/{k}': v for k, v in od.items()})
-            wandb.log({'validation_accuracy': logs}, epoch)
             self.log_to_wandb(wb_dict)
 
     def on_train_begin(self, trainer_instance: 'Trainer'):
