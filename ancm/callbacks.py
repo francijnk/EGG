@@ -103,7 +103,7 @@ class CustomProgressBarLogger(Callback):
             wandb.config.update(opts)
 
         self.history = defaultdict(lambda: defaultdict(dict))
-        self.hide_cols = ['receiver_entropy', 'sender_entropy']
+        self.hide_cols = ['receiver_entropy', 'sender_entropy', 'VI']
 
         self.progress = CustomProgress(
             TextColumn(
@@ -157,7 +157,7 @@ class CustomProgressBarLogger(Callback):
         row = Table(expand=True, box=None, show_header=header,
                     show_footer=False, padding=(0, 1), pad_edge=True)
         for colname in od.keys():
-            if colname in self.hide_cols:
+            if any(colname.startswith(col) for col in self.hide_cols):
                 continue
 
             print_name = colname.replace('redund_smb', 'R_s').replace('redund_msg', 'R_m') \
@@ -175,7 +175,7 @@ class CustomProgressBarLogger(Callback):
             row.add_row(
                 str(od.pop('epoch')),
                 *[self.format_metric_val(v) for k, v in od.items()
-                  if k not in self.hide_cols],
+                  if not any(k.startswith(col) for col in self.hide_cols)],
                 style=self.style[od['phase']])
         return row
 
@@ -381,20 +381,29 @@ class TrainingMetricsCallback(Callback):
                 aux_attributes, message,
                 categorize_objects=False, results_per_dim=False)
             logs.aux['H_msg'] = mi_attr['entropy_msg']
-            logs.aux['MI_attr'] = mi_attr['mi_msg_attr']
-            logs.aux['H_attr'] = mi_attr['entropy_attr']
+            # logs.aux['H_attr'] = mi_attr['entropy_attr']
+            for i, key in enumerate(aux_attribute_keys):
+                k = key.replace('target_', '')
+                logs.aux[f'MI_{k}'] = mi_attr['mi_msg_attr_dim'][i]
+                logs.aux[f'VI_{k}'] = mi_attr['vi_msg_attr_dim'][i]
+                logs.aux[f'VInorm_{k}'] = mi_attr['vi_norm_msg_attr_dim'][i]
+                logs.aux[f'IS_{k}'] = mi_attr['is_msg_attr_dim'][i]
         else:
-            mi_inp = compute_mi(
-                logs.sender_input, message,
-                categorize_objects=True, results_per_dim=False)
-            mi_cat = compute_mi(
-                aux_attributes, message,
-                categorize_objects=False, results_per_dim=False)
+            _, categorized_input = torch.unique(
+                logs.sender_input, return_inverse=True, dim=0)
+            categorized_input = categorized_input.unsqueeze(-1).to(torch.float)
+            mi_inp = compute_mi(messages, categorized_input)
+            mi_cat = compute_mi(messages, aux_attributes)
             logs.aux['H_msg'] = mi_cat['entropy_msg']
             logs.aux['H_inp'] = mi_inp['entropy_attr']
             logs.aux['MI_inp'] = mi_inp['mi_msg_attr']
-            logs.aux['H_cat'] = mi_cat['entropy_attr']
+            logs.aux['VI_inp'] = mi_inp['vi_msg_attr']
+            logs.aux['VInorm_inp'] = mi_inp['vi_norm_msg_attr']
+            logs.aux['IS_inp'] = mi_inp['is_msg_attr']
             logs.aux['MI_cat'] = mi_cat['mi_msg_attr']
+            logs.aux['VI_cat'] = mi_cat['vi_msg_attr']
+            logs.aux['VInorm_cat'] = mi_cat['vi_norm_msg_attr']
+            logs.aux['IS_cat'] = mi_cat['is_msg_attr']
 
         # redundancy
         logs.aux['max_rep'] = compute_max_rep(message)
@@ -446,20 +455,30 @@ class TrainingMetricsCallback(Callback):
                 aux_attributes, message,
                 categorize_objects=False, results_per_dim=False)
             logs.aux['H_msg'] = mi_attr['entropy_msg']
-            logs.aux['MI_attr'] = mi_attr['mi_msg_attr']
-            logs.aux['H_attr'] = mi_attr['entropy_attr']
+            # logs.aux['H_attr'] = mi_attr['entropy_attr']
+            for i, key in enumerate(aux_attribute_keys):
+                k = key.replace('target_', '')
+                # logs.aux[f'H_{k}'] = mi_attr['entropy_attr_dim'][i]
+                logs.aux[f'MI_{k}'] = mi_attr['mi_msg_attr_dim'][i]
+                logs.aux[f'VI_{k}'] = mi_attr['vi_msg_attr_dim'][i]
+                logs.aux[f'VInorm_{k}'] = mi_attr['vi_norm_msg_attr_dim'][i]
+                logs.aux[f'IS_{k}'] = mi_attr['is_msg_attr_dim'][i]
         else:
-            mi_inp = compute_mi(
-                logs.sender_input, message,
-                categorize_objects=True, results_per_dim=False)
-            mi_cat = compute_mi(
-                aux_attributes, message,
-                categorize_objects=False, results_per_dim=False)
+            _, categorized_input = torch.unique(
+                logs.sender_input, return_inverse=True, dim=0)
+            categorized_input = categorized_input.unsqueeze(-1).to(torch.float)
+            mi_inp = compute_mi(messages, categorized_input)
+            mi_cat = compute_mi(messages, aux_attributes)
             logs.aux['H_msg'] = mi_cat['entropy_msg']
             logs.aux['H_inp'] = mi_inp['entropy_attr']
             logs.aux['MI_inp'] = mi_inp['mi_msg_attr']
-            logs.aux['H_cat'] = mi_cat['entropy_attr']
+            logs.aux['VI_inp'] = mi_inp['vi_msg_attr']
+            logs.aux['VInorm_inp'] = mi_inp['vi_norm_msg_attr']
+            logs.aux['IS_inp'] = mi_inp['is_msg_attr']
             logs.aux['MI_cat'] = mi_cat['mi_msg_attr']
+            logs.aux['VI_cat'] = mi_cat['vi_msg_attr']
+            logs.aux['VInorm_cat'] = mi_cat['vi_norm_msg_attr']
+            logs.aux['IS_cat'] = mi_cat['is_msg_attr']
 
         # logs.aux['ent_msg'] = sequence_entropy(message)
         # if self.image_input:
@@ -526,8 +545,12 @@ class TrainingMetricsCallback(Callback):
                 aux_attributes, message,
                 categorize_objects=False, results_per_dim=False)
             logs.aux['H_msg'] = mi_attr['entropy_msg']
-            logs.aux['MI_attr'] = mi_attr['mi_msg_attr']
-            logs.aux['H_attr'] = mi_attr['entropy_attr']
+            for i, key in enumerate(aux_attribute_keys):
+                k = key.replace('target_', '')
+                logs.aux[f'MI_{k}'] = mi_attr['mi_msg_attr_dim'][i]
+                logs.aux[f'VI_{k}'] = mi_attr['vi_msg_attr_dim'][i]
+                logs.aux[f'VInorm_{k}'] = mi_attr['vi_norm_msg_attr_dim'][i]
+                logs.aux[f'IS_{k}'] = mi_attr['is_msg_attr_dim'][i]
         else:
             # mi_inp = compute_mi_input_msgs(
             #     logs.sender_input, message,
@@ -536,10 +559,14 @@ class TrainingMetricsCallback(Callback):
                 aux_attributes, message,
                 categorize_objects=False, results_per_dim=False)
             logs.aux['H_msg'] = mi_cat['entropy_msg']
-            logs.aux['H_inp'] = None  # mi_inp['mi_msg_inp']
-            logs.aux['MI_inp'] = None  # mi_inp['entropy_inp']
-            logs.aux['H_cat'] = mi_cat['entropy_attr']
+            logs.aux['MI_inp'] = None
+            logs.aux['VI_inp'] = None
+            logs.aux['IS_inp'] = None
+            logs.aux['VInorm_inp'] = None
             logs.aux['MI_cat'] = mi_cat['mi_msg_attr']
+            logs.aux['VI_cat'] = mi_cat['vi_msg_attr']
+            logs.aux['VInorm_cat'] = mi_cat['vi_norm_msg_attr']
+            logs.aux['IS_cat'] = mi_cat['is_msg_attr']
 
         # redundancy
         logs.aux['max_rep'] = compute_max_rep(message)

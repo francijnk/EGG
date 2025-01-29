@@ -57,8 +57,11 @@ def render_scene(idx, object_type, color, location, rotation, resolution):
             return 0
 
         # ellipsoid and box exhibit reflection symmetry
-        if rotation > 180:
-            rotation = rotation - 180
+        if object_type == 'box':  # 2 symmetry axes
+            rotation = rotation % 90
+        elif object_type == 'ellipsoid':
+            rotation = rotation % 180
+
         if 0 <= rotation < 22.5 or 157.5 <= rotation <= 180:
             rotation = 0  # front view
         elif 22.5 <= rotation < 67.5:
@@ -70,6 +73,9 @@ def render_scene(idx, object_type, color, location, rotation, resolution):
         else:
             rotation = None
         assert rotation is not None
+
+        if object_type == 'box':
+            rotation = rotation % 2
         return rotation
 
     location_cat = [location_to_categorical(loc) for loc in location]
@@ -122,25 +128,31 @@ def render_scene(idx, object_type, color, location, rotation, resolution):
     scene.render(filepath, width=resolution, height=resolution, antialiasing=0.001)
 
 
-def get_object_fname(color, shape, location=None, idx=None):
-    assert location is None or idx is None
+def get_object_fname(color, shape, x=None, y=None, rotation=None, idx=None):
+    assert all([var is None for var in [x, y, rotation]]) or idx is None
 
     assets_dir = os.path.join(current_dir, 'assets')
     all_images = os.listdir(assets_dir)
 
-    if location is None and idx is None:
+    if x is None and y is None and idx is None:
         prefix = f'{color}_{shape}_'
         _filter = lambda x: x.startswith(prefix)
-    elif location is None:
+    elif x is None and y is None and rotation is None:
         prefix = f'{color}_{shape}_{idx}_'
         _filter = lambda x: x.startswith(prefix)
     else:
         def _filter(fname):
-            _color, _shape, _, x, y, _ = fname.split('.')[0].split('_')
-            return all((
-                color == _color, shape == _shape, 
-                location == (int(x), int(y))
-            ))
+            _color, _shape, _, _x, _y, _rotation = fname.split('.')[0].split('_')
+            if color != _color or shape != shape:
+                return False
+            if x is not None and int(x) != _x:
+                return False
+            if y is not None and int(y) != _y:
+                return False
+            if rotation is not None and int(rotation) !=  _rotation:
+                return False
+            return True
+
     matches = [fname for fname in all_images if _filter(fname)]
     if not matches:
         return None
