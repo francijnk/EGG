@@ -1,4 +1,6 @@
 old_scripts/
+local_runs/
+wandb/
 runs/
 *.DS_Store
 
