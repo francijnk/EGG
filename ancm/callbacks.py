@@ -19,9 +19,9 @@ from rich.text import Text
 from ancm.metrics import (
     # compute_conceptual_alignment,
     compute_max_rep,
-    compute_redundancy_msg,
-    compute_redundancy_smb,
-    compute_redundancy_smb_adjusted,
+    # compute_redundancy_msg,
+    compute_redundancy,
+    compute_adjusted_redundancy,
     compute_top_sim,
     compute_posdis,
     compute_bosdis,
@@ -156,12 +156,13 @@ class CustomProgressBarLogger(Callback):
     def get_row(self, od, header=False):
         row = Table(expand=True, box=None, show_header=header,
                     show_footer=False, padding=(0, 1), pad_edge=True)
+
         for colname in od.keys():
             if colname in self.hide_cols:
                 continue
 
-            print_name = colname.replace('redund_smb', 'R_s').replace('redund_msg', 'R_m') \
-                if not colname.startswith('actual_vocab_size') else 'vocab_size'
+            print_name = colname.replace(
+                'xpos', 'x').replace('ypos', 'y').replace('actual_', '')
 
             if colname == 'epoch':
                 ratio = 0.5
@@ -186,7 +187,7 @@ class CustomProgressBarLogger(Callback):
         elif isinstance(val, int):
             return str(val)
         elif not isinstance(val, str):
-            return f'{val:.2f}' 
+            return f'{val:.2f}'
         else:
             return val
 
@@ -335,226 +336,225 @@ class CustomProgressBarLogger(Callback):
 
 
 class TrainingMetricsCallback(Callback):
-    def __init__(self, vocab_size, max_len, channel_type,
-                 error_prob, sender, receiver, dataloader,
-                 device, image_input, bs=32):
+    def __init__(
+        self, vocab_size, max_len, channel_type,
+        error_prob, sender, receiver, dataloader,
+            device, image_input, bs=32):
+
         self.vocab_size = vocab_size
         self.max_len = max_len
         self.channel_type = channel_type
         self.error_prob = error_prob
         self.image_input = image_input
 
-        # to compute speaker-listener alignment
-        # self.sender = sender
-        # self.receiver = receiver
-        # self.dataloader = dataloader
-        # self.device = device
-        # self.bs = bs
-
     def on_validation_end(self, loss: float, logs: Interaction, epoch: int):
-        message = logs.message if logs.message.dim() == 2 \
+        messages = logs.message if logs.message.dim() == 2 \
             else logs.message.argmax(-1)
 
         if logs.aux_input:
+            aux_attribute_keys = [
+                k for k in logs.aux_input if k.startswith('target')]
             aux_attributes = torch.cat([
-                val for key, val in logs.aux_input.items()
-                if key.startswith('target')
-            ], dim=1)
+                logs.aux_input[k] for k in aux_attribute_keys], dim=1)
         else:
             aux_attributes = None
 
-        # vocab_size = self.vocab_size + 1 \
-        #    if self.channel_type == 'erasure' and self.error_prob > 0. \
-        #    else self.vocab_size
-
-        lexicon_size = torch.unique(message, dim=0).shape[0]
-        actual_vocab = torch.unique(torch.flatten(message), dim=0)
+        lexicon_size = torch.unique(messages, dim=0).shape[0]
+        actual_vocab = torch.unique(torch.flatten(messages), dim=0)
         actual_vocab_size = actual_vocab.size(0)
+        vocab_size = self.vocab_size + 1 \
+            if self.channel_type == 'erasure' and self.error_prob > 0. \
+            else self.vocab_size
 
         logs.aux['lexicon_size'] = int(lexicon_size)
         logs.aux['actual_vocab_size'] = int(actual_vocab_size)
-        # logs.aux['alignment'] = compute_conceptual_alignment(
-        # self.dataloader, self.sender, self.receiver, self.device, self.bs)
 
         if self.image_input:
-            mi_attr = compute_mi(
-                aux_attributes, message,
-                categorize_objects=False, results_per_dim=False)
+            # messages, vocab_size, True)
+            mi_attr = compute_mi(messages, aux_attributes)
             logs.aux['H_msg'] = mi_attr['entropy_msg']
-            logs.aux['MI_attr'] = mi_attr['mi_msg_attr']
-            logs.aux['H_attr'] = mi_attr['entropy_attr']
+            # logs.aux['H_attr'] = mi_attr['entropy_attr']
+            for i, key in enumerate(aux_attribute_keys):
+                k = key.strip('target_')
+                logs.aux[f'MI_{k}'] = mi_attr['mi_msg_attr_dim'][i]
+                logs.aux[f'VI_{k}'] = mi_attr['vi_msg_attr_dim'][i]
+                logs.aux[f'VIn_{k}'] = mi_attr['vi_norm_msg_attr_dim'][i]
         else:
-            mi_inp = compute_mi(
-                logs.sender_input, message,
-                categorize_objects=True, results_per_dim=False)
-            mi_cat = compute_mi(
-                aux_attributes, message,
-                categorize_objects=False, results_per_dim=False)
+            _, categorized_input = torch.unique(
+                logs.sender_input, return_inverse=True, dim=0)
+            categorized_input = categorized_input.unsqueeze(-1)
+            mi_inp = compute_mi(messages, categorized_input)
+            mi_cat = compute_mi(messages, aux_attributes)
             logs.aux['H_msg'] = mi_cat['entropy_msg']
-            logs.aux['H_inp'] = mi_inp['entropy_attr']
             logs.aux['MI_inp'] = mi_inp['mi_msg_attr']
-            logs.aux['H_cat'] = mi_cat['entropy_attr']
+            logs.aux['VI_inp'] = mi_inp['vi_msg_attr']
+            logs.aux['VIn_inp'] = mi_inp['vi_norm_msg_attr']
             logs.aux['MI_cat'] = mi_cat['mi_msg_attr']
+            logs.aux['VI_cat'] = mi_inp['vi_msg_attr']
+            logs.aux['VIn_cat'] = mi_inp['vi_norm_msg_attr']
 
         # redundancy
-        logs.aux['max_rep'] = compute_max_rep(message)
-        logs.aux['redund_msg'] = compute_redundancy_msg(message)
-        logs.aux['redund_smb'] = compute_redundancy_smb(
-            message, self.max_len, self.vocab_size,
-            self.channel_type, self.error_prob)
-        logs.aux['redund_smb_adj'] = compute_redundancy_smb_adjusted(
-            message, self.channel_type, self.error_prob,
-            alphabet=actual_vocab, erased_symbol=self.vocab_size)
+        logs.aux['max_rep'] = compute_max_rep(messages)
+        logs.aux['R'] = compute_redundancy(
+            messages, self.max_len, self.vocab_size,
+            channel=None, error_prob=0.0)
+        logs.aux['R\''] = compute_adjusted_redundancy(
+            messages, channel=None, error_prob=0.0,
+            symbols=torch.arange(vocab_size), erased_symbol=self.vocab_size)
+        logs.aux['R"'] = compute_adjusted_redundancy(
+            messages, channel=None, error_prob=0.0,
+            symbols=actual_vocab, erased_symbol=self.vocab_size)
 
         # compositionality
         if self.image_input and aux_attributes is not None:
-            logs.aux['topsim'] = compute_top_sim(aux_attributes, message)
+            logs.aux['topsim'] = compute_top_sim(aux_attributes, messages)
         elif not self.image_input:
-            logs.aux['top_sim'] = compute_top_sim(logs.sender_input, message)
-            logs.aux['top_sim_cat'] = compute_top_sim(aux_attributes, message)
+            logs.aux['topsim'] = compute_top_sim(logs.sender_input, messages)
+            logs.aux['topsim_cat'] = compute_top_sim(aux_attributes, messages)
 
-        # logs.aux['pos_dis'] = compute_posdis(aux_attributes, message)
-        # logs.aux['bos_dis'] = compute_bosdis(
-        #       aux_attributes, message, self.vocab_size)
         if self.image_input:
-            logs.aux['pos_dis'] = None
-            logs.aux['bos_dis'] = None
+            logs.aux['posdis'] = compute_posdis(aux_attributes, messages)
+            logs.aux['bosdis'] = compute_bosdis(
+                aux_attributes, messages, self.vocab_size)
 
     def on_secondary_validation_end(self, loss: float, logs: Interaction, epoch: int):
-        message = logs.message if logs.message.dim() == 2 \
+        messages = logs.message if logs.message.dim() == 2 \
             else logs.message.argmax(-1)
 
         if logs.aux_input:
+            aux_attribute_keys = [
+                k for k in logs.aux_input if k.startswith('target')]
             aux_attributes = torch.cat([
-                val for key, val in logs.aux_input.items()
-                if key.startswith('target')
-            ], dim=1)
+                logs.aux_input[k] for k in aux_attribute_keys], dim=1)
         else:
             aux_attributes = None
 
-        lexicon_size = torch.unique(message, dim=0).shape[0]
-        actual_vocab = torch.unique(torch.flatten(message), dim=0)
+        lexicon_size = torch.unique(messages, dim=0).shape[0]
+        actual_vocab = torch.unique(torch.flatten(messages), dim=0)
         actual_vocab_size = actual_vocab.size(0)
 
         logs.aux['lexicon_size'] = int(lexicon_size)
         logs.aux['actual_vocab_size'] = int(actual_vocab_size)
-        # logs.aux['alignment'] = compute_conceptual_alignment(
-        # self.dataloader, self.sender, self.receiver, self.device, self.bs)
 
         if self.image_input:
-            mi_attr = compute_mi(
-                aux_attributes, message,
-                categorize_objects=False, results_per_dim=False)
+            mi_attr = compute_mi(messages, aux_attributes)
             logs.aux['H_msg'] = mi_attr['entropy_msg']
-            logs.aux['MI_attr'] = mi_attr['mi_msg_attr']
-            logs.aux['H_attr'] = mi_attr['entropy_attr']
+            # logs.aux['H_attr'] = mi_attr['entropy_attr']
+            for i, key in enumerate(aux_attribute_keys):
+                k = key.strip('target_')
+                # logs.aux[f'H_{k}'] = mi_attr['entropy_attr_dim'][i]
+                logs.aux[f'MI_{k}'] = mi_attr['mi_msg_attr_dim'][i]
+                logs.aux[f'VI_{k}'] = mi_attr['vi_msg_attr_dim'][i]
+                logs.aux[f'VIn_{k}'] = mi_attr['vi_norm_msg_attr_dim'][i]
         else:
-            mi_inp = compute_mi(
-                logs.sender_input, message,
-                categorize_objects=True, results_per_dim=False)
-            mi_cat = compute_mi(
-                aux_attributes, message,
-                categorize_objects=False, results_per_dim=False)
+            _, categorized_input = torch.unique(
+                logs.sender_input, return_inverse=True, dim=0)
+            categorized_input = categorized_input.unsqueeze(-1)
+            mi_inp = compute_mi(messages, categorized_input)
+            mi_cat = compute_mi(messages, aux_attributes)
             logs.aux['H_msg'] = mi_cat['entropy_msg']
-            logs.aux['H_inp'] = mi_inp['entropy_attr']
+            # logs.aux['H_inp'] = mi_inp['entropy_attr']
             logs.aux['MI_inp'] = mi_inp['mi_msg_attr']
-            logs.aux['H_cat'] = mi_cat['entropy_attr']
+            logs.aux['VI_inp'] = mi_inp['vi_msg_attr']
+            logs.aux['VIn_inp'] = mi_inp['vi_norm_msg_attr']
             logs.aux['MI_cat'] = mi_cat['mi_msg_attr']
-
-        # logs.aux['ent_msg'] = sequence_entropy(message)
-        # if self.image_input:
-        #     logs.aux['mi_attr'] = mutual_info(message, aux_attributes)
-        #     logs.aux['ent_attr'] = sequence_entropy(aux_attributes)
-        # else:
-        #     logs.aux['mi_inp'] = mutual_info(message, logs.sender_input, categorize_y=True)
-        #     logs.aux['ent_inp'] = tensor_entropy(logs.sender_input)
-        #    logs.aux['mi_cat'] = mutual_info(message, aux_attributes)
-        #    logs.aux['ent_cat'] = tensor_entropy(aux_attributes)
-
-        # redundancy
-        logs.aux['max_rep'] = compute_max_rep(message)
-        logs.aux['redund_msg'] = compute_redundancy_msg(message)
-        logs.aux['redund_smb'] = compute_redundancy_smb(
-            message, self.max_len, self.vocab_size,
-            channel=None, error_prob=0.0)
-        logs.aux['redund_smb_adj'] = compute_redundancy_smb_adjusted(
-            message, channel=None, error_prob=0.0,
-            alphabet=actual_vocab, erased_symbol=self.vocab_size)
+            logs.aux['VI_cat'] = mi_inp['vi_msg_attr']
+            logs.aux['VIn_cat'] = mi_inp['vi_norm_msg_attr']
 
         # compositionality
         if self.image_input and aux_attributes is not None:
-            logs.aux['topsim'] = compute_top_sim(aux_attributes, message)
+            logs.aux['topsim'] = compute_top_sim(aux_attributes, messages)
         elif not self.image_input:
-            logs.aux['top_sim'] = compute_top_sim(logs.sender_input, message)
-            logs.aux['top_sim_cat'] = compute_top_sim(aux_attributes, message)
+            logs.aux['topsim'] = compute_top_sim(logs.sender_input, messages)
+            logs.aux['topsim_cat'] = compute_top_sim(aux_attributes, messages)
 
-        # logs.aux['pos_dis'] = compute_posdis(aux_attributes, message)
-        # logs.aux['bos_dis'] = compute_bosdis(
-        # aux_attributes, message, self.vocab_size)
+        # redundancy
+        logs.aux['max_rep'] = compute_max_rep(messages)
+        logs.aux['R'] = compute_redundancy(
+            messages, self.max_len, self.vocab_size,
+            channel=None, error_prob=0.0)
+        logs.aux['R\''] = compute_adjusted_redundancy(
+            messages, channel=None, error_prob=0.0,
+            symbols=torch.arange(self.vocab_size))
+        logs.aux['R"'] = compute_adjusted_redundancy(
+            messages, channel=None, error_prob=0.0,
+            symbols=actual_vocab, erased_symbol=self.vocab_size)
+
+        # compositionality
+        if self.image_input and aux_attributes is not None:
+            logs.aux['topsim'] = compute_top_sim(aux_attributes, messages)
+        elif not self.image_input:
+            logs.aux['topsim'] = compute_top_sim(logs.sender_input, messages)
+            logs.aux['topsim_cat'] = compute_top_sim(aux_attributes, messages)
+
         if self.image_input:
-            logs.aux['pos_dis'] = None
-            logs.aux['bos_dis'] = None
+            logs.aux['posdis'] = compute_posdis(aux_attributes, messages)
+            logs.aux['bosdis'] = compute_bosdis(
+                aux_attributes, messages, self.vocab_size)
 
     def on_epoch_end(self, loss: float, logs: Interaction, epoch: int):
-        message = logs.message if logs.message.dim() == 2 \
+        messages = logs.message if logs.message.dim() == 2 \
             else logs.message.argmax(-1)
 
         if logs.aux_input:
+            aux_attribute_keys = [
+                k for k in logs.aux_input if k.startswith('target')]
             aux_attributes = torch.cat([
-                val for key, val in logs.aux_input.items()
-                if key.startswith('target')
-            ], dim=1)
+                logs.aux_input[k] for k in aux_attribute_keys], dim=1)
         else:
             aux_attributes = None
 
-            # vocab_size = self.vocab_size + 1 \
-            #     if self.channel_type == 'erasure' and self.error_prob > 0. \
-            #     else self.vocab_size
+        vocab_size = self.vocab_size + 1 \
+            if self.channel_type == 'erasure' and self.error_prob > 0. \
+            else self.vocab_size
 
-        lexicon_size = torch.unique(message, dim=0).shape[0]
-        actual_vocab = torch.unique(torch.flatten(message), dim=0)
+        lexicon_size = torch.unique(messages, dim=0).shape[0]
+        actual_vocab = torch.unique(torch.flatten(messages), dim=0)
         actual_vocab_size = actual_vocab.size(0)
+        vocab_size = self.vocab_size + 1 \
+            if self.channel_type == 'erasure' and self.error_prob > 0. \
+            else self.vocab_size
 
         logs.aux['lexicon_size'] = int(lexicon_size)
         logs.aux['actual_vocab_size'] = int(actual_vocab_size)
-        # logs.aux['alignment'] = None
-        # compute_conceptual_alignment(
-        # self.dataloader, self.sender, self.receiver, self.device, self.bs)
 
         if self.image_input:
-            mi_attr = compute_mi(
-                aux_attributes, message,
-                categorize_objects=False, results_per_dim=False)
+            mi_attr = compute_mi(messages, aux_attributes)
             logs.aux['H_msg'] = mi_attr['entropy_msg']
-            logs.aux['MI_attr'] = mi_attr['mi_msg_attr']
-            logs.aux['H_attr'] = mi_attr['entropy_attr']
+            for i, key in enumerate(aux_attribute_keys):
+                k = key.strip('target_')
+                logs.aux[f'MI_{k}'] = mi_attr['mi_msg_attr_dim'][i]
+                logs.aux[f'VI_{k}'] = mi_attr['vi_msg_attr_dim'][i]
+                logs.aux[f'VIn_{k}'] = mi_attr['vi_norm_msg_attr_dim'][i]
         else:
-            # mi_inp = compute_mi_input_msgs(
-            #     logs.sender_input, message,
-            #     categorize_objects=True, results_per_dim=False)
-            mi_cat = compute_mi(
-                aux_attributes, message,
-                categorize_objects=False, results_per_dim=False)
+            # _, categorized_input = torch.unique(
+            #     logs.sender_input, return_inverse=True, dim=0)
+            # mi_inp = compute_mi(categorized_input, messages)
+            mi_cat = compute_mi(messages, aux_attributes)
             logs.aux['H_msg'] = mi_cat['entropy_msg']
-            logs.aux['H_inp'] = None  # mi_inp['mi_msg_inp']
-            logs.aux['MI_inp'] = None  # mi_inp['entropy_inp']
-            logs.aux['H_cat'] = mi_cat['entropy_attr']
+            logs.aux['MI_inp'] = None
+            logs.aux['VI_inp'] = None
+            logs.aux['VIn_inp'] = None
             logs.aux['MI_cat'] = mi_cat['mi_msg_attr']
+            logs.aux['VI_cat'] = mi_cat['vi_msg_attr']
+            logs.aux['VIn_cat'] = mi_cat['vi_norm_msg_attr']
 
         # redundancy
-        logs.aux['max_rep'] = compute_max_rep(message)
-        logs.aux['redund_msg'] = None  # compute_redundancy_msg(message)
-        logs.aux['redund_smb'] = compute_redundancy_smb(
-            message, self.max_len, self.vocab_size,
-            self.channel_type, self.error_prob)
-        logs.aux['redund_smb_adj'] = compute_redundancy_smb_adjusted(
-            message, self.channel_type, self.error_prob,
-            alphabet=actual_vocab, erased_symbol=self.vocab_size)
+        logs.aux['max_rep'] = compute_max_rep(messages)
+        logs.aux['R'] = compute_redundancy(
+            messages, self.max_len, self.vocab_size,
+            channel=None, error_prob=0.0)
+        logs.aux['R\''] = compute_adjusted_redundancy(
+            messages, channel=None, error_prob=0.0,
+            symbols=torch.arange(vocab_size), erased_symbol=self.vocab_size)
+        logs.aux['R"'] = compute_adjusted_redundancy(
+            messages, channel=None, error_prob=0.0,
+            symbols=actual_vocab, erased_symbol=self.vocab_size)
 
         # compositinoality
-        logs.aux['top_sim'] = None
+        logs.aux['topsim'] = None
         if self.image_input:
-            logs.aux['pos_dis'] = None
-            logs.aux['bos_dis'] = None
+            logs.aux['posdis'] = None
+            logs.aux['bosdis'] = None
         else:
-            logs.aux['top_sim_cat'] = None
+            logs.aux['topsim_cat'] = None

@@ -6,10 +6,12 @@
 from __future__ import print_function
 
 import os
-import argparse
-import pathlib
 import json
 import time
+import pathlib
+import argparse
+import operator
+from collections import defaultdict
 from datetime import timedelta
 
 import torch.utils.data
@@ -21,7 +23,8 @@ from ancm.trainers import Trainer
 from ancm.util import (
     DataHandler,
     build_optimizer,
-    evaluate,
+    dump_sender_receiver,
+    get_results_dict,
     print_training_results,
     is_jsonable,
 )
@@ -60,6 +63,7 @@ def get_params(params):
 
     parser.add_argument("--optim", type=str, default="rmsprop", help="Optimizer to use [adam, rmsprop] (default: rmsprop)")
     parser.add_argument("--temperature", type=float, default=1.0, help="GS temperature for the sender (default: 1.0)")
+    parser.add_argument("--trainable_temperature", action="store_true", default=False, help="Enable trainable temperature")
     parser.add_argument("--results_folder", type=str, default='runs', help="Folder where file with dumped messages will be created")
     parser.add_argument("--filename", type=str, default=None, help="Filename (no extension)")
     parser.add_argument("--debug", action="store_true", default=False, help="Run egg/objects_game with pdb enabled")
@@ -154,7 +158,8 @@ def main(params):
             opts.sender_hidden,
             opts.max_len,
             opts.temperature,
-            opts.sender_cell)
+            opts.sender_cell,
+            opts.trainable_temperature)
         receiver = core.RnnReceiverGS(
             _receiver,
             receiver_vocab_size,
@@ -191,7 +196,7 @@ def main(params):
             test_data_len=len(validation_data)),
     ]
 
-    if opts.mode == "gs":
+    if opts.mode == "gs" and not opts.trainable_temperature:
         callbacks.append(core.TemperatureUpdater(agent=sender, decay=0.9, minimum=0.1))
 
     trainer = Trainer(
@@ -207,18 +212,149 @@ def main(params):
     trainer.train(n_epochs=opts.n_epochs, second_val=second_val)
     t_end = time.monotonic()
 
-    output_dict = {}
+    def evaluate(dataloader, aux_dataloader=None):
+        results, messages = defaultdict(dict), []
+        message_counts = defaultdict(lambda: defaultdict(int))
 
-    # get results on the training test
-    results, messages, message_counts = evaluate(
-        game, opts, train_data, device, aux_train_data)
+        apply_noise = opts.error_prob > 0. and opts.channel is not None
+        receiver = game.receiver
+
+        if opts.channel == 'erasure' and opts.error_prob != 0:
+            receiver_vocab_size = opts.vocab_size + 1
+        else:
+            receiver_vocab_size = opts.vocab_size
+
+        dump = dump_sender_receiver(
+            game, dataloader, apply_noise=apply_noise, max_len=opts.max_len,
+            vocab_size=receiver_vocab_size, device=device)
+
+        if aux_dataloader is not None:
+            aux_dump = dump_sender_receiver(
+                game, aux_dataloader, apply_noise=apply_noise,
+                max_len=opts.max_len, vocab_size=receiver_vocab_size,
+                device=device)
+        else:
+            aux_dataloader = dataloader
+            aux_dump = dump
+
+        # Unique targets
+        unique_dict = defaultdict(int)
+        if opts.image_input:
+            for _, _, _, _, _, elem, _ in aux_dump.target_attributes:
+                target = ','.join([str(int(v)) for v in elem.values()])
+                unique_dict[target] += 1
+        else:
+            for s_inp in aux_dump.sender_inputs:
+                target = ','.join([
+                    str(int(x)) for x in s_inp.nonzero().squeeze().tolist()])
+                unique_dict[target] += 1
+
+        # Evaluation in the same setting as during training
+        output_key = 'noise' if apply_noise else 'no_noise'
+        results[output_key] = get_results_dict(
+            dump, receiver, opts, unique_dict,
+            noise=apply_noise, aux_dump=aux_dump)
+
+        for s_inp, msg, r_inp, r_out, label, t_attr, d_attr in aux_dump:
+            if opts.image_input:
+                # For the Obverter dataset, we save object features rather than
+                # images (color, shape, position, rotation)
+                target_vec = ','.join([attr for attr in t_attr.values()])
+                candidate_vex = [
+                    ','.join([attr for attr in attr_dict.values()])
+                    for attr_dict in d_attr]
+                message = ','.join([str(x) for x in msg.tolist()])
+                message_log = {
+                    'target_obj': target_vec,
+                    'candidate_objs': candidate_vex,
+                    'message': message,
+                    'message-no-noise': None,
+                    'label': label}
+
+            else:
+                # VISA concepts are sparse binary tensors, hence we represent each
+                # object as a set of features that it does have
+                target_vec = ','.join([
+                    str(x) for x in s_inp.nonzero().squeeze().tolist()])
+                candidate_vex = [
+                    ','.join([
+                        str(x) for x in candidate.nonzero().squeeze().tolist()])
+                    for candidate in r_inp]
+                message = ','.join([str(x) for x in msg.tolist()])
+                message_log = {
+                    'target_obj': target_vec,
+                    'candidate_objs': candidate_vex,
+                    'message': message,
+                    'message-no-noise': None,
+                    'label': label,
+                    'target_attributes': t_attr,
+                    'distractor_attributes': d_attr}
+
+            messages.append(message_log)
+            message_counts[output_key][message] += 1
+
+        # If we applied noise during training, disable it and evaluate again
+        if apply_noise:
+            dump_nn = dump_sender_receiver(
+                game, aux_dataloader, apply_noise=False,
+                variable_length=True, max_len=opts.max_len,
+                vocab_size=opts.vocab_size,
+                device=device)
+
+            if aux_dataloader is not None:
+                aux_dump = dump_sender_receiver(
+                    game, aux_dataloader, apply_noise=False,
+                    variable_length=True, max_len=opts.max_len,
+                    vocab_size=receiver_vocab_size,
+                    device=device)
+            else:
+                aux_dump = dump
+
+            results['no_noise'] = get_results_dict(
+                dump_nn, receiver, opts, unique_dict, False, aux_dump)
+
+            # Iterating through Dump without noise
+            for i, (s_inp, msg, r_inp, _, _, _, _) in enumerate(dump_nn):
+                if opts.image_input:  # Obverter
+                    target_vec = ','.join([attr for attr in t_attr.values()])
+                    candidate_vex = [
+                        ','.join([attr for attr in attr_dict.values()])
+                        for attr_dict in d_attr]
+                    message = ','.join([str(x) for x in msg.tolist()])
+
+                else:  # VISA
+                    target_vec = ','.join([
+                        str(x) for x in s_inp.nonzero().squeeze().tolist()])
+                    candidate_vex = [
+                        ','.join([
+                            str(x) for x in candidate.nonzero().squeeze().tolist()])
+                        for candidate in r_inp]
+                    message = ','.join([str(x) for x in msg.tolist()])
+
+                message_log = messages[i]
+                assert message_log['target_obj'] == target_vec
+                assert message_log['candidate_objs'] == candidate_vex
+
+                message_log['message-no-noise'] = message
+                message_counts['no_noise'][message] += 1
+
+        for key in message_counts:
+            message_counts[key] = sorted(
+                message_counts[key].items(),
+                key=operator.itemgetter(1),
+                reverse=True)
+
+        return results, messages, message_counts
+
+
+    # get results on the train and test test
+    output_dict = {}
+    results, messages, message_counts = evaluate(train_data, aux_train_data)
     output_dict['train'] = {
         'results': results,
         'messages': messages,
         'message_counts': message_counts}
-
-    # get results on the test set
-    results, messages, message_counts = evaluate(game, opts, test_data, device)
+    results, messages, message_counts = evaluate(test_data)
     output_dict['test'] = {
         'results': results,
         'messages': messages,

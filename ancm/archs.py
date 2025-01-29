@@ -99,7 +99,7 @@ class MovingAverageBaseline(Baseline):
 class SeeingConvNet(nn.Module):
     def __init__(self, n_hidden):
         super(SeeingConvNet, self).__init__()
-        
+
         # Define the sequence of convolutional layers, same as Lazaridou paper 2018
         self.conv_layers = nn.Sequential(
             nn.Conv2d(in_channels=3, out_channels=32, kernel_size=3, stride=2, padding=1),
@@ -134,9 +134,9 @@ class SeeingConvNet(nn.Module):
             nn.BatchNorm2d(32),
             nn.ReLU()
         )
-        params = sum(p.numel() for p in self.conv_layers.parameters())
         self.conv_layers = None
-        print('Lazaridou', (params), 'parameters')
+        # params = sum(p.numel() for p in self.conv_layers.parameters())
+        # print('Lazaridou', (params), 'parameters')
 
         # Denamganaï, Missaoui and Walker, 2023 (https://arxiv.org/pdf/2304.14511)
         # https://github.com/Near32/ReferentialGym/blob/develop/ReferentialGym/networks/networks.py
@@ -164,15 +164,13 @@ class SeeingConvNet(nn.Module):
             nn.BatchNorm2d(n_filters * 2),
             nn.ReLU(),
         )
-        params = sum(p.numel() for p in self.conv_net.parameters())
-        print('ReferentialGym', (params), 'parameters')
+        # params = sum(p.numel() for p in self.conv_net.parameters())
+        # print('ReferentialGym', (params), 'parameters')
 
-        out_features = ((input_shape - k + 2 * p) // s + 1) ** 2
+        self.out_features = ((input_shape - k + 2 * p) // s + 1) ** 2
 
         self.fc = nn.Sequential(
-            nn.Linear(out_features, n_hidden),
-            nn.ReLU(),
-            nn.Linear(n_hidden, n_hidden),
+            nn.Linear(self.out_features, n_hidden),
             nn.ReLU(),
         )
         # Choi & Lazaridou (2018) use one layer of 256 hidden units? (https://arxiv.org/pdf/1804.02341)
@@ -724,12 +722,13 @@ class SymmetricChannel(Channel):
             def replacement_probs(ind):
                 row = [0] * self.vocab_size
                 row[ind] = 1
-                return torch.tensor(row, dtype=torch.int)
+                return torch.tensor(row)
 
-            replaced_probs = torch.stack([
-                replacement_probs(s) for s in replacement_symbols
-            ])
-            target_chunks = target_ids.chunk(chunks=3)
-            message[target_chunks] = replaced_probs
+            if len(replacement_symbols) > 0:
+                replaced_probs = torch.stack([
+                    replacement_probs(s) for s in replacement_symbols
+                ]).to(message)
+                target_chunks = target_ids.t().chunk(chunks=3)
+                message[target_chunks] = replaced_probs
 
         return message

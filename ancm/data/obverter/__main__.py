@@ -156,6 +156,13 @@ def export_input_data(n_distractors, n_samples, n_img, resolution):
                                    None, resolution)
                     sample_set[0, distractor_pos[j]] = distr_image
 
+                    if distr_shape == 'ellipsoid':
+                        pass
+                    elif distr_shape == 'box':  # box: two symmetry axes
+                        distr_rot = distr_rot % 2
+                    else:  # sphere, cylinder, torus, cone: rotational symmetry
+                        distr_rot = 0
+
                     attributes[f'distr_{j}_color'].append(distr_color)
                     attributes[f'distr_{j}_shape'].append(distr_shape)
                     attributes[f'distr_{j}_xpos'].append(distr_xpos)
