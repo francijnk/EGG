@@ -212,7 +212,7 @@ def main(params):
     trainer.train(n_epochs=opts.n_epochs, second_val=second_val)
     t_end = time.monotonic()
 
-    def evaluate(dataloader, aux_dataloader=None):
+    def evaluate(dataloader):
         results, messages = defaultdict(dict), []
         message_counts = defaultdict(lambda: defaultdict(int))
 
@@ -228,40 +228,34 @@ def main(params):
             game, dataloader, apply_noise=apply_noise, max_len=opts.max_len,
             vocab_size=receiver_vocab_size, device=device)
 
-        if aux_dataloader is not None:
-            aux_dump = dump_sender_receiver(
-                game, aux_dataloader, apply_noise=apply_noise,
-                max_len=opts.max_len, vocab_size=receiver_vocab_size,
-                device=device)
-        else:
-            aux_dataloader = dataloader
-            aux_dump = dump
-
         # Unique targets
         unique_dict = defaultdict(int)
         if opts.image_input:
-            for _, _, _, _, _, elem, _ in aux_dump.target_attributes:
-                target = ','.join([str(int(v)) for v in elem.values()])
-                unique_dict[target] += 1
+            for i in range(len(dump)):
+                target_attrs = [
+                    str(int(attr_values[i]))
+                    for attr_values in dump.target_attributes.values()]
+                target_repr = ','.join(target_attrs)
+                unique_dict[target_repr] += 1
         else:
-            for s_inp in aux_dump.sender_inputs:
+            for s_inp in dump.sender_inputs:
                 target = ','.join([
                     str(int(x)) for x in s_inp.nonzero().squeeze().tolist()])
                 unique_dict[target] += 1
 
         # Evaluation in the same setting as during training
-        output_key = 'noise' if apply_noise else 'no_noise'
+        output_key = 'noise' if apply_noise else 'no noise'
         results[output_key] = get_results_dict(
             dump, receiver, opts, unique_dict,
-            noise=apply_noise, aux_dump=aux_dump)
+            noise=apply_noise)
 
-        for s_inp, msg, r_inp, r_out, label, t_attr, d_attr in aux_dump:
+        for s_inp, msg, r_inp, r_out, label, t_attr, d_attr in dump:
             if opts.image_input:
                 # For the Obverter dataset, we save object features rather than
                 # images (color, shape, position, rotation)
-                target_vec = ','.join([attr for attr in t_attr.values()])
+                target_vec = ','.join([str(attr) for attr in t_attr.values()])
                 candidate_vex = [
-                    ','.join([attr for attr in attr_dict.values()])
+                    ','.join([str(attr) for attr in attr_dict.values()])
                     for attr_dict in d_attr]
                 message = ','.join([str(x) for x in msg.tolist()])
                 message_log = {
@@ -295,26 +289,16 @@ def main(params):
 
         # If we applied noise during training, disable it and evaluate again
         if apply_noise:
-            dump_nn = dump_sender_receiver(
-                game, aux_dataloader, apply_noise=False,
-                variable_length=True, max_len=opts.max_len,
+            dump = dump_sender_receiver(
+                game, dataloader, apply_noise=False,
+                max_len=opts.max_len,
                 vocab_size=opts.vocab_size,
                 device=device)
 
-            if aux_dataloader is not None:
-                aux_dump = dump_sender_receiver(
-                    game, aux_dataloader, apply_noise=False,
-                    variable_length=True, max_len=opts.max_len,
-                    vocab_size=receiver_vocab_size,
-                    device=device)
-            else:
-                aux_dump = dump
-
-            results['no_noise'] = get_results_dict(
-                dump_nn, receiver, opts, unique_dict, False, aux_dump)
+            results['no_noise'] = get_results_dict(dump, receiver, opts, unique_dict, False)
 
             # Iterating through Dump without noise
-            for i, (s_inp, msg, r_inp, _, _, _, _) in enumerate(dump_nn):
+            for i, (s_inp, msg, r_inp, _, _, _, _) in enumerate(dump):
                 if opts.image_input:  # Obverter
                     target_vec = ','.join([attr for attr in t_attr.values()])
                     candidate_vex = [
@@ -346,14 +330,15 @@ def main(params):
 
         return results, messages, message_counts
 
+    output_dict = {}
 
     # get results on the train and test test
-    output_dict = {}
-    results, messages, message_counts = evaluate(train_data, aux_train_data)
-    output_dict['train'] = {
-        'results': results,
-        'messages': messages,
-        'message_counts': message_counts}
+    if aux_train_data is not None:
+        results, messages, message_counts = evaluate(aux_train_data)
+        output_dict['train'] = {
+            'results': results,
+            'messages': messages,
+            'message_counts': message_counts}
     results, messages, message_counts = evaluate(test_data)
     output_dict['test'] = {
         'results': results,

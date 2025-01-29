@@ -88,7 +88,7 @@ def build_alphabet(
             mask = torch.logical_not(mask)
             alphabet[mask, i] = -1
 
-        return alphabet
+        return alphabet#.to(torch.float)
 
     # handle messages
     if symbols is not None:
@@ -110,7 +110,7 @@ def build_alphabet(
             [[0] + non_eos_symbols] * max_len
             + [[0] + [-1] * len(non_eos_symbols)] * (x.size(1) - max_len))
 
-    return torch.tensor(alphabet)
+    return torch.tensor(alphabet)#.to(torch.float)
 
 
 def sequence_entropy(
@@ -156,6 +156,8 @@ def mutual_info(
     assert len(x) == len(y), "x and y must be of equal length"
     assert len(x) == len(y.view(-1)), "y may only represent a single RV"
 
+    # single_dim_x = len(x) == len(x.view(-1))
+
     x = x if x.dim() == 2 else x.unsqueeze(-1)
     y = y if y.dim() == 2 else y.unsqueeze(-1)
     xy = torch.cat([x, y], dim=-1)
@@ -164,9 +166,9 @@ def mutual_info(
     alphabet_y = build_alphabet(y, True)
 
     # ensure symbol sets are disjoint
-    alphabet_y += alphabet_x.max() + 1
-    y += alphabet_x.max() + 1
-    xy[:, -1] += alphabet_x.max() + 1
+    alphabet_y += alphabet_x.max() + 1.
+    y += alphabet_x.max() + 1.
+    xy[:, -1] += alphabet_x.max() + 1.
 
     # pad both alphabets with the fill value
     padded_alphabet_x = torch.cat([
@@ -212,6 +214,7 @@ def compute_mi(messages: torch.Tensor, attributes: torch.Tensor) -> dict:
             'mi_msg_attr': mi_msg_attr,
             'vi_msg_attr': vi_msg_attr,
             'vi_norm_msg_attr': vi_norm_msg_attr,
+            'is_msg_attr': 1 - vi_norm_msg_attr,
         }
 
     else:  # return values per attribute dimension instead
@@ -231,6 +234,10 @@ def compute_mi(messages: torch.Tensor, attributes: torch.Tensor) -> dict:
             1. - mi_msg_attr / entropy_msg_attr
             for mi_msg_attr, entropy_msg_attr
             in zip(mi_msg_attr_dim, entropy_msg_attr_dim)]
+        is_msg_attr_dim = [
+            mi_msg_attr / entropy_msg_attr
+            for mi_msg_attr, entropy_msg_attr
+            in zip(mi_msg_attr_dim, entropy_msg_attr_dim)]
 
         return {
             'entropy_msg': entropy_msg,
@@ -239,6 +246,7 @@ def compute_mi(messages: torch.Tensor, attributes: torch.Tensor) -> dict:
             'mi_msg_attr_dim': mi_msg_attr_dim,
             'vi_msg_attr_dim': vi_msg_attr_dim,
             'vi_norm_msg_attr_dim': vi_norm_msg_attr_dim,
+            'is_msg_attr_dim': is_msg_attr_dim,
         }
 
 
@@ -449,12 +457,15 @@ def maximize_sequence_entropy(
     return _sequence_entropy(optimal_eos_prob.x), eos_probs
 
 
-def truncate_messages(messages, receiver_input, labels):
+def truncate_messages(messages, receiver_input, labels, mode):
     new_messages = []
     new_r_input = []
     new_labels = []
     for i, message in enumerate(messages):
-        truncated = remove_n_items(message, 1)
+        if mode == 'rf':
+            truncated = remove_n_items(message, 1)
+        else:
+            truncated = remove_n_dims(message, 1)
         new_messages.extend(truncated)
         new_r_input.extend([receiver_input[i]] * len(truncated))
         new_labels.extend([labels[i]] * len(truncated))
@@ -493,26 +504,57 @@ def remove_n_items(tensor, n=1):
     return result
 
 
-def compute_accuracy2(
-        messages: torch.Tensor,
-        receiver_inputs: torch.Tensor,
-        labels: torch.Tensor,
-        receiver: torch.nn.Module,
-        batch_size: int):
+def remove_n_dims(tensor, n=1):
+    # Get the number of rows (N)
+    num_rows = tensor.shape[0]
 
-    messages, receiver_inputs, labels = truncate_messages(messages, receiver_inputs, labels)
+    # Ensure there are enough rows to remove `n` and keep the last row
+    if n >= num_rows:
+        raise ValueError("Cannot remove more rows than available (excluding the last row).")
+    if num_rows <= 1:
+        raise ValueError("The input tensor must have more than one row.")
+
+    # Get indices of rows that can be removed (exclude the last row)
+    removable_indices = list(range(num_rows - 1))  # Exclude last row
+
+    # Generate all combinations of `n` rows to remove
+    combos = list(combinations(removable_indices, n))
+
+    # Create new tensors with the selected rows removed
+    result = []
+    for combo in combos:
+        mask = torch.ones(num_rows, dtype=torch.bool)
+        mask[list(combo)] = False  # Set rows in the combo to False (remove them)
+        new = tensor[mask]
+        new = new.to(torch.float)
+        result.append(new)
+
+    return result
+
+
+def compute_accuracy2(dump, receiver: torch.nn.Module, opts):
+
+    messages, receiver_inputs, labels = truncate_messages(
+        dump.messages, dump.receiver_inputs, dump.labels, opts.mode)
 
     dataset = CustomDataset(messages, receiver_inputs)
     dataloader = torch.utils.data.DataLoader(
         dataset,
-        batch_size=batch_size,
+        batch_size=opts.batch_size,
         shuffle=False,
         drop_last=True)
 
     predictions = []
-    for b_messages, b_inputs in dataloader:
-        outputs, _, _ = receiver(b_messages, b_inputs)
-        predictions.append(outputs.reshape(-1, 1))
+    for batched_messages, batched_inputs in dataloader:
+        outputs = receiver(batched_messages, batched_inputs)
+        if opts.mode == 'rf':
+            outputs = outputs[0]
+            predictions.append(outputs.detach().reshape(-1, 1))
+        else:
+            lengths = find_lengths(batched_messages.argmax(-1))
+            for i in range(batched_messages.size(0)):
+                outputs_i = outputs[i, lengths[i] - 1].argmax(-1)
+                predictions.append(outputs_i.detach().reshape(-1, 1))
 
     predictions = torch.cat(predictions, dim=0)
     labels = torch.stack(labels)[:len(predictions)]
@@ -600,7 +642,6 @@ def compute_adjusted_redundancy(
         max_entropies = max_entropies[1:]
 
     # compute redundancy
-    # TODO approximate length probabilities 
     H_msg = H_max = sum(-p * np.log2(p) for p in len_probs.values())
     for i in range(1, max_len + 1):
         _messages = messages[(lengths == i), ...]
