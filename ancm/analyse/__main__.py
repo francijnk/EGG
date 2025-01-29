@@ -2,6 +2,7 @@ import os
 import argparse
 import pandas as pd
 import seaborn as sns
+import matplotlib.pyplot as plt
 
 import ancm.analyse.style
 from ancm.analyse.util import load_data, get_long_val_data, close_plot
@@ -281,6 +282,44 @@ def analyse(data_test, output_dir):
         file.write("\n".join(lines))
 
 
+def plot_test_perchannel(data_test, out_dir):
+
+    test_long = pd.melt(pd.DataFrame(data_test),
+        id_vars='max_len channel error_prob noise'.split(),
+        value_vars=None, var_name='metric', value_name='value', ignore_index=True)
+    test_long = test_long.sort_values('max_len')
+    test_long.max_len = test_long.max_len.astype(str)
+    test_long.value = test_long.value.astype(float)
+    test_long.error_prob = test_long.error_prob.astype(float)
+
+    channels = pd.unique(test_long['channel'])
+
+    col_names = ['accuracy', 'redundancy_symbol', 'topographic_rho']
+    df_metrics = test_long[test_long.metric.isin(col_names)]
+    
+    for channel in channels:
+        df = df_metrics.loc[
+                (df_metrics.channel == channel)]
+        value_x_tick = [0, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30]
+        plot = sns.relplot(df, x = "error_prob", y= 'value', row="max_len",
+                           col="metric", hue="max_len", style="noise", kind='line',
+                           marker ='o', markersize=8, facet_kws={"margin_titles": True})
+        
+        for ax in plot.axes.flatten():
+            ax.tick_params(labelbottom=True)
+
+        plot.set(xticks=value_x_tick)
+        (plot
+        .set_axis_labels("Error Probability", "Value")
+        .set_titles(col_template="{col_name}", row_template="max len {row_name}")
+        .set_xticklabels(value_x_tick)
+        .tight_layout())
+        plot.fig.subplots_adjust(top=0.95)
+        plot.fig.suptitle(f'{channel}', fontsize = '30' )
+        plot.savefig(os.path.join(out_dir, f"test_{channel}.png"))
+        close_plot(plot)
+
+
 def main():
     args = parse_args()
 
@@ -290,16 +329,17 @@ def main():
     os.makedirs(processed_data_path, exist_ok=True)
     data_train, data_val, data_test = load_data(args.i)
 
-    data_train.to_csv(os.path.join(args.i, 'processed', 'data_train.csv'))
-    data_test.to_csv(os.path.join(args.i, 'processed', 'data_test.csv'))
-    data_val.to_csv(os.path.join(args.i, 'processed', 'data_val.csv'))
+    #data_train.to_csv(os.path.join(args.i, 'processed', 'data_train.csv'))
+    #data_test.to_csv(os.path.join(args.i, 'processed', 'data_test.csv'))
+    #data_val.to_csv(os.path.join(args.i, 'processed', 'data_val.csv'))
 
     os.makedirs(args.o, exist_ok=True)
-
-    plot_test(data_test, args.o)
-    plot_training(data_train, args.o, val=False)
-    plot_training(data_val, args.o, val=True)
-    analyse(data_test, args.o)
+    
+    #plot_test(data_test, args.o)
+    #plot_training(data_train, args.o, val=False)
+    #plot_training(data_val, args.o, val=True)
+    #analyse(data_test, args.o)
+    plot_test_perchannel(data_test, args.o)
 
 
 if __name__ == '__main__':

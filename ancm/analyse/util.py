@@ -126,12 +126,15 @@ def load_data(input_dir):
             df['max_len'] = max_len
             df['channel'] = channel
             df['error_prob'] = error_prob
+    
+    for max_len, channel, error_prob in data_train:
         for df in data_train[(max_len, channel, error_prob)]:
             df['max_len'] = max_len
             df['channel'] = channel
             df['error_prob'] = error_prob
+    
     data_val = pd.concat([df for key in data_val for df in data_val[key]], ignore_index=True)
-    data_train = pd.concat([df for key in data_val for df in data_val[key]], ignore_index=True)
+    data_train = pd.concat([df for key in data_train for df in data_train[key]], ignore_index=True)
 
     # data_test: export to DataFrame and handle baseline results
     data_test = pd.DataFrame(data_test)
@@ -153,7 +156,7 @@ def load_data(input_dir):
 def get_long_train_data(data_train, metrics):
     data_long = pd.melt(
         data_val,
-        id_vars='epoch max_len channel error_prob'.split(),
+        id_vars='epoch max_len channel error_prob noise'.split(),
         value_vars=metrics, var_name='metric', value_name='value', ignore_index=True)
     # data_long.dropna(inplace=True)
     return data_long
