@@ -1,10 +1,9 @@
 import json
 import torch
-import operator
 import numpy as np
 from tabulate import tabulate
-from torch.utils.data import Dataset, DataLoader
 from collections import defaultdict
+from torch.utils.data import Dataset, DataLoader
 
 from typing import Optional
 
@@ -13,14 +12,13 @@ from egg.core.util import find_lengths, move_to, get_opts
 from ancm.metrics import (
     # compute_conceptual_alignment,
     compute_max_rep,
-    compute_redundancy_msg,
-    compute_redundancy_smb,
-    compute_redundancy_smb_adjusted,
+    compute_redundancy,
+    compute_adjusted_redundancy,
     compute_accuracy2,
     compute_top_sim,
     compute_mi,
-    # compute_posdis,
-    # compute_bosdis,
+    compute_posdis,
+    compute_bosdis,
 )
 
 common_opts = get_opts()
@@ -233,13 +231,12 @@ class Dump:
 
 
 def dump_sender_receiver(
-    game: torch.nn.Module,
-    dataset: torch.utils.data.DataLoader,
-    apply_noise: bool,
-    max_len: int,
-    vocab_size: int,
-    device: Optional[torch.device] = None,
-):
+        game: torch.nn.Module,
+        dataset: torch.utils.data.DataLoader,
+        apply_noise: bool,
+        max_len: int,
+        vocab_size: int,
+        device: Optional[torch.device] = None):
     """
     A tool to dump the interaction between Sender and Receiver
     :param game: A Game instance
@@ -270,7 +267,8 @@ def dump_sender_receiver(
                 attributes[key].extend(val)
 
             message = game.sender(sender_input)
-            message, log_prob, entropy = message
+            if isinstance(message, tuple):
+                message, log_prob, entropy = message
 
             if game.channel:  # Add noise to the message
                 message = game.channel(message, apply_noise=apply_noise)
@@ -305,14 +303,13 @@ def get_results_dict(dump, receiver, opts, unique_dict, noise=True):
         'unique_messages': len(torch.unique(msg, dim=0)),
         'unique_target_objects': len(unique_dict.keys()),
         'actual_vocab_size': len(actual_vocab),
-        'redundancy_msg': compute_redundancy_msg(aux_msg),
-        'redundancy_smb': compute_redundancy_smb(
+        'redundancy': compute_redundancy(
             msg, opts.max_len, opts.vocab_size, channel, error_prob),
-        'redundancy_smb_adj': compute_redundancy_smb_adjusted(
-            msg, error_prob, error_prob, actual_vocab),
+        'redundancy_adj': compute_adjusted_redundancy(
+            msg, channel, error_prob, torch.arange(receiver_vocab_size)),
+        'redundancy_adj_voc': compute_adjusted_redundancy(
+            msg, channel, error_prob, actual_vocab),
         'max_rep': compute_max_rep(msg).mean().item(),
-        # posdis = compute_posdis(sender_inputs, messages)
-        # bosdis = compute_bosdis(sender_inputs, messages, opts.vocab_size)
         # alignment = compute_conceptual_alignment(
         #     test_data, _receiver, _sender, device, opts.batch_size)
     }
@@ -326,7 +323,7 @@ def get_results_dict(dump, receiver, opts, unique_dict, noise=True):
         results['topographic_rho_category'] = compute_top_sim(attr, msg)
 
     if opts.image_input:
-        mi_attr_msg = compute_mi(attr, msg, False)
+        mi_attr_msg = compute_mi(msg, attr)
         results['entropy_msg'] = mi_attr_msg['entropy_msg']
         results['entropy_attr'] = mi_attr_msg['entropy_attr']
         results['entropy_attr_dim'] = {
@@ -371,142 +368,6 @@ def get_results_dict(dump, receiver, opts, unique_dict, noise=True):
         results['is_msg_cat'] = mi_cat_msg['vi_msg_attr']
 
     return results
-
-
-def evaluate(game, opts, dataloader, device, aux_dataloader=None):
-    results, messages = defaultdict(dict), []
-    message_counts = defaultdict(lambda: defaultdict(int))
-
-    apply_noise = opts.error_prob > 0. and opts.channel is not None
-    receiver = game.receiver
-
-    if opts.channel == 'erasure' and opts.error_prob != 0:
-        receiver_vocab_size = opts.vocab_size + 1
-    else:
-        receiver_vocab_size = opts.vocab_size
-
-    dump = dump_sender_receiver(
-        game, dataloader, apply_noise=apply_noise, max_len=opts.max_len,
-        vocab_size=receiver_vocab_size, device=device)
-
-    if aux_dataloader is not None:
-        aux_dump = dump_sender_receiver(
-            game, aux_dataloader, apply_noise=apply_noise,
-            variable_length=True, max_len=opts.max_len,
-            vocab_size=receiver_vocab_size,
-            device=device)
-    else:
-        aux_dataloader = dataloader
-        aux_dump = dump
-
-    # Unique targets
-    unique_dict = defaultdict(int)
-    if opts.image_input:
-        for _, _, _, _, _, elem, _ in aux_dump.target_attributes:
-            target = ','.join([str(int(v)) for v in elem.values()])
-            unique_dict[target] += 1
-    else:
-        for s_inp in aux_dump.sender_inputs:
-            target = ','.join([
-                str(int(x)) for x in s_inp.nonzero().squeeze().tolist()])
-            unique_dict[target] += 1
-
-    # Evaluation in the same setting as during training
-    output_key = 'noise' if apply_noise else 'no_noise'
-    results[output_key] = get_results_dict(
-        dump, receiver, opts, unique_dict,
-        noise=apply_noise, aux_dump=aux_dump)
-
-    for s_inp, msg, r_inp, r_out, label, t_attr, d_attr in aux_dump:
-        if opts.image_input:
-            # For the Obverter dataset, we save object features rather than
-            # images (color, shape, position, rotation)
-            target_vec = ','.join([attr for attr in t_attr.values()])
-            candidate_vex = [
-                ','.join([attr for attr in attr_dict.values()])
-                for attr_dict in d_attr]
-            message = ','.join([str(x) for x in msg.tolist()])
-            message_log = {
-                'target_obj': target_vec,
-                'candidate_objs': candidate_vex,
-                'message': message,
-                'message-no-noise': None,
-                'label': label}
-
-        else:
-            # VISA concepts are sparse binary tensors, hence we represent each
-            # object as a set of features that it does have
-            target_vec = ','.join([
-                str(x) for x in s_inp.nonzero().squeeze().tolist()])
-            candidate_vex = [
-                ','.join([
-                    str(x) for x in candidate.nonzero().squeeze().tolist()])
-                for candidate in r_inp]
-            message = ','.join([str(x) for x in msg.tolist()])
-            message_log = {
-                'target_obj': target_vec,
-                'candidate_objs': candidate_vex,
-                'message': message,
-                'message-no-noise': None,
-                'label': label,
-                'target_attributes': t_attr,
-                'distractor_attributes': d_attr}
-
-        messages.append(message_log)
-        message_counts[output_key][message] += 1
-
-    # If we applied noise during training, disable it and evaluate again
-    if apply_noise:
-        dump_nn = dump_sender_receiver(
-            game, aux_dataloader, apply_noise=False,
-            variable_length=True, max_len=opts.max_len,
-            vocab_size=opts.vocab_size,
-            device=device)
-
-        if aux_dataloader is not None:
-            aux_dump = dump_sender_receiver(
-                game, aux_dataloader, apply_noise=False,
-                variable_length=True, max_len=opts.max_len,
-                vocab_size=receiver_vocab_size,
-                device=device)
-        else:
-            aux_dump = dump
-
-        results['no_noise'] = get_results_dict(
-            dump_nn, receiver, opts, unique_dict, False, aux_dump)
-
-        # Iterating through Dump without noise
-        for i, (s_inp, msg, r_inp, _, _, _, _) in enumerate(dump_nn):
-            if opts.image_input:  # Obverter
-                target_vec = ','.join([attr for attr in t_attr.values()])
-                candidate_vex = [
-                    ','.join([attr for attr in attr_dict.values()])
-                    for attr_dict in d_attr]
-                message = ','.join([str(x) for x in msg.tolist()])
-
-            else:  # VISA
-                target_vec = ','.join([
-                    str(x) for x in s_inp.nonzero().squeeze().tolist()])
-                candidate_vex = [
-                    ','.join([
-                        str(x) for x in candidate.nonzero().squeeze().tolist()])
-                    for candidate in r_inp]
-                message = ','.join([str(x) for x in msg.tolist()])
-
-            message_log = messages[i]
-            assert message_log['target_obj'] == target_vec
-            assert message_log['candidate_objs'] == candidate_vex
-
-            message_log['message-no-noise'] = message
-            message_counts['no_noise'][message] += 1
-
-    for key in message_counts:
-        message_counts[key] = sorted(
-            message_counts[key].items(),
-            key=operator.itemgetter(1),
-            reverse=True)
-
-    return results, messages, message_counts
 
 
 def print_training_results(output_dict):
@@ -570,7 +431,7 @@ def crop_messages(interaction):
 
         nonzero_ids = message.nonzero()
         nonzero_chunks = nonzero_ids.t().chunk(chunks=2)
-        nonzero_chunks = message.nonzero(as_tuple=True)
+        # nonzero_chunks = message.nonzero(as_tuple=True)
         targets = (positions[nonzero_chunks] > lengths[nonzero_chunks] - 1)
         targets = targets.squeeze()
         target_ids = nonzero_ids[targets]

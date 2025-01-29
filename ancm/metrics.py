@@ -1,19 +1,19 @@
+from __future__ import annotations
+
 import math
 import torch
 import numpy as np
 from egg.core.util import find_lengths
 from scipy.optimize import minimize_scalar
-from pyitlib.discrete_random_variable import entropy, entropy_joint
 from sklearn.metrics.pairwise import cosine_similarity
 from Levenshtein import distance  # , ratio
 from scipy.stats import pearsonr, spearmanr
 from collections import defaultdict
 from torch.utils.data import Dataset
 from itertools import combinations
+from pyitlib.discrete_random_variable import entropy, entropy_joint
 
-from typing import List, Optional, Iterable
-
-# from ancm.util import CustomDataset
+from typing import Optional, Iterable, Tuple
 
 
 class CustomDataset(Dataset):
@@ -39,16 +39,20 @@ class CustomDataset(Dataset):
 def binary_entropy(p: float):
     if p == 0. or p == 1.:
         return 0.
-    return -p * math.log(p, 2) - (1 - p) * math.log(1 - p, 2)
+    return -p * np.log2(p) - (1 - p) * np.log2(1 - p)
 
 
-def tensor_entropy(tensor: torch.Tensor):
+def tensor_entropy(
+        x: torch.Tensor,
+        alphabet: Optional[torch.Tensor] = None,
+        estimator: str = 'JAMES-STEIN'):
     """
-    Computes entropy using a James-Stein estimator.
+    Estimates entropy of the RV X represented by the tensor x.
+
     If the tensor has more than one dimension, each tensors indexed by the 1st
     dimension is treated as one of the elements to apply the operation upon.
     """
-    if tensor.dim() == 0:
+    if x.dim() == 0:
         return 0.
     elif x.dim() > 1:
         _, x = torch.unique(x, return_inverse=True, dim=0)
@@ -92,7 +96,7 @@ def build_alphabet(
     elif vocab_size is not None:
         non_eos_symbols = [i + 1 for i in range(vocab_size - 1)]
     else:
-        _, values = torch.unique(tensor, return_inverse=True, dim=0)
+        non_eos_symbols = [s for s in torch.unique(x) if s > 0]
 
     # compute entropy assuming the message length provided (excluding EOS)
     if length is not None:
@@ -110,78 +114,47 @@ def build_alphabet(
 
 
 def sequence_entropy(
-        sequences: torch.Tensor,
-        vocab_size: Optional[int] = None,
-        length: Optional[int] = None,
-        alphabet: Optional[List[float]] = None):
+        x: torch.Tensor,
+        alphabet: Optional[torch.Tensor] = None,
+        estimator: str = 'JAMES-STEIN') -> float:
     """
-    Computes entropy of the sequences, where each symbol is treated as a
-    distinct random variable. The entropy is approximated from the sample of
-    using the James-Stein formula. If any of the vocab_size, length or alphabet
-    parameters is specified, the function assumes that the sequences are
-    messages. In case length is provided, it is assumed that all messages have
-    the requested length (excluding EOS).
+    Estimates the entropy of the RV X represented by the tensor x, assuming
+    that X if a compound RV if x has 2 dimensions, i.e. X = X1, ..., Xm.
+    The entropy is approximated from the sample using the James-Stein formula.
+
     """
+    if x.dim() == 1:
+        return tensor_entropy(x)
 
-    # handle arbitrary sequences
-    if vocab_size is None and alphabet is None:
-        alphabet = torch.nn.utils.rnn.pad_sequence([
-            torch.unique(sequences[..., i])
-            for i in range(sequences.shape[-1])], padding_value=-1).t()
-        if sequences.dim() == 1:
-            sequences = sequences.unsqueeze(0)
-        return entropy_joint(
-            sequences.t().numpy(), estimator='JAMES-STEIN', Alphabet_X=alphabet.numpy())
+    if alphabet is not None:
+        alphabet = alphabet.numpy()
 
-    # handle messages
-    if alphabet is None:
-        non_eos_alphabet = [i + 1 for i in range(vocab_size - 1)]
-    else:
-        non_eos_alphabet = [s for s in alphabet if s > 0] + [-1] * (vocab_size - len(alphabet) - 1)
+    H = entropy_joint(
+        x.transpose(0, -1).numpy(),
+        Alphabet_X=alphabet,
+        estimator=estimator)
 
-    # compute entropy assuming the message length provided (excluding EOS)
-    if length is not None:
-        alphabet_smb = (
-            [[-1] + non_eos_alphabet] * length
-            + [[0] + [-1] * len(non_eos_alphabet)] * (sequences.size(1) - length))
-        entropy = entropy_joint(
-            sequences.t().numpy(), estimator='JAMES-STEIN', Alphabet_X=alphabet_smb)
-
-    # handle messages of any permissible length
-    else:
-        max_len = find_lengths(sequences).max() - 1
-        alphabet_smb = (
-            [[0] + non_eos_alphabet] * max_len
-            + [[0] + [-1] * (vocab_size - 1)] * (sequences.size(1) - max_len))
-        entropy = entropy_joint(
-            sequences.t().numpy(), estimator='JAMES-STEIN', Alphabet_X=alphabet_smb)
-
-    return entropy.item()
+    return H.item()
 
 
-def mutual_info(x: torch.Tensor, y: torch.Tensor):  # , categorize_y: bool = False):
+def mutual_info(
+        x: torch.Tensor,
+        y: torch.Tensor,
+        alphabet_x: Optional[torch.Tensor] = None) -> Tuple[float, float]:
     """
-    Given a two tensors of equal length, representing two random variables,
-    computes mutual information between them. In case x is two dimensional, its
-    entropy will be computed as joint entropy of the 2nd dimension, and the
-    value returned will be an estimate of I(X1, X2, ..., Xm; Y).
+    Given a two tensors x, y of equal length, representing realizations of RVs
+    X and Y, estimates I(X; Y) using the James-Stein estimator by approximating
+    H(X), H(Y) and H(X, Y). Returns a tuple of I(X; Y), H(X, Y).
 
-    Otherwise, if x is 1 dimensional, an estimate of I(X; Y) is returned.
+    If the first tensor has more than one dimension, i.e. it represents a
+    compound RV (X = X1, ..., Xn), computations are based on the joint entropy
+    of X1, ..., Xn and the function approximates I(X1, ..., Xn; Y).
 
-    In case a multi-dimensional tensor is passed as y, all dimensions except
-    for the first one will be categorized.
+    If Y has multiple dimensions, its values are first categorized along the
+    first axis.
     """
-    assert len(x) == len(y)
-
-    x = x if x.dim() > 1 else x.unsqueeze(dim=1)
-    y = y if y.dim() > 1 else y.unsqueeze(dim=1)
-
-    if False:  # categorize_y:
-        _, counts = torch.unique(y, return_counts=True, dim=0)
-        _y = []
-        for i, count in enumerate(counts):
-            _y.append(torch.tensor([i] * count), dtype=torch.int)
-        y = torch.cat(_y, dim=-1).unsqueeze(1)
+    assert len(x) == len(y), "x and y must be of equal length"
+    assert len(x) == len(y.view(-1)), "y may only represent a single RV"
 
     # single_dim_x = len(x) == len(x.view(-1))
 
@@ -189,9 +162,8 @@ def mutual_info(x: torch.Tensor, y: torch.Tensor):  # , categorize_y: bool = Fal
     y = y if y.dim() == 2 else y.unsqueeze(-1)
     xy = torch.cat([x, y], dim=-1)
 
-    H_x = sequence_entropy(x) if x.dim() == 2 else tensor_entropy(x)
-    H_y = sequence_entropy(y) if y.dim() == 2 else tensor_entropy(x)
-    H_xy = sequence_entropy(xy)
+    alphabet_x = build_alphabet(x) if alphabet_x is None else alphabet_x
+    alphabet_y = build_alphabet(y, True)
 
     # ensure symbol sets are disjoint
     alphabet_y += alphabet_x.max() + 1.
@@ -215,29 +187,26 @@ def mutual_info(x: torch.Tensor, y: torch.Tensor):  # , categorize_y: bool = Fal
     return I_xy, H_xy
 
 
-def compute_mi(
-        object_attributes: torch.Tensor,
-        messages: torch.Tensor,
-        categorize_objects: bool = False,
-        results_per_dim: bool = True):
+def compute_mi(messages: torch.Tensor, attributes: torch.Tensor) -> dict:
     """
     Computes multiple information-theoretic metrics: message entropy, input entropy,
     mutual information between messages and target objects, entropy of each input
     dimension and mutual information between each input dimension and messages.
+    In case x has two dimensions, the function assumes it represents a
+    compound RV, i.e. a sequence of realizations x1, ..., xm of RVs
+    X1, ..., Xm, and returns an estimate of I(X1, ..., Xm; Y)
+
+    Alphabet - applied to the message
     """
 
-    if categorize_objects:
-        _, attributes = torch.unique(object_attributes, return_inverse=True, dim=0)
-    else:
-        attributes = object_attributes
+    alphabet = build_alphabet(messages)
 
-    output_dict = {
-        'entropy_msg': sequence_entropy(messages),
-        'entropy_attr': (
-            sequence_entropy(attributes)
-            if attributes.dim() > 1 else tensor_entropy(attributes)),
-        'mi_msg_attr': mutual_info(messages, attributes),
-    }
+    if attributes.size(1) == 1:
+        entropy_msg = sequence_entropy(messages, alphabet)
+        entropy_attr = tensor_entropy(attributes)
+        mi_msg_attr, entropy_msg_attr = mutual_info(messages, attributes, alphabet)
+        vi_msg_attr = 2 * entropy_msg_attr - entropy_msg - entropy_attr
+        vi_norm_msg_attr = 1. - mi_msg_attr / entropy_msg_attr
 
         return {
             'entropy_msg': entropy_msg,
@@ -295,7 +264,7 @@ def compute_conceptual_alignment(
     obj_features = np.unique(all_features[:, targets[0], :], axis=0)
     obj_features = torch.tensor(obj_features, dtype=torch.float).to(device)
 
-    n_batches = math.ceil(obj_features.size()[0] / bs)
+    n_batches = np.ceil(obj_features.size()[0] / bs)
     sender_embeddings, receiver_embeddings = None, None
 
     for batch in [obj_features[bs * y:bs * (y + 1), :] for y in range(n_batches)]:
@@ -316,7 +285,7 @@ def compute_conceptual_alignment(
 
 
 # Redundancy
-def compute_max_rep(messages: torch.Tensor):
+def compute_max_rep(messages: torch.Tensor) -> torch.Tensor:
     """
     Computes the number of occurrences of the most frequent symbol in each
     message (0 for messages that consist of EOS symbols only).
@@ -343,16 +312,21 @@ def compute_max_rep(messages: torch.Tensor):
     return output
 
 
-def compute_redundancy_msg(messages: torch.Tensor):
+def compute_redundancy_msg(messages: torch.Tensor) -> float:
     """
     Computes redundancy at the message level.
     """
     H = tensor_entropy(messages)
-    H_max = math.log(len(messages), 2)
+    H_max = np.log2(len(messages))
     return 1 - H / H_max
 
 
-def maximize_sequence_entropy(max_len, vocab_size, channel=None, error_prob=None, maxiter=5000):
+def maximize_sequence_entropy(
+        max_len: int,
+        vocab_size: int,
+        channel: str = None,
+        error_prob: float = None,
+        maxiter: int = 5000):
     """
     Redursively approximates the highest achievable entropy for a given maximum
     length (excluding EOS) and vocabulary size (including EOS).
@@ -588,14 +562,14 @@ def compute_accuracy2(dump, receiver: torch.nn.Module, opts):
     return (predictions == labels).float().mean().item()
 
 
-def compute_redundancy_smb(
+def compute_redundancy(
         messages: torch.Tensor,
         max_len: int,
         vocab_size: int,
         channel: Optional[str],
         error_prob: float,
-        alphabet: Optional[Iterable[float]] = None,
-        maxiter: int = 1000):
+        alphabet: Optional[torch.Tensor] = None,
+        maxiter: int = 1000) -> float:
     """
     Computes a redundancy based on the symbol-level message entropy.
     The value returned is multiplied by a factor dependent on the maximum
@@ -614,19 +588,20 @@ def compute_redundancy_smb(
     if alphabet is not None:
         vocab_size = len(alphabet)
 
-    H = sequence_entropy(messages, vocab_size, alphabet=alphabet)
+    alphabet = build_alphabet(messages)
+    H = sequence_entropy(messages, alphabet)
     H_max, _ = maximize_sequence_entropy(max_len, vocab_size, channel, error_prob, maxiter)
     H_max = max(H_max, H)  # the value of H is biased, and could exceed H_max in some cases
     return 1 - H / H_max
 
 
-def compute_redundancy_smb_adjusted(
+def compute_adjusted_redundancy(
         messages: torch.Tensor,
         channel: Optional[str],
         error_prob: float,
-        alphabet: Optional[Iterable[float]],
+        symbols: Optional[Iterable[float]] = None,
         erased_symbol: Optional[float] = None,
-        maxiter: int = 1000):
+        maxiter: int = 1000) -> float:
     """
     Computes a redundancy based on the symbol-level message entropy, adjusted
     not to depend on message length.
@@ -640,9 +615,9 @@ def compute_redundancy_smb_adjusted(
         l.item(): (lengths == l).int().sum().item() / messages.size(0)
         for l in torch.unique(lengths)})
 
-    vocab_size = len(alphabet)
+    vocab_size = len(symbols)
     if erased_symbol is not None and channel == 'erasure' and error_prob > 0. \
-            and erased_symbol not in alphabet:
+            and erased_symbol not in symbols:
         vocab_size += 1  # make sure erased_symbol is included in vocab_size
 
     # compute the maximum entropies for the erasure channel
@@ -673,7 +648,8 @@ def compute_redundancy_smb_adjusted(
         if _messages.size(0) == 0:
             continue
 
-        ent_msg = sequence_entropy(_messages, vocab_size, i, alphabet)
+        alphabet = build_alphabet(_messages, symbols=symbols, length=i)
+        ent_msg = sequence_entropy(_messages, alphabet)
 
         if channel == 'erasure' and error_prob > 0.:
             ent_max = max_entropies[i - 1]
@@ -691,9 +667,7 @@ def compute_redundancy_smb_adjusted(
 
 
 # Compositionality
-def compute_top_sim(
-        attributes: torch.Tensor,
-        messages: torch.Tensor):
+def compute_top_sim(attributes: torch.Tensor, messages: torch.Tensor) -> float:
     """
     Computes topographic rho.
     """
@@ -736,9 +710,7 @@ def compute_top_sim(
     return rho
 
 
-def compute_posdis(
-        sender_inputs: torch.Tensor,
-        messages: torch.Tensor):
+def compute_posdis(sender_inputs: torch.Tensor, messages: torch.Tensor) -> float:
     """
     Computes PosDis.
     """
@@ -750,7 +722,8 @@ def compute_posdis(
         H_j = None
         for i in range(sender_inputs.size(1)):
             x, y = messages[:, j], sender_inputs[:, i]
-            info = mutual_info(x, y)
+            alphabet_x = build_alphabet(x.unsqueeze(1), True)
+            info, _ = mutual_info(x, y, alphabet_x)
             symbol_mi.append(info)
 
             if H_j is None:
@@ -766,9 +739,7 @@ def compute_posdis(
     return score.item()
 
 
-def histogram(
-        messages: torch.Tensor,
-        vocab_size: int):
+def histogram(messages: torch.Tensor, vocab_size: int) -> torch.Tensor:
 
     # Handle messages with added noise
     if vocab_size in messages:
@@ -842,11 +813,11 @@ def generate_messages(n, max_len, vocab_size, repeat_prob, var_len=False):
     return messages
 
 
-#messages = generate_messages(1000, 10, 3, repeat_prob=1., var_len=False)
-#alphabet = torch.unique(torch.flatten(messages), dim=0)
+# messages = generate_messages(1000, 10, 3, repeat_prob=1., var_len=False)
+# alphabet = torch.unique(torch.flatten(messages), dim=0)
 # print(alphabet)
-#print(compute_redundancy_smb(messages, 10, 3, None, 0.0))
-#print(compute_redundancy_smb_adjusted(messages, 10, 3, None, 0.0))
+# print(compute_redundancy_smb(messages, 10, 3, None, 0.0))
+# print(compute_redundancy_smb_adjusted(messages, 10, 3, None, 0.0))
 # print(compute_redundancy_smb(messages, 10, 8, None, 0.0, alphabet=alphabet))
 # print(compute_redundancy_smb_adjusted(messages, 10, 8, None, 0.0, alphabet=alphabet))
 # print(compute_redundancy_smb(messages, 10, 8, None, 0.0, alphabet=None))
