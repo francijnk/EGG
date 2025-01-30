@@ -49,23 +49,21 @@ def get_params(params):
     parser.add_argument("--no_shuffle", action="store_false", default=True, help="Do not shuffle train data before every epoch (default: False)")
     parser.add_argument("--sender_hidden", type=int, default=50, help="Size of the hidden layer of Sender (default: 50)")
     parser.add_argument("--receiver_hidden", type=int, default=50, help="Size of the hidden layer of Receiver (default: 50)")
-    parser.add_argument("--sender_embedding", type=int, default=10, help="Dimensionality of the embedding hidden layer for Sender (default: 10)")
-    parser.add_argument("--receiver_embedding", type=int, default=10, help="Dimensionality of the embedding hidden layer for Receiver (default: 10)")
+    parser.add_argument("--embedding", type=int, default=10, help="Dimensionality of the embedding hidden layer for Sender (default: 10)")
+    # parser.add_argument("--receiver_embedding", type=int, default=10, help="Dimensionality of the embedding hidden layer for Receiver (default: 10)")
     parser.add_argument("--sender_cell", type=str, default="rnn", help="Type of the cell used for Sender {rnn, gru, lstm} (default: rnn)")
     parser.add_argument("--receiver_cell", type=str, default="rnn", help="Type of the cell used for Receiver {rnn, gru, lstm} (default: rnn)")
     parser.add_argument("--sender_lr", type=float, default=1e-1, help="Learning rate for Sender's parameters (default: 1e-1)")
     parser.add_argument("--receiver_lr", type=float, default=1e-1, help="Learning rate for Receiver's parameters (default: 1e-1)")
     parser.add_argument("--sender_entropy_coeff", type=float, default=0.01)
     parser.add_argument("--receiver_entropy_coeff", type=float, default=0.001)
-    parser.add_argument("--lr_decay", type=float, default=None, help="LR decay, 1.0 for no decay (default: no decay)")
     parser.add_argument("--length_cost", type=float, default=1e-2, help="Message length cost")
     parser.add_argument("--mode", type=str, default="gs", help="Selects whether Reinforce or GumbelSoftmax relaxation is used for training {gs only at the moment} (default: rf)")
-
     parser.add_argument("--optim", type=str, default="rmsprop", help="Optimizer to use [adam, rmsprop] (default: rmsprop)")
     parser.add_argument("--temperature", type=float, default=1.0, help="GS temperature for the sender (default: 1.0)")
     parser.add_argument("--trainable_temperature", action="store_true", default=False, help="Enable trainable temperature")
-    parser.add_argument("--temperature_decay", default=None, type=float)
-    parser.add_argument("--temperature_minumum", default=None, type=float)
+    parser.add_argument("--temperature_decay", default=0.9, type=float)
+    parser.add_argument("--temperature_minimum", default=0.5, type=float)
     parser.add_argument("--results_folder", type=str, default='runs', help="Folder where file with dumped messages will be created")
     parser.add_argument("--filename", type=str, default=None, help="Filename (no extension)")
     parser.add_argument("--debug", action="store_true", default=False, help="Run egg/objects_game with pdb enabled")
@@ -134,14 +132,14 @@ def main(params):
         sender = core.RnnSenderReinforce(
             _sender,
             opts.vocab_size,
-            opts.sender_embedding,
+            opts.embedding,
             opts.sender_hidden,
             opts.max_len,
             cell=opts.sender_cell)
         receiver = core.RnnReceiverReinforce(
             agent=core.ReinforceWrapper(_receiver),
             vocab_size=receiver_vocab_size,
-            embed_dim=opts.receiver_embedding,
+            embed_dim=opts.embedding,
             hidden_size=opts.receiver_hidden,
             cell=opts.receiver_cell)
         game = SenderReceiverRnnReinforce(
@@ -159,7 +157,7 @@ def main(params):
         sender = core.RnnSenderGS(
             _sender,
             opts.vocab_size,
-            opts.sender_embedding,
+            opts.embedding,
             opts.sender_hidden,
             opts.max_len,
             opts.temperature,
@@ -168,7 +166,7 @@ def main(params):
         receiver = core.RnnReceiverGS(
             _receiver,
             receiver_vocab_size,
-            opts.receiver_embedding,
+            opts.embedding,
             opts.receiver_hidden,
             opts.receiver_cell)
         game = SenderReceiverRnnGS(
