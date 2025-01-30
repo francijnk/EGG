@@ -304,7 +304,7 @@ def get_results_dict(dump, receiver, opts, unique_dict, noise=True):
         'unique_target_objects': len(unique_dict.keys()),
         'actual_vocab_size': len(actual_vocab),
         'redundancy': compute_redundancy(
-            msg, opts.max_len, opts.vocab_size, channel, error_prob),
+            msg, opts.max_len, receiver_vocab_size, channel, error_prob),
         'redundancy_adj': compute_adjusted_redundancy(
             msg, channel, error_prob, torch.arange(receiver_vocab_size)),
         'redundancy_adj_voc': compute_adjusted_redundancy(

@@ -103,7 +103,7 @@ class CustomProgressBarLogger(Callback):
             wandb.config.update(opts)
 
         self.history = defaultdict(lambda: defaultdict(dict))
-        self.hide_cols = ['receiver_entropy', 'sender_entropy', 'VI']
+        self.hide_cols = ['receiver_entropy', 'sender_entropy', 'VI', 'MI']
 
         self.progress = CustomProgress(
             TextColumn(

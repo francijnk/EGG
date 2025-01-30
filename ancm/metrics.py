@@ -129,10 +129,16 @@ def sequence_entropy(
     if alphabet is not None:
         alphabet = alphabet.numpy()
 
-    H = entropy_joint(
-        x.transpose(0, -1).numpy(),
-        Alphabet_X=alphabet,
-        estimator=estimator)
+    try:
+        H = entropy_joint(
+            x.transpose(0, -1).numpy(),
+            Alphabet_X=alphabet,
+            estimator=estimator)
+    except ValueError:
+        print(x)
+        print(alphabet)
+        print(x.shape, alphabet.shape)
+        return 0.
 
     return H.item()
 
@@ -164,6 +170,20 @@ def mutual_info(
 
     alphabet_x = build_alphabet(x) if alphabet_x is None else alphabet_x
     alphabet_y = build_alphabet(y, True)
+
+    # all_symbols = torch.unique(
+    #     torch.cat([torch.unique(alphabet_x), torch.unique(alphabet_y)]))
+    # symbols_x = all_symbols.expand(alphabet_x.size(0), -1)
+    # symbols_y = all_symbols.clone()
+
+    # for i in range(symbols_x.size(0)):
+    #     mask = torch.isin(all_symbols, alphabet_x[i])
+    #     mask = torch.logical_not(mask)
+    #     symbols_x[i, mask] = -1
+    # mask = torch.isin(symbols_y, alphabet_y)
+    # mask = torch.logical_not(mask)
+    # symbols_y[mask] = -1
+    # alphabet_xy = torch.cat([symbols_x, symbols_y.unsqueeze(0)])
 
     # ensure symbol sets are disjoint
     alphabet_y += alphabet_x.max() + 1.
@@ -564,8 +584,8 @@ def compute_accuracy2(dump, receiver: torch.nn.Module, opts):
 
 def compute_redundancy(
         messages: torch.Tensor,
-        max_len: int,
         vocab_size: int,
+        max_len: int,
         channel: Optional[str],
         error_prob: float,
         alphabet: Optional[torch.Tensor] = None,
@@ -578,16 +598,15 @@ def compute_redundancy(
     if vocab_size == 1 or (alphabet is not None and len(alphabet) == 1):
         return 1.
 
-    if channel == 'erasure' and error_prob > 0.:
-        vocab_size += 1
-        if alphabet is not None:
-            alphabet = list(alphabet)
-            if vocab_size not in alphabet:
-                alphabet.append(vocab_size)
+    # if channel == 'erasure' and error_prob > 0.:
+    #     vocab_size += 1
+    #     if alphabet is not None:
+    #         alphabet = list(alphabet)
+    #         if vocab_size not in alphabet:
+    #            alphabet.append(vocab_size)
 
-    if alphabet is not None:
-        vocab_size = len(alphabet)
-
+    # if alphabet is not None:
+    #     vocab_size = len(alphabet)
     alphabet = build_alphabet(messages)
     H = sequence_entropy(messages, alphabet)
     H_max, _ = maximize_sequence_entropy(max_len, vocab_size, channel, error_prob, maxiter)
