@@ -1,0 +1,68 @@
+# wandb sweep --project cezary_test IMG_SWEEP.YAML
+program: train.py
+name: img_val_nocuda
+method: bayes
+metric:
+  goal: maximize
+  name: train/accuracy
+parameters:
+  sender_lr:
+    min: !!float 1e-4
+    max: !!float 1e-2
+  receiver_lr:
+    min: !!float 1e-4
+    max: !!float 1e-2
+  batch_size:
+    value: 32
+  n_epochs:
+    value: 20
+  max_len:
+    value: 5
+  sender_hidden:
+    value: 128
+  receiver_hidden:
+    value: 128
+  embedding:
+    values: [12, 16, 24]
+  length_cost:
+    min: 0.0001
+    max: 0.01
+  sender_hidden:
+    value: 128
+  receiver_hidden:
+    value: 128
+  trainable_temperature:
+    values:
+      - true
+      - false
+  temperature:
+    min: 1.
+    max: 10.0
+  temperature_decay:
+    min: 0.5
+    max: 1.
+  temperature_minimum:
+    min: 0.1
+    max: 1.
+  optim:
+    values: ['adam', 'rmsprop']
+  filename:
+    value: 'sweep'
+
+early_terminate:
+  eta: 1.5
+  min_iter: 150
+  strict: true
+  type: hyperband
+
+command:  
+- python3
+- -m 
+- ancm.train
+- --results_folder=runs/
+- --data_path=ancm/data/input_data/obverter-5-200-64.npz
+- --wandb_entity=koala_lab
+- --wandb_project=cezary_test
+- --random_seed=42
+- --image_input
+- ${args_no_boolean_flags}
