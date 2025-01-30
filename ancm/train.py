@@ -64,6 +64,8 @@ def get_params(params):
     parser.add_argument("--optim", type=str, default="rmsprop", help="Optimizer to use [adam, rmsprop] (default: rmsprop)")
     parser.add_argument("--temperature", type=float, default=1.0, help="GS temperature for the sender (default: 1.0)")
     parser.add_argument("--trainable_temperature", action="store_true", default=False, help="Enable trainable temperature")
+    parser.add_argument("--temperature_decay", default=None, type=float)
+    parser.add_argument("--temperature_minumum", default=None, type=float)
     parser.add_argument("--results_folder", type=str, default='runs', help="Folder where file with dumped messages will be created")
     parser.add_argument("--filename", type=str, default=None, help="Filename (no extension)")
     parser.add_argument("--debug", action="store_true", default=False, help="Run egg/objects_game with pdb enabled")
@@ -95,6 +97,9 @@ def check_args(args):
 
     args.results_folder = pathlib.Path(args.results_folder) \
         if args.results_folder is not None else None
+
+    assert args.temperature_decay is None or args.temperature_minumum is not None
+    assert not (args.trainable_temperature and args.temperature_decay is not None)
 
     if args.debug:
         import pdb
@@ -197,7 +202,10 @@ def main(params):
     ]
 
     if opts.mode == "gs" and not opts.trainable_temperature:
-        callbacks.append(core.TemperatureUpdater(agent=sender, decay=0.9, minimum=0.1))
+        callbacks.append(core.TemperatureUpdater(
+            agent=sender,
+            decay=opts.temperature_decay,
+            minimum=opts.temperature_minumum))
 
     trainer = Trainer(
         game=game,

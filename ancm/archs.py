@@ -502,10 +502,8 @@ class SenderReceiverRnnGS(nn.Module):
 
     def forward(self, sender_input, labels, receiver_input=None, aux_input=None, apply_noise=True):
         message = self.sender(sender_input, aux_input)
-        print("message shape before noise", message.shape)
         if self.channel:
             message = self.channel(message, message_length=None, apply_noise=apply_noise)
-        print("message shape after noise", message.shape)
         receiver_output = self.receiver(message, receiver_input, aux_input)
         loss = 0
         not_eosed_before = torch.ones(receiver_output.size(0)).to(
