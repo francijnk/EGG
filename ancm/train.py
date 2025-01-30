@@ -96,9 +96,6 @@ def check_args(args):
     args.results_folder = pathlib.Path(args.results_folder) \
         if args.results_folder is not None else None
 
-    assert args.temperature_decay is None or args.temperature_minumum is not None
-    assert not (args.trainable_temperature and args.temperature_decay is not None)
-
     if args.debug:
         import pdb
 
