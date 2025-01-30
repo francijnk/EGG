@@ -502,8 +502,10 @@ class SenderReceiverRnnGS(nn.Module):
 
     def forward(self, sender_input, labels, receiver_input=None, aux_input=None, apply_noise=True):
         message = self.sender(sender_input, aux_input)
+        print("message shape before noise", message.shape)
         if self.channel:
             message = self.channel(message, message_length=None, apply_noise=apply_noise)
+        print("message shape after noise", message.shape)
         receiver_output = self.receiver(message, receiver_input, aux_input)
         loss = 0
         not_eosed_before = torch.ones(receiver_output.size(0)).to(
@@ -588,8 +590,8 @@ class ErasureChannel(Channel):
         if self.p == 0. or not apply_noise:
             return message
 
-        msg = message if message.dim() == 2 else message.argmax(dim=-1)
-        msg.detach_()
+        msg = message.detach() if message.dim() == 2 \
+            else message.detach().argmax(dim=-1)
 
         # sample symbol indices to be erased, make sure EOS is not erased
         non_eos_ids = msg.nonzero()
@@ -607,13 +609,16 @@ class ErasureChannel(Channel):
             message[target_chunks] = self.vocab_size
 
         else:  # GS
+            message = torch.cat([message, torch.zeros_like(message[:, :, :1])], dim=-1)
+
             # erased symbol vector
-            replacement_probs = torch.zeros_like(message[0, 0], requires_grad=False)
-            replacement_probs[-1] = 1.
+            erased_probs = torch.zeros_like(
+                message[0, 0], requires_grad=False)
+            erased_probs[-1] = 1.
 
             # erase
             target_chunks = target_ids.t().chunk(chunks=3)
-            message[target_chunks] = replacement_probs
+            message[target_chunks] = erased_probs
 
         return message
 
@@ -627,8 +632,8 @@ class DeletionChannel(Channel):
         if self.p == 0. or not apply_noise:
             return message
 
-        msg = message if message.dim() == 2 else message.argmax(dim=-1)
-        msg.detach_()
+        msg = message.detach() if message.dim() == 2 \
+            else message.detach().argmax(dim=-1)
 
         if message_length is None:
             message_length = find_lengths(msg)
@@ -657,8 +662,7 @@ class DeletionChannel(Channel):
             ])
         else:  # GS
             # EOS vector
-            eos_probs = torch.zeros_like(
-                message[0, 0], requires_grad=False)
+            eos_probs = torch.zeros_like(message[0, 0])
             eos_probs[0] = 1.
 
             message = torch.stack([
@@ -684,8 +688,8 @@ class SymmetricChannel(Channel):
         if self.p == 0. or not apply_noise:
             return message
 
-        msg = message if message.dim() == 2 else message.argmax(dim=-1)
-        msg.detach_()
+        msg = message.detach() if message.dim() == 2 \
+            else message.detach().argmax(dim=-1)
 
         non_eos_ids = msg.nonzero()
         non_eos_target_ids = (
