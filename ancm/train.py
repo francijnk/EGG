@@ -49,8 +49,7 @@ def get_params(params):
     parser.add_argument("--no_shuffle", action="store_false", default=True, help="Do not shuffle train data before every epoch (default: False)")
     parser.add_argument("--sender_hidden", type=int, default=50, help="Size of the hidden layer of Sender (default: 50)")
     parser.add_argument("--receiver_hidden", type=int, default=50, help="Size of the hidden layer of Receiver (default: 50)")
-    parser.add_argument("--embedding", type=int, default=10, help="Dimensionality of the embedding hidden layer for Sender (default: 10)")
-    # parser.add_argument("--receiver_embedding", type=int, default=10, help="Dimensionality of the embedding hidden layer for Receiver (default: 10)")
+    parser.add_argument("--embedding", type=int, default=10, help="Dimensionality of the embedding hidden layer for the agents (default: 10)")
     parser.add_argument("--sender_cell", type=str, default="rnn", help="Type of the cell used for Sender {rnn, gru, lstm} (default: rnn)")
     parser.add_argument("--receiver_cell", type=str, default="rnn", help="Type of the cell used for Receiver {rnn, gru, lstm} (default: rnn)")
     parser.add_argument("--sender_lr", type=float, default=1e-1, help="Learning rate for Sender's parameters (default: 1e-1)")
@@ -105,8 +104,7 @@ def check_args(args):
 def main(params):
     opts = get_params(params)
 
-    # device = torch.device("cuda" if opts.cuda else "cpu")
-    device = torch.device("cpu")
+    device = torch.device("cuda" if opts.cuda else "cpu")
 
     data_handler = DataHandler(opts)
     train_data, validation_data, test_data, aux_train_data = \
@@ -200,7 +198,7 @@ def main(params):
         callbacks.append(core.TemperatureUpdater(
             agent=sender,
             decay=opts.temperature_decay,
-            minimum=opts.temperature_minumum))
+            minimum=opts.temperature_minimum))
 
     trainer = Trainer(
         game=game,

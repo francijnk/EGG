@@ -80,13 +80,17 @@ def build_alphabet(
 
     # handle arbitrary sequences: identify unique symbols per each dimension
     if non_message_sequences:
-        all_symbols = torch.unique(x).unsqueeze(0)
-        alphabet = all_symbols.expand(x.size(1), -1)
+        all_symbols = torch.unique(x)
+        alphabet = all_symbols.unsqueeze(0).expand(x.size(1), -1)
+        # print("alphabet", alphabet, alphabet.shape)
+        # print("all symbols, slphabet", all_symbols.shape, alphabet.shape)
         for i in range(x.size(1)):
             unique_symbols = torch.unique(x[:, i])
-            mask = torch.isin(alphabet[:, i], unique_symbols)
+            mask = torch.isin(all_symbols, unique_symbols)
             mask = torch.logical_not(mask)
-            alphabet[mask, i] = -1
+            # print("mask, mask shape", mask, mask.shape)
+            # print("alphabet idexed", alphabet[i, mask].shape)
+            alphabet[i, mask] = -1
 
         return alphabet#.to(torch.float)
 
@@ -162,28 +166,12 @@ def mutual_info(
     assert len(x) == len(y), "x and y must be of equal length"
     assert len(x) == len(y.view(-1)), "y may only represent a single RV"
 
-    # single_dim_x = len(x) == len(x.view(-1))
-
     x = x if x.dim() == 2 else x.unsqueeze(-1)
     y = y if y.dim() == 2 else y.unsqueeze(-1)
     xy = torch.cat([x, y], dim=-1)
 
     alphabet_x = build_alphabet(x) if alphabet_x is None else alphabet_x
     alphabet_y = build_alphabet(y, True)
-
-    # all_symbols = torch.unique(
-    #     torch.cat([torch.unique(alphabet_x), torch.unique(alphabet_y)]))
-    # symbols_x = all_symbols.expand(alphabet_x.size(0), -1)
-    # symbols_y = all_symbols.clone()
-
-    # for i in range(symbols_x.size(0)):
-    #     mask = torch.isin(all_symbols, alphabet_x[i])
-    #     mask = torch.logical_not(mask)
-    #     symbols_x[i, mask] = -1
-    # mask = torch.isin(symbols_y, alphabet_y)
-    # mask = torch.logical_not(mask)
-    # symbols_y[mask] = -1
-    # alphabet_xy = torch.cat([symbols_x, symbols_y.unsqueeze(0)])
 
     # ensure symbol sets are disjoint
     alphabet_y += alphabet_x.max() + 1.
@@ -219,7 +207,7 @@ def compute_mi(messages: torch.Tensor, attributes: torch.Tensor) -> dict:
     Alphabet - applied to the message
     """
 
-    alphabet = build_alphabet(messages)
+    alphabet = build_alphabet(messages, symbols=torch.unique(messages))
 
     if attributes.size(1) == 1:
         entropy_msg = sequence_entropy(messages, alphabet)
