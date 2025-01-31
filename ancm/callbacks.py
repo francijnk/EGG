@@ -398,7 +398,7 @@ class TrainingMetricsCallback(Callback):
         # redundancy
         logs.aux['max_rep'] = compute_max_rep(messages)
         logs.aux['redundancy'] = compute_redundancy(
-            messages, self.vocab_size,
+            messages, vocab_size,
             channel=None, error_prob=0.0)
         logs.aux['redundancy_adj'] = compute_adjusted_redundancy(
             messages, channel=None, error_prob=0.0,
@@ -547,7 +547,7 @@ class TrainingMetricsCallback(Callback):
         # redundancy
         logs.aux['max_rep'] = compute_max_rep(messages)
         logs.aux['redundancy'] = compute_redundancy(
-            messages, self.vocab_size,
+            messages, vocab_size,
             channel=None, error_prob=0.0)
         logs.aux['redundancy_adj'] = compute_adjusted_redundancy(
             messages, channel=None, error_prob=0.0,

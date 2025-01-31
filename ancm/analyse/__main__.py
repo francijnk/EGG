@@ -328,18 +328,19 @@ def main():
     # export data and save it
     os.makedirs(processed_data_path, exist_ok=True)
     data_train, data_val, data_test = load_data(args.i)
+    history_train, history_val, results_train, results_test = load_data(args.i)
 
-    #data_train.to_csv(os.path.join(args.i, 'processed', 'data_train.csv'))
-    #data_test.to_csv(os.path.join(args.i, 'processed', 'data_test.csv'))
-    #data_val.to_csv(os.path.join(args.i, 'processed', 'data_val.csv'))
+    # data_train.to_csv(os.path.join(args.i, 'processed', 'data_train.csv'))
+    # data_test.to_csv(os.path.join(args.i, 'processed', 'data_test.csv'))
+    # data_val.to_csv(os.path.join(args.i, 'processed', 'data_val.csv'))
 
     os.makedirs(args.o, exist_ok=True)
-    
-    #plot_test(data_test, args.o)
-    #plot_training(data_train, args.o, val=False)
-    #plot_training(data_val, args.o, val=True)
-    #analyse(data_test, args.o)
-    plot_test_perchannel(data_test, args.o)
+
+    # plot_test(data_test, args.o)
+    # plot_training(data_train, args.o, val=False)
+    # plot_training(data_val, args.o, val=True)
+    # analyse(data_test, args.o)
+    plot_test_perchannel(results_test, args.o)
 
 
 if __name__ == '__main__':

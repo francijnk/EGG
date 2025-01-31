@@ -345,8 +345,7 @@ def get_results_dict(dump, receiver, opts, unique_dict, noise=True):
         'unique_messages': len(torch.unique(msg, dim=0)),
         'unique_target_objects': len(unique_dict.keys()),
         'actual_vocab_size': len(actual_vocab),
-        'redundancy': compute_redundancy(
-            msg, opts.max_len, receiver_vocab_size, channel, error_prob),
+        'redundancy': compute_redundancy(msg, receiver_vocab_size, channel, error_prob),
         'redundancy_adj': compute_adjusted_redundancy(
             msg, channel, error_prob, torch.arange(receiver_vocab_size)),
         'redundancy_adj_voc': compute_adjusted_redundancy(
@@ -365,7 +364,7 @@ def get_results_dict(dump, receiver, opts, unique_dict, noise=True):
         results['topographic_rho_category'] = compute_top_sim(attr, msg)
 
     if opts.image_input:
-        mi_attr_msg = compute_mi(msg, attr)
+        mi_attr_msg = compute_mi(msg, attr, receiver_vocab_size)
         results['entropy_msg'] = mi_attr_msg['entropy_msg']
         results['entropy_attr'] = mi_attr_msg['entropy_attr']
         results['entropy_attr_dim'] = {
@@ -388,7 +387,7 @@ def get_results_dict(dump, receiver, opts, unique_dict, noise=True):
             s_inp, return_inverse=True, dim=0)
         if len(unique_objects) < 200:  # test
             categorized_input = categorized_input.unsqueeze(-1).to(torch.float)
-            mi_inp_msg = compute_mi(msg, categorized_input)
+            mi_inp_msg = compute_mi(msg, categorized_input, receiver_vocab_size)
             results['entropy_msg'] = mi_inp_msg['entropy_msg']
             results['entropy_inp'] = mi_inp_msg['entropy_attr']
             results['mi_msg_inp'] = mi_inp_msg['mi_msg_attr']
@@ -402,7 +401,7 @@ def get_results_dict(dump, receiver, opts, unique_dict, noise=True):
             results['vi_msg_inp'] = None  # mi_inp_msg['vi_msg_attr']
             results['vi_norm_msg_inp'] = None  # mi_inp_msg['vi_norm_msg_attr']
             results['is_msg_inp'] = None  # mi_inp_msg['vi_msg_attr']
-        mi_cat_msg = compute_mi(msg, attr)
+        mi_cat_msg = compute_mi(msg, attr, receiver_vocab_size)
         results['entropy_cat'] = mi_cat_msg['entropy_attr']
         results['mi_msg_cat'] = mi_cat_msg['mi_msg_attr']
         results['vi_msg_cat'] = mi_cat_msg['vi_msg_attr']
@@ -415,8 +414,8 @@ def get_results_dict(dump, receiver, opts, unique_dict, noise=True):
 def print_training_results(output_dict):
     def _format(value):
         if value is None:
-            return '–'
-        elif isinstance(value, int):
+            return np.nan
+        if isinstance(value, int):
             return value
         elif isinstance(value, float):
             return f'{value:.2f}'
@@ -444,6 +443,9 @@ def print_training_results(output_dict):
         headers='keys',
         tablefmt='rst',
         maxcolwidths=[24] * len(header),
+        numalign='center',
+        # stralign='left',
+        disable_numparse=True,
     ))
 
 
