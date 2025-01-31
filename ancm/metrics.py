@@ -121,24 +121,23 @@ def sequence_entropy(
     Estimates the entropy of the RV X represented by the tensor x, assuming
     that X if a compound RV if x has 2 dimensions, i.e. X = X1, ..., Xm.
     The entropy is approximated from the sample using the James-Stein formula.
-
     """
-    if x.dim() == 1:
+    if x.dim() == 1 or len(x) == len(x.view(-1)):
         return tensor_entropy(x)
 
     if alphabet is not None:
         alphabet = alphabet.numpy()
 
-    try:
-        H = entropy_joint(
-            x.t().numpy(),
-            Alphabet_X=alphabet,
-            estimator=estimator)
-    except ValueError:
-        # it sometimes happens that messages contain 0s after the 1st eos
-        print(x)
-        print(alphabet)
-        return None
+    # try:
+    H = entropy_joint(
+        x.t().numpy(),
+        Alphabet_X=alphabet,
+        estimator=estimator)
+    # except ValueError:
+    #     # it sometimes happens that messages contain 0s after the 1st eos
+    #     print("Hx (seq)", torch.unique(x), x.shape)
+    #     print("alph_x", alphabet)
+    #     return None
 
     return H.item()
 
@@ -165,9 +164,12 @@ def mutual_info(
     x = x if x.dim() == 2 else x.unsqueeze(-1)
     y = y if y.dim() == 2 else y.unsqueeze(-1)
     xy = torch.cat([x, y], dim=-1)
+    # print("xy shape", xy.shape)
 
     alphabet_x = build_alphabet(x) if alphabet_x is None else alphabet_x
     alphabet_y = build_alphabet(y, True)
+    if alphabet_x.dim() == 1:
+        alphabet_x = alphabet_x.unsqueeze(0)
 
     # ensure symbol sets are disjoint
     alphabet_y += alphabet_x.max() + 1.
@@ -175,6 +177,7 @@ def mutual_info(
     xy[:, -1] += alphabet_x.max() + 1.
 
     # pad both alphabets with the fill value
+    # print('alphabet x shape, alphabet y shape', alphabet_x.shape, alphabet_y.shape)
     padded_alphabet_x = torch.cat([
         alphabet_x,
         torch.ones(alphabet_x.size(0), alphabet_y.size(1)) * -1], dim=1)
@@ -182,10 +185,12 @@ def mutual_info(
         torch.ones(alphabet_y.size(0), alphabet_x.size(1)) * -1,
         alphabet_y], dim=1)
     alphabet_xy = torch.cat((padded_alphabet_x, padded_alphabet_y))
+    # print("alphabet_xy shape", alphabet_xy.shape)
 
     H_x = sequence_entropy(x, alphabet_x)
     H_y = tensor_entropy(y)
     H_xy = sequence_entropy(xy, alphabet_xy)
+    # print("Hx Hy Hxy", H_x, H_y, H_xy)
     I_xy = H_x + H_y - H_xy
 
     return I_xy, H_xy
@@ -707,7 +712,10 @@ def compute_top_sim(attributes: torch.Tensor, messages: torch.Tensor) -> float:
     return rho
 
 
-def compute_posdis(sender_inputs: torch.Tensor, messages: torch.Tensor, receiver_vocab_size: int) -> float:
+def compute_posdis(
+        sender_inputs: torch.Tensor,
+        messages: torch.Tensor,
+        receiver_vocab_size: Optional[int] = None) -> float:
     """
     Computes PosDis.
     """
@@ -721,12 +729,17 @@ def compute_posdis(sender_inputs: torch.Tensor, messages: torch.Tensor, receiver
         if receiver_vocab_size is not None:
             alphabet_x = torch.arange(receiver_vocab_size) \
                 if j < messages.size(1) else torch.zeros(1, 1)
-        else:
-            alphabet_x = None
+        else:  # bosdis
+            alphabet_x = torch.unique(messages)  # build_alphabet(
+            # messages, non_message_sequences=True))
 
         for i in range(sender_inputs.size(1)):
             x, y = messages[:, j], sender_inputs[:, i]
             # alphabet_x = build_alphabet(x.unsqueeze(1), True)
+            # print("x", x)
+            # print("j", j, messages.size(1), messages.size())
+            # print("historgrams", x[:10], x.shape)
+            # print("alphabet x", alphabet_x)
             info, _ = mutual_info(x, y, alphabet_x)
             symbol_mi.append(info)
 

@@ -298,7 +298,7 @@ def main(params):
                 max_len=opts.max_len,
                 vocab_size=opts.vocab_size,
                 device=device)
-            dump['no noise'] = dump
+            dumps['no noise'] = dump
             results['no noise'] = get_results_dict(dump, receiver, opts, unique_dict, False)
 
             # Iterating through Dump without noise
@@ -376,11 +376,11 @@ def main(params):
             json.dump(output_dict, f, indent=4)
 
         if train_dumps is not None:
-            with open(opts.results_folder / f'{opts.filename}-train-dump.pkl', 'w') as f:
-                pickle.dump(train_dumps)
+            with open(opts.results_folder / f'{opts.filename}-train-dump.pkl', 'wb') as f:
+                pickle.dump(train_dumps, f)
 
-        with open(opts.results_folder / f'{opts.filename}-test-dump.pkl', 'w') as f:
-            pickle.dump(test_dumps)
+        with open(opts.results_folder / f'{opts.filename}-test-dump.pkl', 'wb') as f:
+            pickle.dump(test_dumps, f)
 
         print(f"Results saved to {opts.results_folder / opts.filename}-results.json")
 

@@ -408,8 +408,8 @@ def get_results_dict(dump, receiver, opts, unique_dict, noise=True):
 def print_training_results(output_dict):
     def _format(value):
         if value is None:
-            return '–'
-        elif isinstance(value, int):
+            return np.nan
+        if isinstance(value, int):
             return value
         elif isinstance(value, float):
             return f'{value:.2f}'
@@ -437,6 +437,9 @@ def print_training_results(output_dict):
         headers='keys',
         tablefmt='rst',
         maxcolwidths=[24] * len(header),
+        numalign='center',
+        # stralign='left',
+        disable_numparse=True,
     ))
 
 
