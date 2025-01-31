@@ -244,16 +244,8 @@ class Dump:
             )
 
     def get_tensors(self):
-        # sender_inputs = torch.stack(self.sender_inputs)
         if self.messages.dim() == 3:
             messages = self.messages.argmax(-1)
-        # messages = torch.cat(
-        #     [messages, torch.zeros_like(messages[:, :1])], dim=-1)
-        # receiver_inputs = torch.stack(
-        #    self.receiver_inputs)
-        #receiver_outputs = torch.stack(
-        #    self.receiver_outputs)
-        #labels = torch.stack(self.labels)
         target_attributes = [
             torch.stack(a_tensors)
             for a_tensors in self.target_attributes.values()]
@@ -329,8 +321,10 @@ def get_results_dict(dump, receiver, opts, unique_dict, noise=True):
     s_inp, msg, r_inp, r_out, labels, attr, distr_attr, attr_names \
         = dump.get_tensors()
 
-    receiver_vocab_size = opts.vocab_size if opts.channel != 'erasure' \
-        or opts.error_prob == 0 else opts.vocab_size + 1
+    if noise and opts.channel == 'erasure' and opts.error_prob > 0.:
+        receiver_vocab_size = opts.vocab_size + 1
+    else:
+        receiver_vocab_size = opts.vocab_size
     actual_vocab = set(int(s) for m in msg for s in m.tolist())
 
     # receiver_outputs = move_to(receiver_outputs, device)
@@ -345,8 +339,7 @@ def get_results_dict(dump, receiver, opts, unique_dict, noise=True):
         'unique_messages': len(torch.unique(msg, dim=0)),
         'unique_target_objects': len(unique_dict.keys()),
         'actual_vocab_size': len(actual_vocab),
-        'redundancy': compute_redundancy(
-            msg, opts.max_len, receiver_vocab_size, channel, error_prob),
+        'redundancy': compute_redundancy(msg, receiver_vocab_size, channel, error_prob),
         'redundancy_adj': compute_adjusted_redundancy(
             msg, channel, error_prob, torch.arange(receiver_vocab_size)),
         'redundancy_adj_voc': compute_adjusted_redundancy(
@@ -365,7 +358,7 @@ def get_results_dict(dump, receiver, opts, unique_dict, noise=True):
         results['topographic_rho_category'] = compute_top_sim(attr, msg)
 
     if opts.image_input:
-        mi_attr_msg = compute_mi(msg, attr)
+        mi_attr_msg = compute_mi(msg, attr, receiver_vocab_size)
         results['entropy_msg'] = mi_attr_msg['entropy_msg']
         results['entropy_attr'] = mi_attr_msg['entropy_attr']
         results['entropy_attr_dim'] = {
@@ -388,7 +381,7 @@ def get_results_dict(dump, receiver, opts, unique_dict, noise=True):
             s_inp, return_inverse=True, dim=0)
         if len(unique_objects) < 200:  # test
             categorized_input = categorized_input.unsqueeze(-1).to(torch.float)
-            mi_inp_msg = compute_mi(msg, categorized_input)
+            mi_inp_msg = compute_mi(msg, categorized_input, receiver_vocab_size)
             results['entropy_msg'] = mi_inp_msg['entropy_msg']
             results['entropy_inp'] = mi_inp_msg['entropy_attr']
             results['mi_msg_inp'] = mi_inp_msg['mi_msg_attr']
@@ -402,7 +395,7 @@ def get_results_dict(dump, receiver, opts, unique_dict, noise=True):
             results['vi_msg_inp'] = None  # mi_inp_msg['vi_msg_attr']
             results['vi_norm_msg_inp'] = None  # mi_inp_msg['vi_norm_msg_attr']
             results['is_msg_inp'] = None  # mi_inp_msg['vi_msg_attr']
-        mi_cat_msg = compute_mi(msg, attr)
+        mi_cat_msg = compute_mi(msg, attr, receiver_vocab_size)
         results['entropy_cat'] = mi_cat_msg['entropy_attr']
         results['mi_msg_cat'] = mi_cat_msg['mi_msg_attr']
         results['vi_msg_cat'] = mi_cat_msg['vi_msg_attr']
