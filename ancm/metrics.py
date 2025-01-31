@@ -82,17 +82,13 @@ def build_alphabet(
     if non_message_sequences:
         all_symbols = torch.unique(x)
         alphabet = all_symbols.unsqueeze(0).expand(x.size(1), -1)
-        # print("alphabet", alphabet, alphabet.shape)
-        # print("all symbols, slphabet", all_symbols.shape, alphabet.shape)
         for i in range(x.size(1)):
             unique_symbols = torch.unique(x[:, i])
             mask = torch.isin(all_symbols, unique_symbols)
             mask = torch.logical_not(mask)
-            # print("mask, mask shape", mask, mask.shape)
-            # print("alphabet idexed", alphabet[i, mask].shape)
             alphabet[i, mask] = -1
 
-        return alphabet#.to(torch.float)
+        return alphabet
 
     # handle messages
     if symbols is not None:
@@ -114,7 +110,7 @@ def build_alphabet(
             [[0] + non_eos_symbols] * max_len
             + [[0] + [-1] * len(non_eos_symbols)] * (x.size(1) - max_len))
 
-    return torch.tensor(alphabet)#.to(torch.float)
+    return torch.tensor(alphabet)
 
 
 def sequence_entropy(
@@ -135,14 +131,14 @@ def sequence_entropy(
 
     try:
         H = entropy_joint(
-            x.transpose(0, -1).numpy(),
+            x.t().numpy(),
             Alphabet_X=alphabet,
             estimator=estimator)
     except ValueError:
+        # it sometimes happens that messages contain 0s after the 1st eos
         print(x)
         print(alphabet)
-        print(x.shape, alphabet.shape)
-        return 0.
+        return None
 
     return H.item()
 
@@ -195,7 +191,7 @@ def mutual_info(
     return I_xy, H_xy
 
 
-def compute_mi(messages: torch.Tensor, attributes: torch.Tensor) -> dict:
+def compute_mi(messages: torch.Tensor, attributes: torch.Tensor, vocab_size: int) -> dict:
     """
     Computes multiple information-theoretic metrics: message entropy, input entropy,
     mutual information between messages and target objects, entropy of each input
@@ -207,7 +203,7 @@ def compute_mi(messages: torch.Tensor, attributes: torch.Tensor) -> dict:
     Alphabet - applied to the message
     """
 
-    alphabet = build_alphabet(messages, symbols=torch.unique(messages))
+    alphabet = build_alphabet(messages, vocab_size=vocab_size)  # symbols=torch.unique(messages))
 
     if attributes.size(1) == 1:
         entropy_msg = sequence_entropy(messages, alphabet)
@@ -318,15 +314,6 @@ def compute_max_rep(messages: torch.Tensor) -> torch.Tensor:
             match = torch.mul(match[:, :-1], match[:, 1:])
 
     return output
-
-
-def compute_redundancy_msg(messages: torch.Tensor) -> float:
-    """
-    Computes redundancy at the message level.
-    """
-    H = tensor_entropy(messages)
-    H_max = np.log2(len(messages))
-    return 1 - H / H_max
 
 
 def maximize_sequence_entropy(
@@ -573,17 +560,15 @@ def compute_accuracy2(dump, receiver: torch.nn.Module, opts):
 def compute_redundancy(
         messages: torch.Tensor,
         vocab_size: int,
-        max_len: int,
         channel: Optional[str],
         error_prob: float,
-        alphabet: Optional[torch.Tensor] = None,
         maxiter: int = 1000) -> float:
     """
     Computes a redundancy based on the symbol-level message entropy.
     The value returned is multiplied by a factor dependent on the maximum
     message length, so that the range of possible values is [0, 1].
     """
-    if vocab_size == 1 or (alphabet is not None and len(alphabet) == 1):
+    if vocab_size == 1:
         return 1.
 
     # if channel == 'erasure' and error_prob > 0.:
@@ -595,7 +580,12 @@ def compute_redundancy(
 
     # if alphabet is not None:
     #     vocab_size = len(alphabet)
-    alphabet = build_alphabet(messages)
+    symbols = torch.arange(vocab_size)
+    alphabet = build_alphabet(messages, vocab_size=vocab_size)  # symbols=torch.arange(vocab_size))
+
+    max_len = messages.size(1) - 1
+    vocab_size = (symbols != vocab_size).int().sum().item()
+
     H = sequence_entropy(messages, alphabet)
     H_max, _ = maximize_sequence_entropy(max_len, vocab_size, channel, error_prob, maxiter)
     H_max = max(H_max, H)  # the value of H is biased, and could exceed H_max in some cases
@@ -717,7 +707,7 @@ def compute_top_sim(attributes: torch.Tensor, messages: torch.Tensor) -> float:
     return rho
 
 
-def compute_posdis(sender_inputs: torch.Tensor, messages: torch.Tensor) -> float:
+def compute_posdis(sender_inputs: torch.Tensor, messages: torch.Tensor, receiver_vocab_size: int) -> float:
     """
     Computes PosDis.
     """
@@ -727,9 +717,16 @@ def compute_posdis(sender_inputs: torch.Tensor, messages: torch.Tensor) -> float
     for j in range(messages.size(1)):
         symbol_mi = []
         H_j = None
+
+        if receiver_vocab_size is not None:
+            alphabet_x = torch.arange(receiver_vocab_size) \
+                if j < messages.size(1) else torch.zeros(1, 1)
+        else:
+            alphabet_x = None
+
         for i in range(sender_inputs.size(1)):
             x, y = messages[:, j], sender_inputs[:, i]
-            alphabet_x = build_alphabet(x.unsqueeze(1), True)
+            # alphabet_x = build_alphabet(x.unsqueeze(1), True)
             info, _ = mutual_info(x, y, alphabet_x)
             symbol_mi.append(info)
 

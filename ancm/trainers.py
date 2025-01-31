@@ -187,7 +187,6 @@ class Trainer:
                         interaction
                     )
                 interaction = interaction.to("cpu")
-                crop_messages(interaction)  # remove symbols after EOS
                 mean_loss += optimized_loss
 
                 for callback in self.callbacks:
@@ -278,6 +277,7 @@ class Trainer:
                 callback.on_epoch_begin(epoch + 1)
 
             train_loss, train_interaction = self.train_epoch()
+            crop_messages(train_interaction)
 
             for callback in self.callbacks:
                 callback.on_epoch_end(train_loss, train_interaction, epoch + 1)

@@ -25,17 +25,58 @@ common_opts = get_opts()
 
 
 class ObjectDataset(Dataset):
-    def __init__(self, obj_sets, labels, attributes=None, attribute_names=None):
+    def __init__(self, obj_sets, labels, attributes=None, attribute_names=None, n_permutations=None):
         self.obj_sets = obj_sets
         self.labels = labels
         self.attributes = attributes
         self.attribute_names = attribute_names
 
+        n_objects = obj_sets.shape[1]
+        self.n_distractors = n_objects - 1
+        if n_permutations is not None:
+            self.permutations = [
+                np.random.permutation(np.arange(n_objects))
+                for _ in range(len(obj_sets) * (n_permutations - 1))]
+        else:
+            self.permutations = []
+
     def __len__(self):
-        return len(self.obj_sets)
+        return len(self.obj_sets) + len(self.permutations)
 
     def __getitem__(self, idx):
-        return self.obj_sets[idx], self.labels[idx], self.attributes[idx]
+        if idx < len(self.obj_sets):
+            return self.obj_sets[idx], self.labels[idx], self.attributes[idx]
+        else:
+            _idx = idx % len(self.obj_sets)
+            permutation = self.permutations[_idx]
+            obj_set = self.obj_sets[_idx, permutation, ...]
+            label = permutation[self.labels[_idx]]
+
+            n_attributes = len(self.attribute_names) // (self.n_distractors + 1)
+            distr_attr_names = [
+                self.attribute_names[n_attributes * (permutation[i] - 1) + j]
+                for i in range(self.n_distractors + 1)
+                for j in range(n_attributes)]
+
+            attribute_tuple = tuple(
+                self.attributes[_idx][attr_name]
+                for attr_name in distr_attr_names)
+
+            dtype = [(item, np.int64) for item in distr_attr_names if item.startswith('target')]
+            num_attr_per_distractor = len(dtype)
+            for i, name in enumerate(distr_attr_names):
+                d_num = i // num_attr_per_distractor
+                if d_num == label:
+                    continue
+                if d_num < label:
+                    prefix = f'distr_{d_num}_'
+                else:
+                    prefix = f'distr_{d_num - 1}_'
+                suffix = name.split('_')[-1]
+                dtype.append((prefix + suffix, np.int64))
+
+            attributes = np.array([attribute_tuple], dtype=dtype)
+            return obj_set, label, attributes
 
 
 class DataHandler:
@@ -74,7 +115,8 @@ class DataHandler:
         opts.n_distractors = self.n_distractors
         opts.n_features = self.n_features
 
-        train_dataset = ObjectDataset(*train, attribute_names)
+        train_dataset = ObjectDataset(
+            *train, attribute_names, n_permutations=opts.n_permutations_train)
         val_dataset = ObjectDataset(*val, attribute_names)
         test_dataset = ObjectDataset(*test, attribute_names)
 
@@ -431,7 +473,6 @@ def crop_messages(interaction):
 
         nonzero_ids = message.nonzero()
         nonzero_chunks = nonzero_ids.t().chunk(chunks=2)
-        # nonzero_chunks = message.nonzero(as_tuple=True)
         targets = (positions[nonzero_chunks] > lengths[nonzero_chunks] - 1)
         targets = targets.squeeze()
         target_ids = nonzero_ids[targets]

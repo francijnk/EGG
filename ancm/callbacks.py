@@ -19,7 +19,6 @@ from rich.text import Text
 from ancm.metrics import (
     # compute_conceptual_alignment,
     compute_max_rep,
-    # compute_redundancy_msg,
     compute_redundancy,
     compute_adjusted_redundancy,
     compute_top_sim,
@@ -371,7 +370,7 @@ class TrainingMetricsCallback(Callback):
 
         if self.image_input:
             # messages, vocab_size, True)
-            mi_attr = compute_mi(messages, aux_attributes)
+            mi_attr = compute_mi(messages, aux_attributes, vocab_size)
             logs.aux['H_msg'] = mi_attr['entropy_msg']
             # logs.aux['H_attr'] = mi_attr['entropy_attr']
             for i, key in enumerate(aux_attribute_keys):
@@ -384,8 +383,8 @@ class TrainingMetricsCallback(Callback):
             _, categorized_input = torch.unique(
                 logs.sender_input, return_inverse=True, dim=0)
             categorized_input = categorized_input.unsqueeze(-1).to(torch.float)
-            mi_inp = compute_mi(messages, categorized_input)
-            mi_cat = compute_mi(messages, aux_attributes)
+            mi_inp = compute_mi(messages, categorized_input, vocab_size)
+            mi_cat = compute_mi(messages, aux_attributes, vocab_size)
             logs.aux['H_msg'] = mi_cat['entropy_msg']
             logs.aux['MI_inp'] = mi_inp['mi_msg_attr']
             logs.aux['VI_inp'] = mi_inp['vi_msg_attr']
@@ -398,13 +397,13 @@ class TrainingMetricsCallback(Callback):
 
         # redundancy
         logs.aux['max_rep'] = compute_max_rep(messages)
-        logs.aux['R'] = compute_redundancy(
-            messages, self.max_len, self.vocab_size,
+        logs.aux['redundancy'] = compute_redundancy(
+            messages, self.vocab_size,
             channel=None, error_prob=0.0)
-        logs.aux['R\''] = compute_adjusted_redundancy(
+        logs.aux['redundancy_adj'] = compute_adjusted_redundancy(
             messages, channel=None, error_prob=0.0,
             symbols=torch.arange(vocab_size), erased_symbol=self.vocab_size)
-        logs.aux['R"'] = compute_adjusted_redundancy(
+        logs.aux['redundancy_adj2'] = compute_adjusted_redundancy(
             messages, channel=None, error_prob=0.0,
             symbols=actual_vocab, erased_symbol=self.vocab_size)
 
@@ -416,7 +415,7 @@ class TrainingMetricsCallback(Callback):
             logs.aux['topsim_cat'] = compute_top_sim(aux_attributes, messages)
 
         if self.image_input:
-            logs.aux['posdis'] = compute_posdis(aux_attributes, messages)
+            logs.aux['posdis'] = compute_posdis(aux_attributes, messages, vocab_size)
             logs.aux['bosdis'] = compute_bosdis(
                 aux_attributes, messages, self.vocab_size)
 
@@ -440,7 +439,7 @@ class TrainingMetricsCallback(Callback):
         logs.aux['actual_vocab_size'] = int(actual_vocab_size)
 
         if self.image_input:
-            mi_attr = compute_mi(messages, aux_attributes)
+            mi_attr = compute_mi(messages, aux_attributes, self.vocab_size)
             logs.aux['H_msg'] = mi_attr['entropy_msg']
             # logs.aux['H_attr'] = mi_attr['entropy_attr']
             for i, key in enumerate(aux_attribute_keys):
@@ -454,8 +453,8 @@ class TrainingMetricsCallback(Callback):
             _, categorized_input = torch.unique(
                 logs.sender_input, return_inverse=True, dim=0)
             categorized_input = categorized_input.unsqueeze(-1).to(torch.float)
-            mi_inp = compute_mi(messages, categorized_input)
-            mi_cat = compute_mi(messages, aux_attributes)
+            mi_inp = compute_mi(messages, categorized_input, self.vocab_size)
+            mi_cat = compute_mi(messages, aux_attributes, self.vocab_size)
             logs.aux['H_msg'] = mi_cat['entropy_msg']
             # logs.aux['H_inp'] = mi_inp['entropy_attr']
             logs.aux['MI_inp'] = mi_inp['mi_msg_attr']
@@ -476,13 +475,13 @@ class TrainingMetricsCallback(Callback):
 
         # redundancy
         logs.aux['max_rep'] = compute_max_rep(messages)
-        logs.aux['R'] = compute_redundancy(
-            messages, self.max_len, self.vocab_size,
+        logs.aux['redundancy'] = compute_redundancy(
+            messages, self.vocab_size,
             channel=None, error_prob=0.0)
-        logs.aux['R\''] = compute_adjusted_redundancy(
+        logs.aux['redundancy_adj'] = compute_adjusted_redundancy(
             messages, channel=None, error_prob=0.0,
             symbols=torch.arange(self.vocab_size))
-        logs.aux['R"'] = compute_adjusted_redundancy(
+        logs.aux['redundancy_adj2'] = compute_adjusted_redundancy(
             messages, channel=None, error_prob=0.0,
             symbols=actual_vocab, erased_symbol=self.vocab_size)
 
@@ -494,7 +493,7 @@ class TrainingMetricsCallback(Callback):
             logs.aux['topsim_cat'] = compute_top_sim(aux_attributes, messages)
 
         if self.image_input:
-            logs.aux['posdis'] = compute_posdis(aux_attributes, messages)
+            logs.aux['posdis'] = compute_posdis(aux_attributes, messages, self.vocab_size)
             logs.aux['bosdis'] = compute_bosdis(
                 aux_attributes, messages, self.vocab_size)
 
@@ -525,7 +524,7 @@ class TrainingMetricsCallback(Callback):
         logs.aux['actual_vocab_size'] = int(actual_vocab_size)
 
         if self.image_input:
-            mi_attr = compute_mi(messages, aux_attributes)
+            mi_attr = compute_mi(messages, aux_attributes, vocab_size)
             logs.aux['H_msg'] = mi_attr['entropy_msg']
             for i, key in enumerate(aux_attribute_keys):
                 k = key.replace('target_', '')
@@ -534,10 +533,7 @@ class TrainingMetricsCallback(Callback):
                 logs.aux[f'VInorm_{k}'] = mi_attr['vi_norm_msg_attr_dim'][i]
                 logs.aux[f'IS_{k}'] = mi_attr['is_msg_attr_dim'][i]
         else:
-            # _, categorized_input = torch.unique(
-            #     logs.sender_input, return_inverse=True, dim=0)
-            # mi_inp = compute_mi(categorized_input, messages)
-            mi_cat = compute_mi(messages, aux_attributes)
+            mi_cat = compute_mi(messages, aux_attributes, vocab_size)
             logs.aux['H_msg'] = mi_cat['entropy_msg']
             logs.aux['MI_inp'] = None
             logs.aux['VI_inp'] = None
@@ -550,13 +546,13 @@ class TrainingMetricsCallback(Callback):
 
         # redundancy
         logs.aux['max_rep'] = compute_max_rep(messages)
-        logs.aux['R'] = compute_redundancy(
-            messages, self.max_len, self.vocab_size,
+        logs.aux['redundancy'] = compute_redundancy(
+            messages, self.vocab_size,
             channel=None, error_prob=0.0)
-        logs.aux['R\''] = compute_adjusted_redundancy(
+        logs.aux['redundancy_adj'] = compute_adjusted_redundancy(
             messages, channel=None, error_prob=0.0,
             symbols=torch.arange(vocab_size), erased_symbol=self.vocab_size)
-        logs.aux['R"'] = compute_adjusted_redundancy(
+        logs.aux['redundancy_adj2'] = compute_adjusted_redundancy(
             messages, channel=None, error_prob=0.0,
             symbols=actual_vocab, erased_symbol=self.vocab_size)
 

@@ -122,7 +122,7 @@ def reshape(data_concepts, n_distractors, n_features, n_samples):
             labels.append(target_pos)
             # categories.append((category, *distractor_categories))
 
-            categories['target'].append(target_category)
+            categories['target_category'].append(target_category)
             for k, distr_ind in enumerate(distractor_ind):
                 distr_cat = data_categories.iloc[distr_ind]
                 categories[f'distr_{k}_category'].append(distr_cat)

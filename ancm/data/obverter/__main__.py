@@ -156,6 +156,13 @@ def export_input_data(n_distractors, n_samples, n_img, resolution, select_distra
                     (1, n_distractors + 1, *target_image.shape), dtype=np.int64)
                 sample_set[0, target_pos] = target_image
 
+                labels.append(target_pos)
+                attributes['target_color'].append(color)
+                attributes['target_shape'].append(shape)
+                attributes['target_xpos'].append(xpos)
+                attributes['target_ypos'].append(ypos)
+                attributes['target_rotation'].append(rotation)
+
                 used_combinations = [(shape, color, xpos, ypos, rotation)]
                 for j in range(n_distractors):
                     (distr_shape, distr_color, distr_xpos, distr_ypos, distr_rot), \
@@ -174,12 +181,6 @@ def export_input_data(n_distractors, n_samples, n_img, resolution, select_distra
                     attributes[f'distr_{j}_rotation'].append(distr_rot)
 
                 sample_sets.append(sample_set)
-                labels.append(target_pos)
-                attributes['target_color'].append(color)
-                attributes['target_shape'].append(shape)
-                attributes['target_xpos'].append(xpos)
-                attributes['target_ypos'].append(ypos)
-                attributes['target_rotation'].append(rotation)
 
     input_data = np.vstack(sample_sets)
     labels = np.array(labels, dtype=np.int64)

@@ -8,6 +8,7 @@ from __future__ import print_function
 import os
 import json
 import time
+import pickle
 import pathlib
 import argparse
 import operator
@@ -59,6 +60,7 @@ def get_params(params):
     parser.add_argument("--length_cost", type=float, default=1e-2, help="Message length cost")
     parser.add_argument("--mode", type=str, default="gs", help="Selects whether Reinforce or GumbelSoftmax relaxation is used for training {gs only at the moment} (default: rf)")
     parser.add_argument("--optim", type=str, default="rmsprop", help="Optimizer to use [adam, rmsprop] (default: rmsprop)")
+    parser.add_argument("--n_permutations_train", type=int, default=None, help="Number of order permutations of the objects in the train set.")
     parser.add_argument("--temperature", type=float, default=1.0, help="GS temperature for the sender (default: 1.0)")
     parser.add_argument("--trainable_temperature", action="store_true", default=False, help="Enable trainable temperature")
     parser.add_argument("--temperature_decay", default=0.9, type=float)
@@ -214,7 +216,7 @@ def main(params):
     t_end = time.monotonic()
 
     def evaluate(dataloader):
-        results, messages = defaultdict(dict), []
+        results, messages, dumps = defaultdict(dict), [], {}
         message_counts = defaultdict(lambda: defaultdict(int))
 
         apply_noise = opts.error_prob > 0. and opts.channel is not None
@@ -246,6 +248,7 @@ def main(params):
 
         # Evaluation in the same setting as during training
         output_key = 'noise' if apply_noise else 'no noise'
+        dumps[output_key] = dump
         results[output_key] = get_results_dict(
             dump, receiver, opts, unique_dict,
             noise=apply_noise)
@@ -295,8 +298,8 @@ def main(params):
                 max_len=opts.max_len,
                 vocab_size=opts.vocab_size,
                 device=device)
-
-            results['no_noise'] = get_results_dict(dump, receiver, opts, unique_dict, False)
+            dump['no noise'] = dump
+            results['no noise'] = get_results_dict(dump, receiver, opts, unique_dict, False)
 
             # Iterating through Dump without noise
             for i, (s_inp, msg, r_inp, _, _, _, _) in enumerate(dump):
@@ -321,7 +324,7 @@ def main(params):
                 assert message_log['candidate_objs'] == candidate_vex
 
                 message_log['message-no-noise'] = message
-                message_counts['no_noise'][message] += 1
+                message_counts['no noise'][message] += 1
 
         for key in message_counts:
             message_counts[key] = sorted(
@@ -329,18 +332,20 @@ def main(params):
                 key=operator.itemgetter(1),
                 reverse=True)
 
-        return results, messages, message_counts
+        return results, messages, message_counts, dumps
 
     output_dict = {}
 
     # get results on the train and test test
     if aux_train_data is not None:
-        results, messages, message_counts = evaluate(aux_train_data)
+        results, messages, message_counts, train_dumps = evaluate(aux_train_data)
         output_dict['train'] = {
             'results': results,
             'messages': messages,
             'message_counts': message_counts}
-    results, messages, message_counts = evaluate(test_data)
+    else:
+        train_dumps = None
+    results, messages, message_counts, test_dumps = evaluate(test_data)
     output_dict['test'] = {
         'results': results,
         'messages': messages,
@@ -369,6 +374,13 @@ def main(params):
         opts.results_folder.mkdir(exist_ok=True)
         with open(opts.results_folder / f'{opts.filename}-results.json', 'w') as f:
             json.dump(output_dict, f, indent=4)
+
+        if train_dumps is not None:
+            with open(opts.results_folder / f'{opts.filename}-train-dump.pkl', 'w') as f:
+                pickle.dump(train_dumps)
+
+        with open(opts.results_folder / f'{opts.filename}-test-dump.pkl', 'w') as f:
+            pickle.dump(test_dumps)
 
         print(f"Results saved to {opts.results_folder / opts.filename}-results.json")
 

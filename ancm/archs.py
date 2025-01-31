@@ -599,8 +599,6 @@ class ErasureChannel(Channel):
         ).int().to(self.device)
 
         target_ids = non_eos_ids[non_eos_target_ids.nonzero(), torch.arange(msg.dim())]
-        # erase_ids = torch.zeros_like(msg).bool()
-        # erase_ids[target_chunks] = True
 
         if message.dim() == 2:  # Reinforce
             target_chunks = target_ids.t().chunk(chunks=2)
