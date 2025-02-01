@@ -128,16 +128,10 @@ def sequence_entropy(
     if alphabet is not None:
         alphabet = alphabet.numpy()
 
-    # try:
     H = entropy_joint(
         x.t().numpy(),
         Alphabet_X=alphabet,
         estimator=estimator)
-    # except ValueError:
-    #     # it sometimes happens that messages contain 0s after the 1st eos
-    #     print("Hx (seq)", torch.unique(x), x.shape)
-    #     print("alph_x", alphabet)
-    #     return None
 
     return H.item()
 
@@ -730,16 +724,10 @@ def compute_posdis(
             alphabet_x = torch.arange(receiver_vocab_size) \
                 if j < messages.size(1) else torch.zeros(1, 1)
         else:  # bosdis
-            alphabet_x = torch.unique(messages)  # build_alphabet(
-            # messages, non_message_sequences=True))
+            alphabet_x = torch.unique(messages)
 
         for i in range(sender_inputs.size(1)):
             x, y = messages[:, j], sender_inputs[:, i]
-            # alphabet_x = build_alphabet(x.unsqueeze(1), True)
-            # print("x", x)
-            # print("j", j, messages.size(1), messages.size())
-            # print("historgrams", x[:10], x.shape)
-            # print("alphabet x", alphabet_x)
             info, _ = mutual_info(x, y, alphabet_x)
             symbol_mi.append(info)
 

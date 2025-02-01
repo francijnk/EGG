@@ -308,9 +308,12 @@ def dump_sender_receiver(
             for key, val in batch[3].items():
                 attributes[key].extend(val)
 
-            message = game.sender(sender_input)
-            if isinstance(message, tuple):
+            sender_output = game.sender(sender_input)
+            if len(sender_output) == 3:  # Reinforce
                 message, log_prob, entropy = message
+            else:  # modified GS
+                _, message, log_prob, entropy = sender_output
+            message = crop_messages(message)
 
             if game.channel:  # Add noise to the message
                 message = game.channel(message, apply_noise=apply_noise)
@@ -449,31 +452,31 @@ def print_training_results(output_dict):
     ))
 
 
-def crop_messages(interaction):
+def crop_messages(messages: torch.Tensor, message_length: Optional[torch.Tensor] = None):
     """
     Given an Interaction object, removes non EOS symbols after the first EOS.
     Used to trim EOSed symbols on validation.
     """
-    if interaction.message.dim() == 2:
-        assert interaction.message_length is not None
-        size = interaction.message.shape
+    if messages.dim() == 2:
+        if message_length is None:
+            message_length = find_lengths(messages)
+        size = messages.shape
         not_eosed = (
             torch.unsqueeze(
                 torch.arange(0, size[1]), dim=0
-            ).expand(size[:2]).to(interaction.message.device)
+            ).expand(size[:2]).to(messages.device)
             < torch.unsqueeze(
-                interaction.message_length - 1, dim=-1
+                message_length - 1, dim=-1
             ).expand(size[:2])
         )
-        interaction.message = torch.where(not_eosed, interaction.message, 0.)
+        messages = torch.where(not_eosed, messages, 0.)
 
-    if interaction.message.dim() == 3:
-        message = interaction.message.argmax(-1)
-        lengths = find_lengths(message).unsqueeze(-1).expand(message.size())
-        positions = torch.arange(
-            message.size(1)).unsqueeze(0).expand(message.size())
+    if messages.dim() == 3:
+        msg = messages.argmax(-1)
+        lengths = find_lengths(msg).unsqueeze(-1).expand(msg.size())
+        positions = torch.arange(msg.size(1)).unsqueeze(0).expand(msg.size())
 
-        nonzero_ids = message.nonzero()
+        nonzero_ids = msg.nonzero()
         nonzero_chunks = nonzero_ids.t().chunk(chunks=2)
         targets = (positions[nonzero_chunks] > lengths[nonzero_chunks] - 1)
         targets = targets.squeeze()
@@ -482,6 +485,8 @@ def crop_messages(interaction):
         # if no targets are found, the dimension is 3
         if target_ids.dim() == 2:
             target_chunks = target_ids.t().chunk(chunks=3)
-            replacement_probs = torch.zeros_like(interaction.message[0, 0])
+            replacement_probs = torch.zeros_like(messages[0, 0])
             replacement_probs[0] = 1.
-            interaction.message[target_chunks] = replacement_probs
+            messages[target_chunks] = replacement_probs
+
+    return messages

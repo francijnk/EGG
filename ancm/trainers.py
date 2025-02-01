@@ -254,7 +254,8 @@ class Trainer:
             ):
                 interaction = Interaction.gather_distributed_interactions(interaction)
             interaction = interaction.to("cpu")
-            crop_messages(interaction)  # remove symbols after EOS
+            interaction.message = crop_messages(
+                interaction.message, interaction.message_length)  # remove symbols after EOS
 
             for callback in self.callbacks:
                 callback.on_batch_end(interaction, optimized_loss, batch_id)
@@ -277,7 +278,8 @@ class Trainer:
                 callback.on_epoch_begin(epoch + 1)
 
             train_loss, train_interaction = self.train_epoch()
-            crop_messages(train_interaction)
+            train_interaction.message = crop_messages(
+                train_interaction.message, train_interaction.message_length)
 
             for callback in self.callbacks:
                 callback.on_epoch_end(train_loss, train_interaction, epoch + 1)
@@ -292,7 +294,8 @@ class Trainer:
                 for callback in self.callbacks:
                     callback.on_validation_begin(epoch + 1)
                 validation_loss, validation_interaction = self.eval(apply_noise=True)
-                crop_messages(validation_interaction)
+                validation_interaction.message = crop_messages(
+                    validation_interaction.message, validation_interaction.message_length)
 
                 for callback in self.callbacks:
                     callback.on_validation_end(
@@ -304,7 +307,9 @@ class Trainer:
                     for callback in self.callbacks:
                         callback.on_validation_begin(epoch + 1)
                     validation_loss, validation_interaction = self.eval(apply_noise=False)
-                    crop_messages(validation_interaction)
+
+                    validation_interaction.message = crop_messages(
+                        validation_interaction.message, validation_interaction.message_length)
 
                     for callback in self.callbacks:
                         if (isinstance(callback, TrainingMetricsCallback)

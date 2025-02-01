@@ -31,6 +31,7 @@ from ancm.util import (
 )
 from ancm.archs import (
     Sender, Receiver,
+    RnnSenderGS,
     loss_rf, loss_gs,
     SenderReceiverRnnReinforce,
     SenderReceiverRnnGS,
@@ -62,6 +63,7 @@ def get_params(params):
     parser.add_argument("--optim", type=str, default="rmsprop", help="Optimizer to use [adam, rmsprop] (default: rmsprop)")
     parser.add_argument("--n_permutations_train", type=int, default=None, help="Number of order permutations of the objects in the train set.")
     parser.add_argument("--temperature", type=float, default=1.0, help="GS temperature for the sender (default: 1.0)")
+    parser.add_argument("--temperature_inference", type=float, default=0.1, help="GS temperature for the sender (default: 1.0)")
     parser.add_argument("--trainable_temperature", action="store_true", default=False, help="Enable trainable temperature")
     parser.add_argument("--temperature_decay", default=0.9, type=float)
     parser.add_argument("--temperature_minimum", default=0.5, type=float)
@@ -151,13 +153,14 @@ def main(params):
             device=device,
             seed=opts.random_seed)
     elif opts.mode == 'gs':
-        sender = core.RnnSenderGS(
+        sender = RnnSenderGS(
             _sender,
             opts.vocab_size,
             opts.embedding,
             opts.sender_hidden,
             opts.max_len,
             opts.temperature,
+            opts.temperature_inference,
             opts.sender_cell,
             opts.trainable_temperature)
         receiver = core.RnnReceiverGS(

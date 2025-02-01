@@ -1,7 +1,10 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.distributions import Categorical
+# from torch.distributions import Categorical
+from torch.distributions import RelaxedOneHotCategorical, OneHotCategorical, Categorical
+from torch.distributions.utils import logits_to_probs, probs_to_logits
+from ancm.util import crop_messages
 
 from typing import Callable, Optional
 from collections import defaultdict
@@ -323,12 +326,14 @@ class CommunicationRnnReinforce(nn.Module):
         self.receiver_entropy_coeff = receiver_entropy_coeff
         self.length_cost = length_cost
 
-        if channel_type == 'erasure':
-            self.channel = ErasureChannel(error_prob, vocab_size, device, seed)
-        elif channel_type == 'symmetric':
-            self.channel = SymmetricChannel(error_prob, vocab_size, device, seed)
-        elif channel_type == 'deletion':
-            self.channel = DeletionChannel(error_prob, vocab_size, device, seed)
+        channels = {
+            'erasure': ErasureChannel,
+            'deletion': DeletionChannel,
+            'symmetric': SymmetricChannel,
+        }
+
+        if channel_type in channels.keys():
+            self.channel = channels[channel_type](error_prob, vocab_size, device, seed)
         else:
             self.channel = None
 
@@ -436,8 +441,187 @@ class CommunicationRnnReinforce(nn.Module):
 # Gumbel-Softmax
 def loss_gs(_sender_input, _message, _receiver_input, receiver_output, _labels, _aux_input):
     acc = (receiver_output.argmax(dim=-1) == _labels).detach().float()
-    loss = F.cross_entropy(receiver_output, _labels, reduction="none")
-    return loss, {"accuracy": acc * 100}
+
+    cross_entropy = F.cross_entropy(receiver_output, _labels, reduction="none")
+
+    if _sender_input.dim() == 2:  # VISA
+        print(_labels)
+        size = _receiver_input.shape
+        feature_agreement = torch.empty(size[0], size[-1], dtype=torch.float)
+
+        for i in range(size[-1]):
+            feature_i = _receiver_input[:, :, i]
+            unique_values = torch.unique(feature_i, dim=-1)
+            print("feature", feature_i.shape)
+            unique_features = torch.unique(_receiver_input[:,:, i], dim=-1)
+            print(_receiver_input[:,:, i].shape, unique_features.shape, unique_features, i)
+
+        features_values = torch.unique(_receiver_input)
+        #print(relevant_features.shape)
+        selected_object = _receiver_input[torch.arange(_labels.size(0)), _labels]
+        # log_ratio = torch.log()
+        # kld = 
+    else:  # Obverter
+        pass
+    
+    return cross_entropy, {"accuracy": acc.mean() * 100}
+
+
+def gumbel_softmax_sample(
+        logits: torch.Tensor,
+        # channel: Optional[nn.Module] = None,
+        temperature: float = 1.0,
+        training: bool = True):
+
+    if training:
+        # learning based on a concrete distribution (original implementation)
+        distr_concrete = RelaxedOneHotCategorical(logits=logits, temperature=temperature)
+        sample_concrete = distr_concrete.rsample()
+
+        # one hot symbol from a discrete distribution for evaluation
+        logits_relaxed = F.gumbel_softmax(logits=logits.detach(), tau=temperature)
+        distr_one_hot = OneHotCategorical(logits=logits_relaxed)
+        sample_one_hot = distr_one_hot.sample()
+
+    else:
+        logits_relaxed = F.gumbel_softmax(logits=logits, tau=temperature)
+        distr_one_hot = OneHotCategorical(logits=logits_relaxed)
+        sample_concrete = sample_one_hot = distr_one_hot.sample()
+
+    log_prob = distr_one_hot.logits
+    min_real = torch.finfo(log_prob.dtype).min
+    log_prob = torch.clamp(log_prob, min=min_real)
+    p_log_p = log_prob * logits_to_probs(log_prob)
+    entropy = -p_log_p.sum(-1)
+
+    return sample_concrete, sample_one_hot, log_prob, entropy
+
+
+class RnnSenderGS(nn.Module):
+    """
+    Gumbel Softmax wrapper for Sender that outputs variable-length sequence of symbols.
+    The user-defined `agent` takes an input and outputs an initial hidden state vector for the RNN cell;
+    `RnnSenderGS` then unrolls this RNN for the `max_len` symbols. The end-of-sequence logic
+    is supposed to be handled by the game implementation. Supports vanilla RNN ('rnn'), GRU ('gru'), and LSTM ('lstm')
+    cells.
+
+    >>> class Sender(nn.Module):
+    ...     def __init__(self):
+    ...         super().__init__()
+    ...         self.fc_out = nn.Linear(10, 5) #  input size 10, the RNN's hidden size is 5
+    ...     def forward(self, x, _aux_input=None):
+    ...         return self.fc_out(x)
+    >>> agent = Sender()
+    >>> agent = RnnSenderGS(agent, vocab_size=2, embed_dim=10, hidden_size=5, max_len=3, temperature=1.0, cell='lstm')
+    >>> output = agent(torch.ones((1, 10)))
+    >>> output.size()  # batch size x max_len+1 x vocab_size
+    torch.Size([1, 4, 2])
+    """
+
+    def __init__(
+        self,
+        agent,
+        vocab_size,
+        embed_dim,
+        hidden_size,
+        max_len,
+        temperature_learning,
+        temperature_inference,
+        cell="rnn",
+        trainable_temperature=False,
+        straight_through=False,
+    ):
+        super(RnnSenderGS, self).__init__()
+        self.agent = agent
+
+        assert max_len >= 1, "Cannot have a max_len below 1"
+        self.max_len = max_len
+
+        self.hidden_to_output = nn.Linear(hidden_size, vocab_size)
+        self.embedding = nn.Linear(vocab_size, embed_dim)
+        self.sos_embedding = nn.Parameter(torch.zeros(embed_dim))
+        self.embed_dim = embed_dim
+        self.vocab_size = vocab_size
+
+        if not trainable_temperature:
+            self.temperature = temperature_learning
+        else:
+            self.temperature = torch.nn.Parameter(
+                torch.tensor([temperature_learning]), requires_grad=True
+            )
+        self.temperature_inference = temperature_inference
+
+        self.straight_through = straight_through
+        self.cell = None
+
+        cell = cell.lower()
+
+        if cell == "rnn":
+            self.cell = nn.RNNCell(input_size=embed_dim, hidden_size=hidden_size)
+        elif cell == "gru":
+            self.cell = nn.GRUCell(input_size=embed_dim, hidden_size=hidden_size)
+        elif cell == "lstm":
+            self.cell = nn.LSTMCell(input_size=embed_dim, hidden_size=hidden_size)
+        else:
+            raise ValueError(f"Unknown RNN Cell: {cell}")
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        nn.init.normal_(self.sos_embedding, 0.0, 0.01)
+
+    def forward(self, x, aux_input=None, channel=None, apply_noise=False):
+        prev_hidden = self.agent(x, aux_input)
+        prev_c = torch.zeros_like(prev_hidden)  # only for LSTM
+
+        e_t = torch.stack([self.sos_embedding] * prev_hidden.size(0))
+
+        if self.training:
+            temperature = self.temperature
+        else:
+            temperature = self.temperature_inference
+
+        accumulated_eos_prob = torch.zeros(x.size(0))
+        sequence, one_hots, log_probs, entropy = [], [], [], []
+        for step in range(self.max_len):
+            if isinstance(self.cell, nn.LSTMCell):
+                h_t, prev_c = self.cell(e_t, (prev_hidden, prev_c))
+            else:
+                h_t = self.cell(e_t, prev_hidden)
+
+            step_logits = self.hidden_to_output(h_t)
+            smb_concrete, smb_one_hot, smb_logits, smb_entropy = \
+                gumbel_softmax_sample(step_logits, temperature, self.training)
+
+            prev_hidden = h_t
+            e_t = self.embedding(smb_concrete)
+
+            # apply noise after the speaker the sender
+            # embeds the previous symbol
+            if channel is not None:
+                smb_concrete, accumulated_eos_prob = \
+                    channel.concrete(smb_concrete, accumulated_eos_prob)
+
+            sequence.append(smb_concrete)
+            one_hots.append(smb_one_hot)
+            log_probs.append(smb_logits)
+            entropy.append(smb_entropy)
+
+        sequence = torch.stack(sequence).permute(1, 0, 2)
+        one_hots = torch.stack(one_hots).permute(1, 0, 2)
+        log_probs = torch.stack(log_probs).permute(1, 0, 2)
+        entropy = torch.stack(entropy)
+
+        eos = torch.zeros_like(sequence[:, 0, :]).unsqueeze(1)
+        eos[:, 0, 0] = 1
+
+        sequence = torch.cat([sequence, eos], dim=1)
+        if channel is not None and channel.p > 0.:
+            one_hots = torch.cat([one_hots, eos[:, :, :-1]], dim=1)
+        else:
+            one_hots = torch.cat([one_hots, eos], dim=1)
+
+        return sequence, one_hots.detach(), log_probs.detach(), entropy.detach()
 
 
 class SenderReceiverRnnGS(nn.Module):
@@ -500,11 +684,23 @@ class SenderReceiverRnnGS(nn.Module):
             else test_logging_strategy
         )
 
-    def forward(self, sender_input, labels, receiver_input=None, aux_input=None, apply_noise=True):
-        message = self.sender(sender_input, aux_input)
+    def forward(self, sender_input, labels, receiver_input, aux_input, apply_noise=True):
+        # conrcete message representation includes noise
+        message_concrete, message_one_hot, log_probs, entropy = \
+            self.sender(sender_input, aux_input, self.channel, apply_noise)
+
+        # get noise for the one hot message
         if self.channel:
-            message = self.channel(message, message_length=None, apply_noise=apply_noise)
+            message_one_hot = self.channel(
+                message_one_hot,
+                message_length=None,
+                apply_noise=apply_noise)
+
+        message = message_concrete if self.training \
+            else crop_messages(message_one_hot)
+
         receiver_output = self.receiver(message, receiver_input, aux_input)
+
         loss = 0
         not_eosed_before = torch.ones(receiver_output.size(0)).to(
             receiver_output.device
@@ -513,6 +709,7 @@ class SenderReceiverRnnGS(nn.Module):
 
         aux_info = {}
         z = 0.0
+
         for step in range(receiver_output.size(1)):
             step_loss, step_aux = self.loss(
                 sender_input,
@@ -522,7 +719,7 @@ class SenderReceiverRnnGS(nn.Module):
                 labels,
                 aux_input,
             )
-            eos_mask = message[:, step, 0]  # always eos == 0
+            eos_mask = message_concrete[:, step, 0]  # always eos == 0
 
             add_mask = eos_mask * not_eosed_before
             z += add_mask
@@ -550,6 +747,7 @@ class SenderReceiverRnnGS(nn.Module):
             aux_info[name] = value * not_eosed_before + aux_info.get(name, 0.0)
 
         aux_info["length"] = expected_length
+        aux_info["entropy"] = entropy
 
         logging_strategy = (
             self.train_logging_strategy if self.training else self.test_logging_strategy
@@ -560,7 +758,7 @@ class SenderReceiverRnnGS(nn.Module):
             labels=labels,
             aux_input=aux_input,
             receiver_output=receiver_output.detach(),
-            message=message.detach(),
+            message=message_one_hot.detach(),
             message_length=expected_length.detach(),
             aux=aux_info,
         )
@@ -572,7 +770,7 @@ class SenderReceiverRnnGS(nn.Module):
 class Channel(nn.Module):
     def __init__(self, error_prob, vocab_size, device, seed=42):
         super().__init__()
-        self.p = error_prob
+        self.p = torch.tensor([error_prob], requires_grad=False)
         self.vocab_size = vocab_size
         self.generator = torch.Generator()
         self.generator.manual_seed(seed)
@@ -584,7 +782,24 @@ class ErasureChannel(Channel):
     Erases a symbol from a message with a given probability
     """
 
-    def forward(self, message, message_length=None, apply_noise=False):
+    def concrete(self, probs, aux=None):
+        if self.p == 0:
+            return probs, None
+
+        # add an empty row to the original tensor
+        non_eos_prob = probs[:, 1:].sum(-1, keepdim=True)  # has gradient
+        erased_probs = torch.ones_like(probs[:, :1])  # doesnt have
+        erased_probs = erased_probs * non_eos_prob * self.p  # has gradient
+        probs = torch.cat([probs, erased_probs], dim=-1)
+
+        # adjust the prob of successful transmission (not for EOS)
+        probs[:, 1:] = probs[:, 1:] * (1 - self.p)  # has gradient
+        probs[:, -1] = erased_probs.squeeze(1)
+
+        assert torch.allclose(probs.sum(-1), torch.ones_like(probs[:, 0]))
+        return probs, None
+
+    def forward(self, message, message_length=None, apply_noise=False, concrete=False):
         if self.p == 0. or not apply_noise:
             return message
 
@@ -604,12 +819,11 @@ class ErasureChannel(Channel):
             target_chunks = target_ids.t().chunk(chunks=2)
             message[target_chunks] = self.vocab_size
 
-        else:  # GS
+        else:  # GS (one hot)
             message = torch.cat([message, torch.zeros_like(message[:, :, :1])], dim=-1)
 
             # erased symbol vector
-            erased_probs = torch.zeros_like(
-                message[0, 0], requires_grad=False)
+            erased_probs = torch.zeros_like(message[0, 0])
             erased_probs[-1] = 1.
 
             # erase
@@ -623,6 +837,20 @@ class DeletionChannel(Channel):
     """
     Deletes a symbol with a given probability.
     """
+
+    def concrete(self, probs, accumulated_eos_prob=None):
+        if self.p == 0:
+            return probs, None
+
+        eos_prob = probs[:, 0]
+        accumulated_eos_prob = accumulated_eos_prob + (1 - eos_prob) * self.p
+
+        # adjust the prob of successful transmission (not for EOS)
+        probs[:, 0] = probs[:, 0] + (1 - eos_prob) * self.p
+        probs[:, 1:] = probs[:, 1:] * (1 - accumulated_eos_prob)  # has gradient
+
+        assert torch.allclose(probs.sum(-1), torch.ones_like(probs[:, 0]))
+        return probs
 
     def forward(self, message, message_length=None, apply_noise=False):
         if self.p == 0. or not apply_noise:
