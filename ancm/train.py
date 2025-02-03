@@ -47,7 +47,7 @@ def get_params(params):
 
     parser.add_argument("--data_path", type=str, default=None, help="Path to .npz data file to load")
     parser.add_argument("--channel", type=str, default=None, help="Communication channel type {erasure, symmetric, deletion} (default: None)")
-    parser.add_argument("--error_prob", type=float, default=0., help="Probability of error per symbol (default: 0.0)")
+    parser.add_argument("--error_prob", type=float, default=None, help="Probability of error per symbol (default: 0.0)")
     parser.add_argument("--no_shuffle", action="store_false", default=True, help="Do not shuffle train data before every epoch (default: False)")
     parser.add_argument("--sender_hidden", type=int, default=50, help="Size of the hidden layer of Sender (default: 50)")
     parser.add_argument("--receiver_hidden", type=int, default=50, help="Size of the hidden layer of Receiver (default: 50)")
@@ -63,7 +63,6 @@ def get_params(params):
     parser.add_argument("--optim", type=str, default="rmsprop", help="Optimizer to use [adam, rmsprop] (default: rmsprop)")
     parser.add_argument("--n_permutations_train", type=int, default=None, help="Number of order permutations of the objects in the train set.")
     parser.add_argument("--temperature", type=float, default=1.0, help="GS temperature for the sender (default: 1.0)")
-    parser.add_argument("--temperature_inference", type=float, default=0.1, help="GS temperature for the sender (default: 1.0)")
     parser.add_argument("--trainable_temperature", action="store_true", default=False, help="Enable trainable temperature")
     parser.add_argument("--temperature_decay", default=0.9, type=float)
     parser.add_argument("--temperature_minimum", default=0.5, type=float)
@@ -93,6 +92,10 @@ def check_args(args):
     args.mode = args.mode.lower()
     assert args.mode in ("rf", "gs")
 
+    if args.channel is None or args.error_prob == 0:
+        args.error_prob = None
+        args.channel = None
+
     if args.results_folder is not None:
         os.makedirs(os.path.dirname(args.results_folder), exist_ok=True)
 
@@ -115,9 +118,9 @@ def main(params):
         data_handler.load_data(opts)
 
     if opts.channel == 'erasure' and opts.error_prob != 0:
-        receiver_vocab_size = opts.vocab_size + 1
+        vocab_size = opts.vocab_size + 1
     else:
-        receiver_vocab_size = opts.vocab_size
+        vocab_size = opts.vocab_size
 
     _sender = Sender(
         n_features=data_handler.n_features,
@@ -137,7 +140,7 @@ def main(params):
             cell=opts.sender_cell)
         receiver = core.RnnReceiverReinforce(
             agent=core.ReinforceWrapper(_receiver),
-            vocab_size=receiver_vocab_size,
+            vocab_size=vocab_size,
             embed_dim=opts.embedding,
             hidden_size=opts.receiver_hidden,
             cell=opts.receiver_cell)
@@ -160,12 +163,11 @@ def main(params):
             opts.sender_hidden,
             opts.max_len,
             opts.temperature,
-            opts.temperature_inference,
             opts.sender_cell,
             opts.trainable_temperature)
         receiver = core.RnnReceiverGS(
             _receiver,
-            receiver_vocab_size,
+            vocab_size,
             opts.embedding,
             opts.receiver_hidden,
             opts.receiver_cell)
@@ -225,14 +227,9 @@ def main(params):
         apply_noise = opts.error_prob > 0. and opts.channel is not None
         receiver = game.receiver
 
-        if opts.channel == 'erasure' and opts.error_prob != 0:
-            receiver_vocab_size = opts.vocab_size + 1
-        else:
-            receiver_vocab_size = opts.vocab_size
-
-        dump = dump_sender_receiver(
+        dump, entropy = dump_sender_receiver(
             game, dataloader, apply_noise=apply_noise, max_len=opts.max_len,
-            vocab_size=receiver_vocab_size, device=device)
+            vocab_size=vocab_size, mode=opts.mode, device=device)
 
         # Unique targets
         unique_dict = defaultdict(int)
@@ -254,7 +251,7 @@ def main(params):
         dumps[output_key] = dump
         results[output_key] = get_results_dict(
             dump, receiver, opts, unique_dict,
-            noise=apply_noise)
+            noise=apply_noise, entropy=entropy)
 
         for s_inp, msg, r_inp, r_out, label, t_attr, d_attr in dump:
             if opts.image_input:
@@ -302,7 +299,7 @@ def main(params):
                 vocab_size=opts.vocab_size,
                 device=device)
             dumps['no noise'] = dump
-            results['no noise'] = get_results_dict(dump, receiver, opts, unique_dict, False)
+            results['no noise'] = get_results_dict(dump, receiver, opts, unique_dict, False, entropy)
 
             # Iterating through Dump without noise
             for i, (s_inp, msg, r_inp, _, _, _, _) in enumerate(dump):

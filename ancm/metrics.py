@@ -128,6 +128,8 @@ def sequence_entropy(
     if alphabet is not None:
         alphabet = alphabet.numpy()
 
+    print(x[:20])
+    print('\n\n\nalphabet',alphabet)
     H = entropy_joint(
         x.t().numpy(),
         Alphabet_X=alphabet,
@@ -202,7 +204,7 @@ def compute_mi(messages: torch.Tensor, attributes: torch.Tensor, vocab_size: int
     Alphabet - applied to the message
     """
 
-    alphabet = build_alphabet(messages, vocab_size=vocab_size)  # symbols=torch.unique(messages))
+    alphabet = build_alphabet(messages, vocab_size=vocab_size)
 
     if attributes.size(1) == 1:
         entropy_msg = sequence_entropy(messages, alphabet)

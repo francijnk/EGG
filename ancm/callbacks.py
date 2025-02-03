@@ -29,6 +29,7 @@ from ancm.metrics import (
     # tensor_entropy,
     compute_mi,
 )
+from ancm.util import crop_messages
 
 from egg.core.callbacks import Callback, CustomProgress
 from egg.core.interaction import Interaction
@@ -417,7 +418,7 @@ class TrainingMetricsCallback(Callback):
         if self.image_input:
             logs.aux['posdis'] = compute_posdis(aux_attributes, messages, vocab_size)
             logs.aux['bosdis'] = compute_bosdis(
-                aux_attributes, messages, self.vocab_size)
+                aux_attributes, messages, vocab_size)
 
     def on_secondary_validation_end(self, loss: float, logs: Interaction, epoch: int):
         messages = logs.message if logs.message.dim() == 2 \
@@ -434,6 +435,8 @@ class TrainingMetricsCallback(Callback):
         lexicon_size = torch.unique(messages, dim=0).shape[0]
         actual_vocab = torch.unique(torch.flatten(messages), dim=0)
         actual_vocab_size = actual_vocab.size(0)
+        print('act vs', actual_vocab_size)
+        print('smb after eos', torch.all(torch.eq(messages, crop_messages(messages))))
 
         logs.aux['lexicon_size'] = int(lexicon_size)
         logs.aux['actual_vocab_size'] = int(actual_vocab_size)

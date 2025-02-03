@@ -1,14 +1,15 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-# from torch.distributions import Categorical
-from torch.distributions import RelaxedOneHotCategorical, OneHotCategorical, Categorical
-from torch.distributions.utils import logits_to_probs, probs_to_logits
-from ancm.util import crop_messages
+from torch.distributions import RelaxedOneHotCategorical, OneHotCategorical
+from torch.distributions.utils import logits_to_probs  #, probs_to_logits
+
+# from ancm.util import crop_messages
 
 from typing import Callable, Optional
 from collections import defaultdict
 
+import egg.core as core
 from egg.core.reinforce_wrappers import RnnEncoder
 from egg.core.baselines import Baseline, BuiltInBaseline, NoBaseline, MeanBaseline
 from egg.core.interaction import LoggingStrategy
@@ -177,7 +178,7 @@ class SeeingConvNet(nn.Module):
             nn.ReLU(),
         )
         # Choi & Lazaridou (2018) use one layer of 256 hidden units? (https://arxiv.org/pdf/1804.02341)
-        # Denamganaï, Missaoui and Walker use 2 x 128 instead 
+        # Denamganaï, Missaoui and Walker use 2 x 128 instead
         # self.fc = nn.Linear(out_features, n_hidden)
 
     def forward(self, x):
@@ -215,9 +216,9 @@ class Receiver(nn.Module):
             self.encoder = nn.Linear(n_features, linear_units)
         self.logsoft = nn.LogSoftmax(dim=1)
 
-    def forward(self, encoded_msg, _input, _aux_input=None):
+    def forward(self, encoded_message, _input, _aux_input=None):
         embedded_input = self.encoder(_input).tanh()
-        energies = torch.matmul(embedded_input, encoded_msg.unsqueeze(-1))
+        energies = torch.matmul(embedded_input, encoded_message.unsqueeze(-1))
         energies = energies.squeeze()
         return self.logsoft(energies)
 
@@ -322,32 +323,23 @@ class CommunicationRnnReinforce(nn.Module):
         """
         super().__init__()
 
-        self.sender_entropy_coeff = sender_entropy_coeff
-        self.receiver_entropy_coeff = receiver_entropy_coeff
-        self.length_cost = length_cost
-
-        channels = {
+        channel_types = {
             'erasure': ErasureChannel,
             'deletion': DeletionChannel,
             'symmetric': SymmetricChannel,
         }
-
-        if channel_type in channels.keys():
-            self.channel = channels[channel_type](error_prob, vocab_size, device, seed)
-        else:
-            self.channel = None
-
+        
+        self.sender_entropy_coeff = sender_entropy_coeff
+        self.receiver_entropy_coeff = receiver_entropy_coeff
+        self.length_cost = length_cost
+        self.channel = channel_types[channel_type](error_prob, seed)
         self.baselines = defaultdict(baseline_type)
-        self.train_logging_strategy = (
-            LoggingStrategy()
-            if train_logging_strategy is None
+        self.train_logging_strategy = LoggingStrategy() \
+            if train_logging_strategy is None \
             else train_logging_strategy
-        )
-        self.test_logging_strategy = (
-            LoggingStrategy()
-            if test_logging_strategy is None
+        self.test_logging_strategy = LoggingStrategy() \
+            if test_logging_strategy is None \
             else test_logging_strategy
-        )
 
     def forward(
         self,
@@ -367,8 +359,12 @@ class CommunicationRnnReinforce(nn.Module):
 
         message, log_prob_s, entropy_s = sender(sender_input, aux_input)
         message_length_nn = find_lengths(message)
-        if self.channel:
-            message = self.channel(message, message_length_nn, apply_noise)
+        if self.channel and error_prob != 0:
+            message = self.channel(
+                message=message,
+                vocab_size=self.vocab_size,
+                lengths=message_length_nn,
+                apply_noise=apply_noise)
             message_length = find_lengths(message)
         else:
             message_length = message_length_nn
@@ -441,60 +437,42 @@ class CommunicationRnnReinforce(nn.Module):
 # Gumbel-Softmax
 def loss_gs(_sender_input, _message, _receiver_input, receiver_output, _labels, _aux_input):
     acc = (receiver_output.argmax(dim=-1) == _labels).detach().float()
-
     cross_entropy = F.cross_entropy(receiver_output, _labels, reduction="none")
-
-    if _sender_input.dim() == 2:  # VISA
-        print(_labels)
-        size = _receiver_input.shape
-        feature_agreement = torch.empty(size[0], size[-1], dtype=torch.float)
-
-        for i in range(size[-1]):
-            feature_i = _receiver_input[:, :, i]
-            unique_values = torch.unique(feature_i, dim=-1)
-            print("feature", feature_i.shape)
-            unique_features = torch.unique(_receiver_input[:,:, i], dim=-1)
-            print(_receiver_input[:,:, i].shape, unique_features.shape, unique_features, i)
-
-        features_values = torch.unique(_receiver_input)
-        #print(relevant_features.shape)
-        selected_object = _receiver_input[torch.arange(_labels.size(0)), _labels]
-        # log_ratio = torch.log()
-        # kld = 
-    else:  # Obverter
-        pass
-    
+    # if _sender_input.dim() == 2:  # VISA
+    #     size = _receiver_input.shape
+    #     all_ids = torch.arange(_receiver_input.size(0))
+    #     # priors = _receiver_input.sum(1) / size[1]
+    #     # print(priors, priors.shape)
+    #     target_object = _receiver_input[all_ids, _labels]
+    #     selected_object = torch.zeros_like(target_object)
+    #     for i in range(size[1]):
+    #        prob_i = logits_to_probs(receiver_output[all_ids, i])
+    #        selected_object += _receiver_input[all_ids, i] * prob_i.unsqueeze(-1)
+    #    min_positive = torch.finfo(receiver_output.dtype).tiny
+    #    target_object = torch.clamp(target_object, min=min_positive)
+    #    selected_object = torch.clamp(selected_object, min=min_positive)
+    #    log_ratio = torch.log(target_object) - torch.log(selected_object)
+    #    kld = (target_object * log_ratio).sum(-1)
+    #    # print(log_ratio, kld)
+    # else:  # Obverter
+    #    pass
     return cross_entropy, {"accuracy": acc.mean() * 100}
 
 
-def gumbel_softmax_sample(
-        logits: torch.Tensor,
-        # channel: Optional[nn.Module] = None,
-        temperature: float = 1.0,
-        training: bool = True):
+def gumbel_softmax_sample(logits: torch.Tensor, temperature: float = 1.0):
 
-    if training:
-        # learning based on a concrete distribution (original implementation)
-        distr_concrete = RelaxedOneHotCategorical(logits=logits, temperature=temperature)
-        sample_concrete = distr_concrete.rsample()
+    distr = RelaxedOneHotCategorical(logits=logits, temperature=temperature)
+    sample = distr.rsample()
+    
+    min_real = torch.finfo(logits.dtype).min
+    min_positive = torch.finfo(logits.dtype).tiny
+    probs = torch.clamp(distr.probs, min=min_positive)
+    log2_prob = torch.clamp(torch.log2(probs), min=min_real)
+    entropy = (-log2_prob * distr.probs).sum(-1)
+    # log2_prob = torch.clamp(log2_prob, min=min_real)
+    # entropy = distr.base_dist._categorical.entropy()
 
-        # one hot symbol from a discrete distribution for evaluation
-        logits_relaxed = F.gumbel_softmax(logits=logits.detach(), tau=temperature)
-        distr_one_hot = OneHotCategorical(logits=logits_relaxed)
-        sample_one_hot = distr_one_hot.sample()
-
-    else:
-        logits_relaxed = F.gumbel_softmax(logits=logits, tau=temperature)
-        distr_one_hot = OneHotCategorical(logits=logits_relaxed)
-        sample_concrete = sample_one_hot = distr_one_hot.sample()
-
-    log_prob = distr_one_hot.logits
-    min_real = torch.finfo(log_prob.dtype).min
-    log_prob = torch.clamp(log_prob, min=min_real)
-    p_log_p = log_prob * logits_to_probs(log_prob)
-    entropy = -p_log_p.sum(-1)
-
-    return sample_concrete, sample_one_hot, log_prob, entropy
+    return sample, distr.logits, entropy
 
 
 class RnnSenderGS(nn.Module):
@@ -519,24 +497,22 @@ class RnnSenderGS(nn.Module):
     """
 
     def __init__(
-        self,
-        agent,
-        vocab_size,
-        embed_dim,
-        hidden_size,
-        max_len,
-        temperature_learning,
-        temperature_inference,
-        cell="rnn",
-        trainable_temperature=False,
-        straight_through=False,
-    ):
+            self,
+            agent,
+            vocab_size,
+            embed_dim,
+            hidden_size,
+            max_len,
+            temperature_learning,
+            cell="rnn",
+            trainable_temperature=False,
+            straight_through=False,):
+
         super(RnnSenderGS, self).__init__()
         self.agent = agent
 
         assert max_len >= 1, "Cannot have a max_len below 1"
         self.max_len = max_len
-
         self.hidden_to_output = nn.Linear(hidden_size, vocab_size)
         self.embedding = nn.Linear(vocab_size, embed_dim)
         self.sos_embedding = nn.Parameter(torch.zeros(embed_dim))
@@ -547,9 +523,8 @@ class RnnSenderGS(nn.Module):
             self.temperature = temperature_learning
         else:
             self.temperature = torch.nn.Parameter(
-                torch.tensor([temperature_learning]), requires_grad=True
-            )
-        self.temperature_inference = temperature_inference
+                torch.tensor([temperature_learning]),
+                requires_grad=True)
 
         self.straight_through = straight_through
         self.cell = None
@@ -570,58 +545,41 @@ class RnnSenderGS(nn.Module):
     def reset_parameters(self):
         nn.init.normal_(self.sos_embedding, 0.0, 0.01)
 
-    def forward(self, x, aux_input=None, channel=None, apply_noise=False):
+    def forward(self, x, aux_input=None):
         prev_hidden = self.agent(x, aux_input)
         prev_c = torch.zeros_like(prev_hidden)  # only for LSTM
 
         e_t = torch.stack([self.sos_embedding] * prev_hidden.size(0))
 
-        if self.training:
-            temperature = self.temperature
-        else:
-            temperature = self.temperature_inference
-
-        accumulated_eos_prob = torch.zeros(x.size(0))
-        sequence, one_hots, log_probs, entropy = [], [], [], []
+        sequence, logits, entropy = [], [], []
         for step in range(self.max_len):
             if isinstance(self.cell, nn.LSTMCell):
                 h_t, prev_c = self.cell(e_t, (prev_hidden, prev_c))
             else:
                 h_t = self.cell(e_t, prev_hidden)
 
+            #print(h_t)
             step_logits = self.hidden_to_output(h_t)
-            smb_concrete, smb_one_hot, smb_logits, smb_entropy = \
-                gumbel_softmax_sample(step_logits, temperature, self.training)
+            #print(step_logits)
+            symbols, symbol_logits, symbol_entropy = \
+                gumbel_softmax_sample(step_logits, self.temperature)
 
             prev_hidden = h_t
-            e_t = self.embedding(smb_concrete)
+            e_t = self.embedding(symbols)
 
-            # apply noise after the speaker the sender
-            # embeds the previous symbol
-            if channel is not None:
-                smb_concrete, accumulated_eos_prob = \
-                    channel.concrete(smb_concrete, accumulated_eos_prob)
-
-            sequence.append(smb_concrete)
-            one_hots.append(smb_one_hot)
-            log_probs.append(smb_logits)
-            entropy.append(smb_entropy)
+            sequence.append(symbols)
+            logits.append(symbol_logits)
+            entropy.append(symbol_entropy)
 
         sequence = torch.stack(sequence).permute(1, 0, 2)
-        one_hots = torch.stack(one_hots).permute(1, 0, 2)
-        log_probs = torch.stack(log_probs).permute(1, 0, 2)
-        entropy = torch.stack(entropy)
-
         eos = torch.zeros_like(sequence[:, 0, :]).unsqueeze(1)
         eos[:, 0, 0] = 1
-
         sequence = torch.cat([sequence, eos], dim=1)
-        if channel is not None and channel.p > 0.:
-            one_hots = torch.cat([one_hots, eos[:, :, :-1]], dim=1)
-        else:
-            one_hots = torch.cat([one_hots, eos], dim=1)
+        logits = torch.stack(logits).permute(1, 0, 2)
+        entropy = torch.stack(entropy, dim=1)
+        entropy = torch.cat([entropy, torch.zeros_like(entropy[:, :1])], dim=-1)
 
-        return sequence, one_hots.detach(), log_probs.detach(), entropy.detach()
+        return sequence, logits, entropy
 
 
 class SenderReceiverRnnGS(nn.Module):
@@ -656,59 +614,40 @@ class SenderReceiverRnnGS(nn.Module):
             later analysis in the callbacks.
 
         """
-        super(SenderReceiverRnnGS, self).__init__()
-        self.sender = sender
-        self.receiver = receiver
-        self.loss = loss
-        self.length_cost = length_cost
 
-        channels = {
+        channel_types = {
             'erasure': ErasureChannel,
             'deletion': DeletionChannel,
             'symmetric': SymmetricChannel,
         }
 
-        if channel_type in channels.keys():
-            self.channel = channels[channel_type](error_prob, vocab_size, device, seed)
-        else:
-            self.channel = None
-
-        self.train_logging_strategy = (
-            LoggingStrategy()
-            if train_logging_strategy is None
+        super(SenderReceiverRnnGS, self).__init__()
+        self.sender = sender
+        self.receiver = receiver
+        self.loss = loss
+        self.length_cost = length_cost
+        self.channel = channel_types[channel_type](error_prob, device, seed)
+        self.train_logging_strategy = LoggingStrategy() \
+            if train_logging_strategy is None \
             else train_logging_strategy
-        )
-        self.test_logging_strategy = (
-            LoggingStrategy()
-            if test_logging_strategy is None
+        self.test_logging_strategy = LoggingStrategy() \
+            if test_logging_strategy is None \
             else test_logging_strategy
-        )
 
     def forward(self, sender_input, labels, receiver_input, aux_input, apply_noise=True):
-        # conrcete message representation includes noise
-        message_concrete, message_one_hot, log_probs, entropy = \
-            self.sender(sender_input, aux_input, self.channel, apply_noise)
+        message, logits, entropy = self.sender(sender_input, aux_input)
 
-        # get noise for the one hot message
-        if self.channel:
-            message_one_hot = self.channel(
-                message_one_hot,
-                message_length=None,
-                apply_noise=apply_noise)
-
-        message = message_concrete if self.training \
-            else crop_messages(message_one_hot)
+        message, entropy, channel_aux = self.channel(
+            message,
+            entropy=entropy,
+            apply_noise=apply_noise)
 
         receiver_output = self.receiver(message, receiver_input, aux_input)
 
-        loss = 0
-        not_eosed_before = torch.ones(receiver_output.size(0)).to(
-            receiver_output.device
-        )
-        expected_length = 0.0
-
+        loss, expected_length, z = 0.0, 0.0, 0.0
+        not_eosed_before = torch.ones(
+            receiver_output.size(0)).to(receiver_output.device)
         aux_info = {}
-        z = 0.0
 
         for step in range(receiver_output.size(1)):
             step_loss, step_aux = self.loss(
@@ -717,28 +656,49 @@ class SenderReceiverRnnGS(nn.Module):
                 receiver_input,
                 receiver_output[:, step, ...],
                 labels,
-                aux_input,
-            )
-            eos_mask = message_concrete[:, step, 0]  # always eos == 0
+                aux_input)
 
-            add_mask = eos_mask * not_eosed_before
+            # additional accumulated EOS prob
+            #if isinstance(self.channel, DeletionChannel) and self.training:
+            #    eos_mask = message[:, step, 0] + channel_aux.sum(-1).detach()
+            #    # not_eosed_before -= channel_aux[:, step]
+            #elif isinstance(self.channel, DeletionChannel) and not self.training:
+            if isinstance(self.channel, DeletionChannel):
+                eos_mask = channel_aux + step < not_eosed_before.detach
+            else:
+                eos_mask = message[:, step, 0]
+
+            add_mask = eos_mask * not_eosed_before  # s per messagetep_eos_prob
             z += add_mask
-            loss += step_loss * add_mask + self.length_cost * (1.0 + step) * add_mask
             expected_length += add_mask.detach() * (1.0 + step)
+            loss += step_loss * add_mask
+            loss += self.length_cost * (1.0 + step) * add_mask
 
             for name, value in step_aux.items():
                 aux_info[name] = value * add_mask + aux_info.get(name, 0.0)
 
+            # binary entropy of prob. of ending the sequence at this step
+            # h_eos_step = binary_entropy(add_mask)
+
+            h_not_eosed = tensor_binary_entropy(not_eosed_before).detach()
+            entropy['message'] = h_not_eosed \
+                + not_eosed_before.detach() * entropy['symbol'][:, step]
+                # + (1 - prob_not_eosed) * 0
+
+            # if apply_noise:
+            #     entropy['message_entropy_nn'] += h_not_eosed \
+            #         + prob_not_eosed_nn * entropy['symbol_entropy_nn'][:, step]
+            #         # + (1 - prob_not_eosed_nn * 0
+
             not_eosed_before = not_eosed_before * (1.0 - eos_mask)
 
         # the remainder of the probability mass
-        loss += (
-            step_loss * not_eosed_before
-            + self.length_cost * (step + 1.0) * not_eosed_before
-        )
-        expected_length += (step + 1) * not_eosed_before
+        loss += step_loss * not_eosed_before
+        loss += self.length_cost * (step + 1.0) * not_eosed_before
 
+        expected_length += (step + 1) * not_eosed_before
         z += not_eosed_before
+
         assert z.allclose(
             torch.ones_like(z)
         ), f"lost probability mass, {z.min()}, {z.max()}"
@@ -747,34 +707,69 @@ class SenderReceiverRnnGS(nn.Module):
             aux_info[name] = value * not_eosed_before + aux_info.get(name, 0.0)
 
         aux_info["length"] = expected_length
-        aux_info["entropy"] = entropy
+        for key, value in entropy.items():
+            aux_info[key] = value.detach()
 
-        logging_strategy = (
-            self.train_logging_strategy if self.training else self.test_logging_strategy
-        )
+        logging_strategy = self.train_logging_strategy \
+            if self.training else self.test_logging_strategy
+
         interaction = logging_strategy.filtered_interaction(
             sender_input=sender_input,
             receiver_input=receiver_input,
             labels=labels,
             aux_input=aux_input,
             receiver_output=receiver_output.detach(),
-            message=message_one_hot.detach(),
+            message=message.detach(),
             message_length=expected_length.detach(),
-            aux=aux_info,
-        )
+            aux=aux_info)
 
         return loss.mean(), interaction
 
 
-# Noisy channel classes
+def tensor_binary_entropy(p: torch.Tensor):
+    q = 1 - p
+    min_real = torch.finfo(p.dtype).min
+    log2_p = torch.clamp(torch.log2(p), min=min_real)
+    log2_q = torch.clamp(torch.log2(q), min=min_real)
+    return -p * log2_p - q * log2_q
+
+
 class Channel(nn.Module):
-    def __init__(self, error_prob, vocab_size, device, seed=42):
+    def __init__(self, error_prob, device, seed=42):
         super().__init__()
-        self.p = torch.tensor([error_prob], requires_grad=False)
-        self.vocab_size = vocab_size
+        self.p = torch.tensor(error_prob, requires_grad=False)
         self.generator = torch.Generator()
         self.generator.manual_seed(seed)
         self.device = device
+
+    def forward(self, messages, apply_noise, aux=None, *args, **kwargs):
+        # GS
+        if messages.dim() == 3:
+            entropies = kwargs['entropy']
+            symbols, symbol_entropies = [], []
+
+            for i in range(messages.size(1)):
+                symbol_i, entropy_i = messages[:, i], entropies[:, i]
+                symbol_i, entropy_i, aux = self.gs(
+                    symbol_i, entropy_i, aux, apply_noise)
+                symbols.append(symbol_i)
+                symbol_entropies.append(entropy_i)
+
+            messages = torch.stack(symbols).permute(1, 0, 2)
+            symbol_entropies = torch.stack(symbol_entropies).t()
+
+            entropy_dict = {
+                'message': symbol_entropies.sum(-1),
+                'symbol': symbol_entropies,
+                'message_nn': entropies.sum(-1),
+                'symbol_nn': entropies,
+            }
+
+            return messages, entropy_dict, aux
+
+        # Reinforce
+        else:
+            return self.rf(messages, apply_noise, *args, **kwargs)
 
 
 class ErasureChannel(Channel):
@@ -782,55 +777,84 @@ class ErasureChannel(Channel):
     Erases a symbol from a message with a given probability
     """
 
-    def concrete(self, probs, aux=None):
-        if self.p == 0:
-            return probs, None
+    def gs(self, probs, entropy, aux=None, apply_noise=True):
+        if not apply_noise:
+            # if aux == False, append a column with 0 probabilities
+            placeholder_probs = torch.zeros_like(probs[:, :1])
+            probs = torch.cat([probs, placeholder_probs], dim=-1)
+            return probs, entropy, None
 
-        # add an empty row to the original tensor
-        non_eos_prob = probs[:, 1:].sum(-1, keepdim=True)  # has gradient
-        erased_probs = torch.ones_like(probs[:, :1])  # doesnt have
-        erased_probs = erased_probs * non_eos_prob * self.p  # has gradient
-        probs = torch.cat([probs, erased_probs], dim=-1)
+        elif self.training:
+            # append an empty column to the original tensor; each non-EOS
+            # symbol is swapped with a special symbol with probability p
+            non_eos_prob = probs[:, 1:].sum(-1, keepdim=True)
+            erased_probs = torch.ones_like(probs[:, :1])
+            erased_probs = erased_probs * non_eos_prob * self.p
+            probs = torch.cat([probs, erased_probs], dim=-1)
 
-        # adjust the prob of successful transmission (not for EOS)
-        probs[:, 1:] = probs[:, 1:] * (1 - self.p)  # has gradient
-        probs[:, -1] = erased_probs.squeeze(1)
+            # adjust the prob of successful transmission (not for EOS)
+            probs[:, 1:] = probs[:, 1:] * (1 - self.p)
+            probs[:, -1] = erased_probs.squeeze(1)
 
-        assert torch.allclose(probs.sum(-1), torch.ones_like(probs[:, 0]))
-        return probs, None
+            # we don't adjust for (future) message length, as here we're
+            # computing entropy for the specific symbols transmitted/generated
+            entropy += tensor_binary_entropy(self.p)
 
-    def forward(self, message, message_length=None, apply_noise=False, concrete=False):
-        if self.p == 0. or not apply_noise:
-            return message
+            assert torch.allclose(probs.sum(-1), torch.ones_like(probs[:, 0]))
+            return probs, entropy, None
 
-        msg = message.detach() if message.dim() == 2 \
-            else message.detach().argmax(dim=-1)
+        else:
+            # apply argmax, exclude EOS, sample batch rows to be replaced
+            discrete_symbols = probs.argmax(-1)
+            non_eos_mask = discrete_symbols != 0
+            non_eos_ids = torch.arange(len(probs))[non_eos_mask]
+            target_mask = torch.rand(
+                non_eos_mask.sum(),
+                generator=self.generator,
+                device=self.device
+            ) < self.p
+            target_ids = non_eos_ids.flatten()[target_mask]
+
+            # append a column for erased symbols
+            erased_probs = torch.zeros_like(probs[:, :1])
+            probs = torch.cat([probs, erased_probs], dim=-1)
+
+            if target_ids.numel() == 0:
+                return probs, entropy, None
+
+            # create a replacement probability array and replace
+            erased_probs = torch.zeros(
+                target_ids.size(0),
+                probs.size(1),
+                dtype=probs.dtype,
+                requires_grad=False)
+            erased_probs[:, 0] = probs[target_ids, 0]  # EOS prob
+            erased_probs[:, -1] = 1 - probs[target_ids, 0]  # erased prob
+            index = target_ids.expand(probs.size(1), -1).t()
+
+            # replace & adjust the entropy
+            probs.scatter_(0, index, erased_probs)
+            entropy[target_ids] += tensor_binary_entropy(erased_probs[:, -1])
+
+            return probs, entropy, aux
+
+    def reinforce(self, messages, vocab_size=None, lengths=None, apply_noise=False):
+        if not apply_noise:
+            return messages
 
         # sample symbol indices to be erased, make sure EOS is not erased
-        non_eos_ids = msg.nonzero()
-        non_eos_target_ids = (
-            torch.rand(non_eos_ids.size(0), generator=self.generator)
-            < self.p
-        ).int().to(self.device)
+        non_eos_ids = messages.nonzero()
+        non_eos_target_ids = torch.rand(
+            non_eos_ids.size(0),
+            generator=self.generator,
+            device=self.device
+        ) < self.p
 
-        target_ids = non_eos_ids[non_eos_target_ids.nonzero(), torch.arange(msg.dim())]
+        target_ids = non_eos_ids[non_eos_target_ids.nonzero(), torch.arange(messages.dim())]
+        target_chunks = target_ids.t().chunk(chunks=2)
+        messages[target_chunks] = vocab_size
 
-        if message.dim() == 2:  # Reinforce
-            target_chunks = target_ids.t().chunk(chunks=2)
-            message[target_chunks] = self.vocab_size
-
-        else:  # GS (one hot)
-            message = torch.cat([message, torch.zeros_like(message[:, :, :1])], dim=-1)
-
-            # erased symbol vector
-            erased_probs = torch.zeros_like(message[0, 0])
-            erased_probs[-1] = 1.
-
-            # erase
-            target_chunks = target_ids.t().chunk(chunks=3)
-            message[target_chunks] = erased_probs
-
-        return message
+        return messages
 
 
 class DeletionChannel(Channel):
@@ -838,68 +862,155 @@ class DeletionChannel(Channel):
     Deletes a symbol with a given probability.
     """
 
-    def concrete(self, probs, accumulated_eos_prob=None):
-        if self.p == 0:
-            return probs, None
+    def gs(self, probs, entropy, aux, apply_noise=True):
+        if not apply_noise:
+            return probs, entropy, aux
 
-        eos_prob = probs[:, 0]
-        accumulated_eos_prob = accumulated_eos_prob + (1 - eos_prob) * self.p
+        if self.training or True:
+            pass
+            # apply argmax, exclude EOS, sample batch rows to be replaced
+            # target_mask = torch.rand(
+            #     torch.arange(len(probs)),
+            #     generator=self.generator,
+            #     device=self.device
+            # ) < self.p
+            # target_ids = probs[target_mask]
+            # probs = torch.where(target_mask, -1, probs)
+            # non_eos_ids[target_mask] = -1
+            #print(non_eos_ids[target_mask])
+            #print(target_ids.shape)
 
-        # adjust the prob of successful transmission (not for EOS)
-        probs[:, 0] = probs[:, 0] + (1 - eos_prob) * self.p
-        probs[:, 1:] = probs[:, 1:] * (1 - accumulated_eos_prob)  # has gradient
+            # sample non-eos symbols to be replaced
+            # target_ids = torch.rand(  # (32, 9)
+            #     probs[:, 1:].size(),
+            #     generator=self.generator,
+            #     device=self.device
+            # ) < self.p
+            # target_mask = target_ids.nonzero(as_tuple=True)
+            # non_eos_ids = torch.arange(1, probs.size(-1)).expand(
+            #     target_mask[-1].size(0), -1)  # (60, 9)
 
-        assert torch.allclose(probs.sum(-1), torch.ones_like(probs[:, 0]))
-        return probs
 
-    def forward(self, message, message_length=None, apply_noise=False):
-        if self.p == 0. or not apply_noise:
-            return message
+            # aux: accumulated additional EOS probability
+            #eos_prob = probs[:, 0]
+            #if aux is None:
+            #    accumulated_eos_prob = torch.zeros_like(probs[:, 0])
+            #    aux = ((1 - eos_prob) * self.p).unsqueeze(-1)
+            #else:
+            #    accumulated_eos_prob = aux.sum(-1)
+            #    aux = torch.cat([
+            #        aux,
+            #        self.p * (1 - accumulated_eos_prob - eos_prob).unsqueeze(-1),
+            #    ], dim=-1)
 
-        msg = message.detach() if message.dim() == 2 \
-            else message.detach().argmax(dim=-1)
+            #print('before', probs)
 
-        if message_length is None:
-            message_length = find_lengths(msg)
+            # adjust the prob of successful transmission (not for EOS)
+            #adjusted_eos = probs[:, 0]
+            #adjusted_non_eos = probs[:, 1:]
+            #adjusted_non_eos = adjusted_non_eos * (
+            #    1 - accumulated_eos_prob - eos_prob).unsqueeze(-1)
+            #adjusted_non_eos = adjusted_non_eos / (1 - eos_prob).unsqueeze(-1)
+            #adjusted_eos = adjusted_eos + accumulated_eos_prob
+            #adjusted_eos = adjusted_eos + probs[:, 1:].sum(-1) * self.p
+            #adjusted_non_eos = adjusted_non_eos * (1 - self.p)
+            #adjusted = torch.cat(
+            #    [adjusted_eos.unsqueeze(-1), adjusted_non_eos], dim=-1)
+
+            #print('after', probs)
+            #entropy = entropy + tensor_binary_entropy(self.p)
+
+            #assert torch.allclose(probs.sum(-1), torch.ones_like(probs[:, 0]))
+            #return adjusted, entropy, aux.detach()
+        else:
+            # aux: number of removed symbols per message
+            if aux is None:
+                aux = torch.zeros(probs.size(0), dtype=torch.int)
+
+            # apply argmax, exclude EOS, sample batch rows to be replaced
+            discrete_symbols = probs.argmax(-1)
+            non_eos_mask = discrete_symbols != 0
+            non_eos_ids = torch.arange(len(probs))[non_eos_mask]
+            target_mask = torch.rand(
+                non_eos_mask.sum(),
+                generator=self.generator,
+                device=self.device
+            ) < self.p
+            target_ids = non_eos_ids.flatten()[target_mask]
+
+            #print(target_ids.size(), target_ids.numel(), target_ids)
+            if target_ids.numel() == 0:
+                return probs, entropy, aux
+
+            # create a replacement prob array
+            source = torch.zeros(
+                target_ids.numel(), probs.size(1),
+                dtype=probs.dtype,
+                requires_grad=False)
+            #print(source)
+            source[target_ids, 0] = -1
+            index = target_ids.expand(probs.size(1), -1).t()
+
+            #print('index', index, index.shape)
+            #print('source', source)
+            #print('target_ids', target_ids[:8])
+            #print('actual smb', discrete_symbols[target_ids[:8]])
+            #print('before', probs)
+
+            probs.scatter_(0, index, source)
+
+            #print('after', probs)
+
+            aux[target_ids] += 1
+
+            # recompute entropy on the updated distribution
+            min_real = torch.finfo(logits.dtype).min
+            min_positive = torch.finfo(logits.dtype).tiny
+            log2_prob = torch.clamp(torch.log2(probs), min=min_real)
+            entropy = (-log2_prob * probs).sum(-1)
+
+            # TODO check if it works
+
+            return probs, entropy, aux
+
+    def delete_symbols(self, messages, aux):
+        for i in messages.size(1):
+            symbol_i = messages[:, i, :]
+            mask = symbol_i == -1
+            if symbol_i[mask].numel() == 0:
+                continue
+
+    def reinforce(self, messages, vocab_size=None, lengths=None, apply_noise=False):
+        if not apply_noise:
+            return messages
+
+        if lengths is None:
+            lengths = find_lengths(messages)
 
         # sample symbol indices to be erased
-        non_eos_ids = msg.nonzero()
-        non_eos_target_ids = (
-            torch.rand(non_eos_ids.size(0), generator=self.generator)
-            < self.p
-        ).int().to(self.device)
+        non_eos_ids = messages.nonzero()
+        non_eos_target_ids = torch.rand(
+            non_eos_ids.size(0),
+            generator=self.generator,
+            device=self.device
+        ) < self.p
 
-        target_ids = non_eos_ids[non_eos_target_ids.nonzero(), torch.arange(msg.dim())]
+        target_ids = non_eos_ids[non_eos_target_ids.nonzero(), torch.arange(messages.dim())]
         target_chunks = target_ids.t().chunk(chunks=2)
 
-        delete_ids = torch.zeros_like(msg).bool()
+        delete_ids = torch.zeros_like(messages).bool()
         delete_ids[target_chunks] = True
         keep_ids = torch.logical_not(delete_ids)
 
         num_deleted = torch.sum(delete_ids.int(), dim=1)
 
-        if message.dim() == 2:  # Reinforce
-            message = torch.stack([
-                torch.cat(
-                    [message[i][keep_ids[i]], torch.zeros(num_deleted[i], dtype=torch.int)])
-                for i in range(message.size(0))
-            ])
-        else:  # GS
-            # EOS vector
-            eos_probs = torch.zeros_like(message[0, 0])
-            eos_probs[0] = 1.
+        messages = torch.stack([
+            torch.cat(
+                [messages[i][keep_ids[i]], torch.zeros(num_deleted[i], dtype=torch.int)])
+            for i in range(messages.size(0))
+        ])
 
-            message = torch.stack([
-                torch.stack(
-                    [
-                        message[i, j]
-                        for j in range(message.size(1)) if keep_ids[i, j]
-                    ]
-                    + [eos_probs] * num_deleted[i]
-                ) for i in range(message.size(0))
-            ])
-
-        return message
+        return messages
 
 
 class SymmetricChannel(Channel):
@@ -908,35 +1019,131 @@ class SymmetricChannel(Channel):
     The replacement symbol is randomly sampled from a uniform distribution.
     """
 
-    def forward(self, message, message_length=None, apply_noise=False):
-        if self.p == 0. or not apply_noise:
-            return message
+    def gs(self, probs, entropy, aux=None, apply_noise=True):
+        if self.training:
+            # sample non-eos symbols to be replaced
+            target_ids = torch.rand(  # (32, 9)
+                probs[:, 1:].size(),
+                generator=self.generator,
+                device=self.device
+            ) < self.p
+            target_mask = target_ids.nonzero(as_tuple=True)
+            non_eos_ids = torch.arange(1, probs.size(-1)).expand(
+                target_mask[-1].size(0), -1)  # (60, 9)
 
-        msg = message.detach() if message.dim() == 2 \
-            else message.detach().argmax(dim=-1)
+            # select remaining non-EOS symbols
+            candidate_mask = torch.logical_not(
+                non_eos_ids - 1 == target_mask[-1].unsqueeze(-1))  # 60, 9
+            candidate_symbols = non_eos_ids[candidate_mask].view(
+                candidate_mask.size(0), -1)
 
-        non_eos_ids = msg.nonzero()
-        non_eos_target_ids = (
-            torch.rand(non_eos_ids.size(0), generator=self.generator)
-            < self.p
-        ).int().to(self.device)
-        target_ids = non_eos_ids[non_eos_target_ids.nonzero(), torch.arange(msg.dim())]
+            # get original probabilities
+            original_target_probs = probs[target_mask[0], target_mask[1] - 1]
+            original_non_target_probs = torch.gather(
+                probs[target_mask[0]], 1, candidate_symbols)
+
+            # the probability of sampling the target symbol decreases to 0
+            # and is uniformy divided among remaining non-EOS symbols
+            adjustment = torch.zeros_like(probs)
+            adjustment[target_mask[0], target_mask[1] - 1] -= original_target_probs
+            adjustment[target_mask[0]].scatter_(
+                1, candidate_symbols,
+                original_non_target_probs
+                + original_target_probs.unsqueeze(-1) / (probs.size(1) - 2))
+            
+            probs = probs + adjustment
+            entropy += tensor_binary_entropy(self.p.expand(probs.size(0)))
+            entropy += torch.log2(torch.tensor(probs.size(1) - 2))
+
+            return probs, entropy, None
+
+        else:
+            # apply argmax, exclude EOS, sample batch rows to be replaced
+            discrete_symbols = probs.argmax(-1)
+            non_eos_mask = discrete_symbols != 0
+            non_eos_ids = torch.arange(len(probs))[non_eos_mask]
+            target_mask = torch.rand(
+                non_eos_mask.sum(),
+                generator=self.generator,
+                device=self.device
+            ) < self.p
+            target_ids = non_eos_ids.flatten()[target_mask]
+
+            if target_ids.numel() == 0:
+                return probs, entropy, None
+
+            size = target_ids.size(0)
+
+            # find and select possible non-EOS replacements
+            candidates = torch.arange(1, probs.size(-1)).expand(size, -1)
+            candidate_mask = (
+                candidates != discrete_symbols[target_ids].unsqueeze(-1))  # 4, 9
+            candidate_symbols = candidates[candidate_mask].view(
+                candidate_mask.size(0), -1)  # (4, 8), ready to mask
+            replacement_ids = torch.randint(
+                size=(size,),
+                high=candidate_symbols.size(-1) - 1,
+                generator=self.generator,
+                device=self.device)
+            replaced_symbols = torch.gather(
+                candidate_symbols, -1, replacement_ids.unsqueeze(-1)
+            ).squeeze().to(torch.int64)
+
+            # create a replacement prob array
+            original_non_eos_probs = probs[target_ids, 1:].sum(-1)
+            source = torch.zeros(
+                size, probs.size(1) - 1,
+                dtype=probs.dtype, requires_grad=False)
+            mask = (torch.arange(size), replaced_symbols)
+            source[mask] = original_non_eos_probs
+            source = torch.cat([probs[target_ids, :1], source], dim=-1)
+            index = target_ids.expand(probs.size(1), -1).t()
+
+            # print('index', index, index.shape)
+            # print('source', source)
+            # print('target_ids', target_ids[:8])
+            # print('actual smb', discrete_symbols[target_ids[:8]])
+            # print('candidate_symbols', candidate_symbols[:8])
+            # print('replacement', replaced_symbols[:8])
+            # print('before', probs)
+
+            # replace
+            probs.scatter_(0, index, source)
+
+            # the resulting entropy for all messages increases
+            entropy += tensor_binary_entropy(self.p.expand(probs.size(0)))
+            entropy += torch.log2(torch.tensor(probs.size(1) - 2))
+
+            # TODO test, test
+
+            return probs, entropy, None
+
+    def reinforce(self, messages, vocab_size=None, lengths=None, apply_noise=True):
+        if not apply_noise:
+            return messages
+
+        non_eos_ids = messages.nonzero()
+        non_eos_target_ids = torch.rand(
+            non_eos_ids.size(0),
+            generator=self.generator,
+            device=self.device) < self.p
+        target_ids = non_eos_ids[non_eos_target_ids.nonzero(), [0, 1]]
         target_chunks = target_ids.t().chunk(chunks=2)
 
-        non_eos_symbols = torch.arange(1, self.vocab_size).expand(
+        non_eos_symbols = torch.arange(1, vocab_size).expand(
             target_ids.size(0), -1)
 
-        actual_symbols = msg[target_chunks]
-        actual_symbols = actual_symbols.expand(self.vocab_size - 1, -1).t()
+        discrete_symbols = messages[target_chunks]
+        discrete_symbols = discrete_symbols.expand(vocab_size - 1, -1).t()
 
-        # exclude actual message symbols from the set of candidates
-        # each symbol of the message has vocab_size - 2 possible replacements
-        candidate_ids = (non_eos_symbols != actual_symbols)
-        candidate_symbols = non_eos_symbols[candidate_ids].view(-1, self.vocab_size - 2)
+        # exclude actual messages symbols from the set of candidates
+        # each symbol of the messages has vocab_size - 2 possible replacements
+        candidate_ids = (non_eos_symbols != discrete_symbols)
+        candidate_symbols = non_eos_symbols[candidate_ids].view(-1, vocab_size - 2)
 
         # sample the replacement symbol to be used
         replacement_ids = torch.randint(
-            high=self.vocab_size - 2,
+            high=vocab_size - 2,
             size=(target_ids.size(0),),
             generator=self.generator,
             device=self.device)
@@ -944,19 +1151,5 @@ class SymmetricChannel(Channel):
         replacement_chunks = (torch.arange(target_ids.size(0)), replacement_ids)
         replacement_symbols = candidate_symbols[replacement_chunks]
 
-        if message.dim() == 2:  # Reinforce
-            message[target_chunks] = replacement_symbols
-        else:  # GS
-            def replacement_probs(ind):
-                row = [0] * self.vocab_size
-                row[ind] = 1
-                return torch.tensor(row)
+        messages[target_chunks] = replacement_symbols
 
-            if len(replacement_symbols) > 0:
-                replaced_probs = torch.stack([
-                    replacement_probs(s) for s in replacement_symbols
-                ]).to(message)
-                target_chunks = target_ids.t().chunk(chunks=3)
-                message[target_chunks] = replaced_probs
-
-        return message

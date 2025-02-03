@@ -76,6 +76,8 @@ class ObjectDataset(Dataset):
                 dtype.append((prefix + suffix, np.int64))
 
             attributes = np.array([attribute_tuple], dtype=dtype)
+
+            assert not np.isnan(obj_set).any()
             return obj_set, label, attributes
 
 
@@ -278,6 +280,7 @@ def dump_sender_receiver(
         apply_noise: bool,
         max_len: int,
         vocab_size: int,
+        mode: str,
         device: Optional[torch.device] = None):
     """
     A tool to dump the interaction between Sender and Receiver
@@ -309,14 +312,16 @@ def dump_sender_receiver(
                 attributes[key].extend(val)
 
             sender_output = game.sender(sender_input)
-            if len(sender_output) == 3:  # Reinforce
-                message, log_prob, entropy = message
-            else:  # modified GS
-                _, message, log_prob, entropy = sender_output
-            message = crop_messages(message)
+            message = sender_output[0]
+            entropy = sender_output[2]
 
-            if game.channel:  # Add noise to the message
+            message, log_prob, entropy = game.sender(sender_input)
+            message = crop_messages(message)
+            if game.channel and mode == 'rf':  # Add noise to the message
                 message = game.channel(message, apply_noise=apply_noise)
+            else:
+                message, entropy, channel_aux = game.channel(message, entropy=entropy, apply_noise=apply_noise) 
+
             messages.extend(message)
 
             output = game.receiver(message, receiver_input)
@@ -325,7 +330,7 @@ def dump_sender_receiver(
 
     game.train(mode=train_state)
 
-    return Dump(sender_inputs, messages, receiver_inputs, receiver_outputs, labels, attributes)
+    return Dump(sender_inputs, messages, receiver_inputs, receiver_outputs, labels, attributes), entropy
 
 
 def get_results_dict(dump, receiver, opts, unique_dict, noise=True):
@@ -446,7 +451,7 @@ def print_training_results(output_dict):
         headers='keys',
         tablefmt='rst',
         maxcolwidths=[24] * len(header),
-        numalign='center',
+        # numalign='center',
         # stralign='left',
         disable_numparse=True,
     ))
@@ -488,5 +493,13 @@ def crop_messages(messages: torch.Tensor, message_length: Optional[torch.Tensor]
             replacement_probs = torch.zeros_like(messages[0, 0])
             replacement_probs[0] = 1.
             messages[target_chunks] = replacement_probs
+
+        # if not torch.all(torch.eq(messages.argmax(-1), msg)):
+        #     check = [(messages[i], messages[i].argmax(-1), msg[i]) for i in range(len(msg)) if not torch.all(torch.eq(messages[i].argmax(-1), msg[i]))]
+        #    for item in check:
+        #        print(item[0])
+        #        print(item[1])
+        #        print(item[2])
+        #        print('----')
 
     return messages

@@ -302,7 +302,7 @@ class Trainer:
                         validation_loss, validation_interaction, epoch + 1
                     )
 
-                # Secondary validation
+                # Secondary validation, with noise disabled
                 if second_val:
                     for callback in self.callbacks:
                         callback.on_validation_begin(epoch + 1)
