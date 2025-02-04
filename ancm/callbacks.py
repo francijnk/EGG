@@ -370,7 +370,6 @@ class TrainingMetricsCallback(Callback):
         logs.aux['actual_vocab_size'] = int(actual_vocab_size)
 
         if self.image_input:
-            # messages, vocab_size, True)
             mi_attr = compute_mi(messages, aux_attributes, vocab_size)
             logs.aux['H_msg'] = mi_attr['entropy_msg']
             # logs.aux['H_attr'] = mi_attr['entropy_attr']
@@ -435,8 +434,6 @@ class TrainingMetricsCallback(Callback):
         lexicon_size = torch.unique(messages, dim=0).shape[0]
         actual_vocab = torch.unique(torch.flatten(messages), dim=0)
         actual_vocab_size = actual_vocab.size(0)
-        print('act vs', actual_vocab_size)
-        print('smb after eos', torch.all(torch.eq(messages, crop_messages(messages))))
 
         logs.aux['lexicon_size'] = int(lexicon_size)
         logs.aux['actual_vocab_size'] = int(actual_vocab_size)

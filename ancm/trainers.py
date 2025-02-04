@@ -254,8 +254,6 @@ class Trainer:
             ):
                 interaction = Interaction.gather_distributed_interactions(interaction)
             interaction = interaction.to("cpu")
-            interaction.message = crop_messages(
-                interaction.message, interaction.message_length)  # remove symbols after EOS
 
             for callback in self.callbacks:
                 callback.on_batch_end(interaction, optimized_loss, batch_id)

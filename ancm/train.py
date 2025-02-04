@@ -93,8 +93,8 @@ def check_args(args):
     assert args.mode in ("rf", "gs")
 
     if args.channel is None or args.error_prob == 0:
-        args.error_prob = None
-        args.channel = None
+        args.error_prob = 0.0
+        args.channel = 'none'
 
     if args.results_folder is not None:
         os.makedirs(os.path.dirname(args.results_folder), exist_ok=True)
@@ -227,7 +227,7 @@ def main(params):
         apply_noise = opts.error_prob > 0. and opts.channel is not None
         receiver = game.receiver
 
-        dump, entropy = dump_sender_receiver(
+        dump, channel_dict = dump_sender_receiver(
             game, dataloader, apply_noise=apply_noise, max_len=opts.max_len,
             vocab_size=vocab_size, mode=opts.mode, device=device)
 
@@ -251,9 +251,10 @@ def main(params):
         dumps[output_key] = dump
         results[output_key] = get_results_dict(
             dump, receiver, opts, unique_dict,
-            noise=apply_noise, entropy=entropy)
+            channel_dict=channel_dict, noise=apply_noise)
 
-        for s_inp, msg, r_inp, r_out, label, t_attr, d_attr in dump:
+        for i, (s_inp, msg, r_inp, r_out, label, t_attr, d_attr) in enumerate(dump):
+
             if opts.image_input:
                 # For the Obverter dataset, we save object features rather than
                 # images (color, shape, position, rotation)
@@ -266,9 +267,17 @@ def main(params):
                     'target_obj': target_vec,
                     'candidate_objs': candidate_vex,
                     'message': message,
-                    'message-no-noise': None,
-                    'label': label}
-
+                    # 'message-no-noise': None,
+                    'label': label,
+                    'entropy': channel_dict['message_entropy'][i].item(),
+                }
+                try:
+                    message_log.update({
+                        'entropy-before-noise':
+                        channel_dict['message_entropy_nn'][i].item() if apply_noise else 'none',
+                    })
+                except:
+                     pass
             else:
                 # VISA concepts are sparse binary tensors, hence we represent each
                 # object as a set of features that it does have
@@ -283,23 +292,32 @@ def main(params):
                     'target_obj': target_vec,
                     'candidate_objs': candidate_vex,
                     'message': message,
-                    'message-no-noise': None,
+                    'message-no-noise': 'none',
                     'label': label,
                     'target_attributes': t_attr,
-                    'distractor_attributes': d_attr}
+                    'distractor_attributes': d_attr,
+                }
+                try:
+                    message_log.update({
+                        'entropy': channel_dict['message_entropy'][i].item() if apply_noise else 'none',
+                        'entropy-before-noise':
+                            channel_dict['message_entropy_nn'][i].item() if apply_noise else 'none'})
+                except:
+                    pass
 
             messages.append(message_log)
             message_counts[output_key][message] += 1
 
         # If we applied noise during training, disable it and evaluate again
         if apply_noise:
-            dump = dump_sender_receiver(
+            dump, channel_dict = dump_sender_receiver(
                 game, dataloader, apply_noise=False,
                 max_len=opts.max_len,
                 vocab_size=opts.vocab_size,
-                device=device)
+                mode=opts.mode, device=device)
             dumps['no noise'] = dump
-            results['no noise'] = get_results_dict(dump, receiver, opts, unique_dict, False, entropy)
+            results['no noise'] = get_results_dict(
+                dump, receiver, opts, unique_dict, channel_dict=channel_dict, noise=False)
 
             # Iterating through Dump without noise
             for i, (s_inp, msg, r_inp, _, _, _, _) in enumerate(dump):
@@ -324,6 +342,8 @@ def main(params):
                 assert message_log['candidate_objs'] == candidate_vex
 
                 message_log['message-no-noise'] = message
+                if 'message_entropy' in channel_dict:
+                    message_log['entropy-no-noise'] = channel_dict['message_entropy'][i].item()
                 message_counts['no noise'][message] += 1
 
         for key in message_counts:
@@ -338,6 +358,7 @@ def main(params):
 
     # get results on the train and test test
     if aux_train_data is not None:
+        game.train()
         results, messages, message_counts, train_dumps = evaluate(aux_train_data)
         output_dict['train'] = {
             'results': results,
@@ -345,6 +366,7 @@ def main(params):
             'message_counts': message_counts}
     else:
         train_dumps = None
+    game.eval()
     results, messages, message_counts, test_dumps = evaluate(test_data)
     output_dict['test'] = {
         'results': results,
@@ -361,9 +383,24 @@ def main(params):
     evaluation_time = str(evaluation_time).split('.', maxsplit=1)[0]
     training_time_per_epoch = f'{int(minutes):02}:{int(seconds):02}'
 
-    print_training_results(output_dict)
+    def make_jsonable(x):
+        if isinstance(x, torch.Tensor):
+            try:
+                return x.item()
+            except:
+                if x.numel() < 100:
+                    return x.tolist()
+                else:
+                    return 'none'
+        if isinstance(x, dict):
+            return { make_jsonable(k): make_jsonable(v) for k, v in x.items()}
+        if isinstance(x, list) or isinstance(x, tuple):
+            return [make_jsonable(item) for item in x]
+    
+        return x
 
-    opts_dict = {k: v for k, v in vars(opts).items() if is_jsonable(v) and k != 'optimizer'}
+    opts_dict = {k: make_jsonable(v.item()) if isinstance(v, torch.Tensor)
+                 else v for k, v in vars(opts).items() if is_jsonable(v) and k != 'optimizer'}
     output_dict['opts'] = opts_dict
     output_dict['training_time'] = {
         'training': training_time,
@@ -373,14 +410,14 @@ def main(params):
     if opts.results_folder:
         opts.results_folder.mkdir(exist_ok=True)
         with open(opts.results_folder / f'{opts.filename}-results.json', 'w') as f:
-            json.dump(output_dict, f, indent=4)
+            json.dump(make_jsonable(output_dict), f, indent=4)
 
-        if train_dumps is not None:
-            with open(opts.results_folder / f'{opts.filename}-train-dump.pkl', 'wb') as f:
-                pickle.dump(train_dumps, f)
+        # if train_dumps is not None:
+        #     with open(opts.results_folder / f'{opts.filename}-train-dump.pkl', 'wb') as f:
+        #         pickle.dump(train_dumps, f)
 
-        with open(opts.results_folder / f'{opts.filename}-test-dump.pkl', 'wb') as f:
-            pickle.dump(test_dumps, f)
+        # with open(opts.results_folder / f'{opts.filename}-test-dump.pkl', 'wb') as f:
+        #     pickle.dump(test_dumps, f)
 
         print(f"Results saved to {opts.results_folder / opts.filename}-results.json")
 
@@ -388,6 +425,7 @@ def main(params):
     print('Training time per epoch:', training_time_per_epoch)
     print('Evaluation time:', evaluation_time)
 
+    # print_training_results(output_dict)
 
 if __name__ == "__main__":
     import sys

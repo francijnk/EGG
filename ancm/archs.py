@@ -327,6 +327,7 @@ class CommunicationRnnReinforce(nn.Module):
             'erasure': ErasureChannel,
             'deletion': DeletionChannel,
             'symmetric': SymmetricChannel,
+            'none': NoChannel,
         }
         
         self.sender_entropy_coeff = sender_entropy_coeff
@@ -558,9 +559,7 @@ class RnnSenderGS(nn.Module):
             else:
                 h_t = self.cell(e_t, prev_hidden)
 
-            #print(h_t)
             step_logits = self.hidden_to_output(h_t)
-            #print(step_logits)
             symbols, symbol_logits, symbol_entropy = \
                 gumbel_softmax_sample(step_logits, self.temperature)
 
@@ -619,6 +618,7 @@ class SenderReceiverRnnGS(nn.Module):
             'erasure': ErasureChannel,
             'deletion': DeletionChannel,
             'symmetric': SymmetricChannel,
+            'none': NoChannel,
         }
 
         super(SenderReceiverRnnGS, self).__init__()
@@ -635,10 +635,10 @@ class SenderReceiverRnnGS(nn.Module):
             else test_logging_strategy
 
     def forward(self, sender_input, labels, receiver_input, aux_input, apply_noise=True):
-        message, logits, entropy = self.sender(sender_input, aux_input)
+        message_nn, logits, entropy = self.sender(sender_input, aux_input)
 
         message, entropy, channel_aux = self.channel(
-            message,
+            message_nn,
             entropy=entropy,
             apply_noise=apply_noise)
 
@@ -647,6 +647,7 @@ class SenderReceiverRnnGS(nn.Module):
         loss, expected_length, z = 0.0, 0.0, 0.0
         not_eosed_before = torch.ones(
             receiver_output.size(0)).to(receiver_output.device)
+        not_eosed_before_nn = not_eosed_before.clone().detach()
         aux_info = {}
 
         for step in range(receiver_output.size(1)):
@@ -658,13 +659,13 @@ class SenderReceiverRnnGS(nn.Module):
                 labels,
                 aux_input)
 
-            # additional accumulated EOS prob
-            #if isinstance(self.channel, DeletionChannel) and self.training:
-            #    eos_mask = message[:, step, 0] + channel_aux.sum(-1).detach()
-            #    # not_eosed_before -= channel_aux[:, step]
-            #elif isinstance(self.channel, DeletionChannel) and not self.training:
+            #  additional accumulated EOS prob
+            # if isinstance(self.channel, DeletionChannel) and self.training:
+            #     eos_mask = message[:, step, 0] + channel_aux.sum(-1).detach()
+            #     # not_eosed_before -= channel_aux[:, step]
+            # elif isinstance(self.channel, DeletionChannel) and not self.training:
             if isinstance(self.channel, DeletionChannel):
-                eos_mask = channel_aux + step < not_eosed_before.detach
+                eos_mask = channel_aux + step < not_eosed_before.detach()
             else:
                 eos_mask = message[:, step, 0]
 
@@ -681,16 +682,15 @@ class SenderReceiverRnnGS(nn.Module):
             # h_eos_step = binary_entropy(add_mask)
 
             h_not_eosed = tensor_binary_entropy(not_eosed_before).detach()
-            entropy['message'] = h_not_eosed \
-                + not_eosed_before.detach() * entropy['symbol'][:, step]
+            entropy['message_entropy'] += h_not_eosed \
+                + not_eosed_before.detach() * entropy['symbol_entropy'][:, step]
                 # + (1 - prob_not_eosed) * 0
-
-            # if apply_noise:
-            #     entropy['message_entropy_nn'] += h_not_eosed \
-            #         + prob_not_eosed_nn * entropy['symbol_entropy_nn'][:, step]
-            #         # + (1 - prob_not_eosed_nn * 0
-
             not_eosed_before = not_eosed_before * (1.0 - eos_mask)
+
+            entropy['message_entropy_nn'] += h_not_eosed \
+                + not_eosed_before_nn * entropy['symbol_entropy_nn'][:, step]
+                # + (1 - prob_not_eosed_nn * 0
+            not_eosed_before_nn *= 1.0 - message_nn[:, step, 0]
 
         # the remainder of the probability mass
         loss += step_loss * not_eosed_before
@@ -757,19 +757,23 @@ class Channel(nn.Module):
 
             messages = torch.stack(symbols).permute(1, 0, 2)
             symbol_entropies = torch.stack(symbol_entropies).t()
-
-            entropy_dict = {
-                'message': symbol_entropies.sum(-1),
-                'symbol': symbol_entropies,
-                'message_nn': entropies.sum(-1),
-                'symbol_nn': entropies,
-            }
+            entropy_dict = defaultdict(lambda: torch.zeros_like(messages[:, 0, 0]))
+            entropy_dict.update({
+                # 'message_nn': messages,
+                'symbol_entropy': symbol_entropies,
+                'symbol_entropy_nn': entropies,
+            })
 
             return messages, entropy_dict, aux
 
         # Reinforce
         else:
             return self.rf(messages, apply_noise, *args, **kwargs)
+
+
+class NoChannel(Channel):
+    def gs(probs, entropy, aux):
+        return probs, entropy, aux
 
 
 class ErasureChannel(Channel):
@@ -1050,7 +1054,7 @@ class SymmetricChannel(Channel):
                 1, candidate_symbols,
                 original_non_target_probs
                 + original_target_probs.unsqueeze(-1) / (probs.size(1) - 2))
-            
+
             probs = probs + adjustment
             entropy += tensor_binary_entropy(self.p.expand(probs.size(0)))
             entropy += torch.log2(torch.tensor(probs.size(1) - 2))
@@ -1113,8 +1117,6 @@ class SymmetricChannel(Channel):
             # the resulting entropy for all messages increases
             entropy += tensor_binary_entropy(self.p.expand(probs.size(0)))
             entropy += torch.log2(torch.tensor(probs.size(1) - 2))
-
-            # TODO test, test
 
             return probs, entropy, None
 

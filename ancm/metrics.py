@@ -45,7 +45,7 @@ def binary_entropy(p: float):
 def tensor_entropy(
         x: torch.Tensor,
         alphabet: Optional[torch.Tensor] = None,
-        estimator: str = 'JAMES-STEIN'):
+        estimator: str = 'GOOD-TURING'):
     """
     Estimates entropy of the RV X represented by the tensor x.
 
@@ -56,9 +56,6 @@ def tensor_entropy(
         return 0.
     elif x.dim() > 1:
         _, x = torch.unique(x, return_inverse=True, dim=0)
-
-    if alphabet is not None:
-        alphabet = alphabet.numpy()
 
     H = entropy(x.numpy(), Alphabet_X=alphabet, estimator=estimator)
 
@@ -116,20 +113,18 @@ def build_alphabet(
 def sequence_entropy(
         x: torch.Tensor,
         alphabet: Optional[torch.Tensor] = None,
-        estimator: str = 'JAMES-STEIN') -> float:
+        estimator: str = 'GOOD-TURING') -> float:
     """
     Estimates the entropy of the RV X represented by the tensor x, assuming
     that X if a compound RV if x has 2 dimensions, i.e. X = X1, ..., Xm.
     The entropy is approximated from the sample using the James-Stein formula.
     """
     if x.dim() == 1 or len(x) == len(x.view(-1)):
-        return tensor_entropy(x)
+        return tensor_entropy(x, estimator=estimator)
 
     if alphabet is not None:
         alphabet = alphabet.numpy()
 
-    print(x[:20])
-    print('\n\n\nalphabet',alphabet)
     H = entropy_joint(
         x.t().numpy(),
         Alphabet_X=alphabet,
@@ -141,7 +136,8 @@ def sequence_entropy(
 def mutual_info(
         x: torch.Tensor,
         y: torch.Tensor,
-        alphabet_x: Optional[torch.Tensor] = None) -> Tuple[float, float]:
+        alphabet_x: Optional[torch.Tensor] = None,
+        estimator: Optional[str] = 'GOOD-TURING') -> Tuple[float, float]:
     """
     Given a two tensors x, y of equal length, representing realizations of RVs
     X and Y, estimates I(X; Y) using the James-Stein estimator by approximating
@@ -160,7 +156,6 @@ def mutual_info(
     x = x if x.dim() == 2 else x.unsqueeze(-1)
     y = y if y.dim() == 2 else y.unsqueeze(-1)
     xy = torch.cat([x, y], dim=-1)
-    # print("xy shape", xy.shape)
 
     alphabet_x = build_alphabet(x) if alphabet_x is None else alphabet_x
     alphabet_y = build_alphabet(y, True)
@@ -173,7 +168,6 @@ def mutual_info(
     xy[:, -1] += alphabet_x.max() + 1.
 
     # pad both alphabets with the fill value
-    # print('alphabet x shape, alphabet y shape', alphabet_x.shape, alphabet_y.shape)
     padded_alphabet_x = torch.cat([
         alphabet_x,
         torch.ones(alphabet_x.size(0), alphabet_y.size(1)) * -1], dim=1)
@@ -181,18 +175,16 @@ def mutual_info(
         torch.ones(alphabet_y.size(0), alphabet_x.size(1)) * -1,
         alphabet_y], dim=1)
     alphabet_xy = torch.cat((padded_alphabet_x, padded_alphabet_y))
-    # print("alphabet_xy shape", alphabet_xy.shape)
 
-    H_x = sequence_entropy(x, alphabet_x)
-    H_y = tensor_entropy(y)
-    H_xy = sequence_entropy(xy, alphabet_xy)
-    # print("Hx Hy Hxy", H_x, H_y, H_xy)
+    H_x = sequence_entropy(x, alphabet_x, estimator)
+    H_y = tensor_entropy(y, estimator=estimator)
+    H_xy = sequence_entropy(xy, alphabet_xy, estimator)
     I_xy = H_x + H_y - H_xy
 
     return I_xy, H_xy
 
 
-def compute_mi(messages: torch.Tensor, attributes: torch.Tensor, vocab_size: int) -> dict:
+def compute_mi(messages: torch.Tensor, attributes: torch.Tensor, vocab_size: int, estimator='GOOD-TURING') -> dict:
     """
     Computes multiple information-theoretic metrics: message entropy, input entropy,
     mutual information between messages and target objects, entropy of each input
@@ -207,9 +199,9 @@ def compute_mi(messages: torch.Tensor, attributes: torch.Tensor, vocab_size: int
     alphabet = build_alphabet(messages, vocab_size=vocab_size)
 
     if attributes.size(1) == 1:
-        entropy_msg = sequence_entropy(messages, alphabet)
-        entropy_attr = tensor_entropy(attributes)
-        mi_msg_attr, entropy_msg_attr = mutual_info(messages, attributes, alphabet)
+        entropy_msg = sequence_entropy(messages, alphabet, estimator)
+        entropy_attr = tensor_entropy(attributes, estimator=estimator)
+        mi_msg_attr, entropy_msg_attr = mutual_info(messages, attributes, alphabet, estimator)
         vi_msg_attr = 2 * entropy_msg_attr - entropy_msg - entropy_attr
         vi_norm_msg_attr = 1. - mi_msg_attr / entropy_msg_attr
 
@@ -223,13 +215,13 @@ def compute_mi(messages: torch.Tensor, attributes: torch.Tensor, vocab_size: int
         }
 
     else:  # return values per attribute dimension instead
-        entropy_msg = sequence_entropy(messages, alphabet)
-        entropy_attr = sequence_entropy(attributes)
+        entropy_msg = sequence_entropy(messages, alphabet, estimator)
+        entropy_attr = sequence_entropy(attributes, estimator=estimator)
         entropy_attr_dim = [
-            tensor_entropy(attributes[:, i])
+            tensor_entropy(attributes[:, i], estimator=estimator)
             for i in range(attributes.size(-1))]
         mi_msg_attr_dim, entropy_msg_attr_dim = list(zip(*[
-            mutual_info(messages, attributes[:, i], alphabet)
+            mutual_info(messages, attributes[:, i], alphabet, estimator)
             for i in range(attributes.size(-1))]))
         vi_msg_attr_dim = [
             2 * entropy_msg_attr - entropy_msg - entropy_attr
@@ -451,6 +443,86 @@ def maximize_sequence_entropy(
     eos_probs = [optimal_eos_prob.x] + eos_probs
 
     return _sequence_entropy(optimal_eos_prob.x), eos_probs
+
+
+def sequence_entropy_old(symbol_entropies, categorical=None):
+    if categorical is None:
+        print('SMB', symbol_entropies.sum(-1).mean())
+        return (symbol_entropies.sum(-1).mean())
+
+    print(symbol_entropies.shape, categorical.shape)
+    assert len(symbol_entropies)  == len(categorical)
+
+    categories, indices = torch.unique(categorical, return_inverse=True)
+    if len(categorical) == categorical.numel():
+        categorical = categorical.reshape(-1)
+    H_smb_y = tensor_entropy(categorical)
+    for uni in torch.unique(indices):
+        mask = indices[indices == uni]
+        matches = symbol_entropies[mask]
+        H_smb_y += matches.sum(-1).mean()
+        print((indices == uni).int().sum(), len(matches), '/', len(categorical), matches.sum(-1).mean())
+
+    return H_smb_y
+
+
+def MI(messages, categorical, estimator='GOOD-TURING'):
+    attributes = categorical
+    entropy_msg = messages.sum(-1).mean()
+    if attributes.size(1) == 1:
+        attributes = messages
+        entropy_attr = tensor_entropy(attributes)
+        entropy_msg_attr = sequence_entropy_old(messages, categorical)
+        mi_msg_attr = entropy_msg + entropy_attr - entropy_msg_attr
+        vi_msg_attr = 2 * entropy_msg_attr - entropy_msg - entropy_attr
+        vi_norm_msg_attr = 1. - mi_msg_attr / entropy_msg_attr
+
+        output = {
+            'entropy_msg': entropy_msg,
+            'entropy_attr': entropy_attr,
+            'mi_msg_attr': mi_msg_attr,
+            'vi_msg_attr': vi_msg_attr,
+            'vi_norm_msg_attr': vi_norm_msg_attr,
+            'is_msg_attr': 1 - vi_norm_msg_attr,
+        }
+
+    else:  # return values per attribute dimension instead
+        #_, attributes = torch.unique(categorical, dim=0, return_inverse=True)
+        entropy_attr = sequence_entropy(attributes, estimator=estimator)
+        entropy_attr_dim = [
+            tensor_entropy(attributes[:, i], estimator=estimator)
+            for i in range(attributes.size(-1))]
+        entropy_msg_attr_dim = [sequence_entropy_old(messages, attributes[:,i]) 
+                                for i in range(attributes.size(1))]
+        mi_msg_attr_dim = [
+            entropy_msg + H_y - H_xy
+            for H_y, H_xy in zip(entropy_attr_dim, entropy_msg_attr_dim)
+        ]
+        vi_msg_attr_dim = [
+            2 * entropy_msg_attr - entropy_msg - entropy_attr
+            for entropy_attr, entropy_msg_attr
+            in zip(entropy_attr_dim, entropy_msg_attr_dim)]
+        vi_norm_msg_attr_dim = [
+            1. - mi_msg_attr / entropy_msg_attr
+            for mi_msg_attr, entropy_msg_attr
+            in zip(mi_msg_attr_dim, entropy_msg_attr_dim)]
+        is_msg_attr_dim = [
+            mi_msg_attr / entropy_msg_attr
+            for mi_msg_attr, entropy_msg_attr
+            in zip(mi_msg_attr_dim, entropy_msg_attr_dim)]
+
+        output = {
+            'entropy_msg': entropy_msg,
+            'entropy_attr': entropy_attr,
+            'entropy_attr_dim': entropy_attr_dim,
+            'mi_msg_attr_dim': mi_msg_attr_dim,
+            'vi_msg_attr_dim': vi_msg_attr_dim,
+            'vi_norm_msg_attr_dim': vi_norm_msg_attr_dim,
+            'is_msg_attr_dim': is_msg_attr_dim,
+        }
+
+    return {f'{k}_v2': v for k, v in output.items()}
+
 
 
 def truncate_messages(messages, receiver_input, labels, mode):
