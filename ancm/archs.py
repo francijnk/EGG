@@ -637,7 +637,7 @@ class SenderReceiverRnnGS(nn.Module):
     def forward(self, sender_input, labels, receiver_input, aux_input, apply_noise=True):
         message_nn, logits, entropy = self.sender(sender_input, aux_input)
         
-        message, entropy, channel_aux = self.channel(
+        message, entropy  = self.channel(
             message_nn,
             entropy=entropy,
             apply_noise=apply_noise)
@@ -742,12 +742,12 @@ class Channel(nn.Module):
         self.generator.manual_seed(seed)
         self.device = device
 
-    def forward(self, messages, apply_noise, aux=None, *args, **kwargs):
+    def forward(self, messages, apply_noise, *args, **kwargs):
         # GS
         if messages.dim() == 3:
             entropies = kwargs['entropy']
 
-            _messages, _entropies, aux = self.gs(messages, entropies, apply_noise=apply_noise)
+            _messages, _entropies = self.gs(messages, entropies, apply_noise=apply_noise)
 
             entropy_dict = {
                 'message': _messages,
@@ -758,7 +758,7 @@ class Channel(nn.Module):
                 'symbol_entropy_nn': _entropies,
             }
  
-            return _messages, entropy_dict, aux
+            return _messages, entropy_dict
 
             # symbols, symbol_entropies = [], []
 
@@ -788,8 +788,8 @@ class Channel(nn.Module):
 
 
 class NoChannel(Channel):
-    def gs(self, probs, entropy, aux, *args, **kwargs):
-        return probs, entropy, aux
+    def gs(self, probs, entropy, *args, **kwargs):
+        return probs, entropy
 
 
 class ErasureChannel(Channel):
@@ -886,9 +886,9 @@ class DeletionChannel(Channel):
     Deletes a symbol with a given probability.
     """
 
-    def gs(self, probs, entropy, aux, apply_noise=True):
+    def gs(self, probs, entropy, apply_noise=True):
         if not apply_noise:
-            return probs, entropy, aux
+            return probs, entropy
 
         if self.training or True:
             pass
@@ -1041,7 +1041,7 @@ class SymmetricChannel(Channel):
     The replacement symbol is randomly sampled from a uniform distribution.
     """
 
-    def gs(self, probs, entropy, aux=None, apply_noise=True):
+    def gs(self, probs, entropy, apply_noise=True):
         
         if self.training:
             target_mask = torch.rand(

@@ -318,7 +318,7 @@ def dump_sender_receiver(
 
             # TODO 
         elif mode == 'gs':
-            message, channel_output, channel_aux = game.channel(
+            message, channel_output, = game.channel(
                 message_nn, entropy=entropy_nn, apply_noise=apply_noise)
             #for key, val in channel_output.items():  # 32 messages appends is ok
             #    channel_dict[key].append(val)
