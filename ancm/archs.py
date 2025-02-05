@@ -636,7 +636,7 @@ class SenderReceiverRnnGS(nn.Module):
 
     def forward(self, sender_input, labels, receiver_input, aux_input, apply_noise=True):
         message_nn, logits, entropy = self.sender(sender_input, aux_input)
-
+        
         message, entropy, channel_aux = self.channel(
             message_nn,
             entropy=entropy,
@@ -746,25 +746,41 @@ class Channel(nn.Module):
         # GS
         if messages.dim() == 3:
             entropies = kwargs['entropy']
-            symbols, symbol_entropies = [], []
 
-            for i in range(messages.size(1)):
-                symbol_i, entropy_i = messages[:, i], entropies[:, i]
-                symbol_i, entropy_i, aux = self.gs(
-                    symbol_i, entropy_i, aux, apply_noise)
-                symbols.append(symbol_i)
-                symbol_entropies.append(entropy_i)
+            _messages, _entropies, aux = self.gs(messages, entropies, apply_noise)
 
-            messages = torch.stack(symbols).permute(1, 0, 2)
-            symbol_entropies = torch.stack(symbol_entropies).t()
-            entropy_dict = defaultdict(lambda: torch.zeros_like(messages[:, 0, 0]))
-            entropy_dict.update({
+            entropy_dict = {
+                'message': _messages,
+                'message_nn': messages,
+                'message_entropy': torch.zeros_like(_messages[:, 0, 0]),
+                'message_entropy_nn': torch.zeros_like(messages[:, 0, 0]),
+                'symbol_entropy': entropies,
+                'symbol_entropy_nn': _entropies,
+            }
+ 
+            return _messages, entropy_dict, aux
+
+            # symbols, symbol_entropies = [], []
+
+            # for i in range(messages.size(1)):
+                # symbol_i, entropy_i = messages[:, i], entropies[:, i]
+                # symbol_i, entropy_i, aux = self.gs(
+                #     symbol_i, entropy_i, aux, apply_noise)
+                # symbols.append(symbol_i)
+                # symbol_entropies.append(entropy_i)
+
+            # messages = torch.stack(symbols).permute(1, 0, 2)
+            # symbol_entropies = torch.stack(symbol_entropies).t()
+            # entropy_dict = defaultdict(lambda: torch.zeros_like(messages[:, 0, 0]))
+            # entropy_dict.update({
                 # 'message_nn': messages,
-                'symbol_entropy': symbol_entropies,
-                'symbol_entropy_nn': entropies,
-            })
+            #    'symbol_entropy': symbol_entropies,
+            #    'symbol_entropy_nn': entropies,
+            #    'message_entropy': torch.zeros_like(messages[:, 0, 0]),
+            #    'message_entropy_nn': torch.zeros_like(messages[:, 0, 0]),
+            #})
 
-            return messages, entropy_dict, aux
+            return messages, entropy_dict
 
         # Reinforce
         else:
@@ -772,7 +788,7 @@ class Channel(nn.Module):
 
 
 class NoChannel(Channel):
-    def gs(probs, entropy, aux):
+    def gs(probs, entropy, aux, *args, **kwargs):
         return probs, entropy, aux
 
 
@@ -783,64 +799,68 @@ class ErasureChannel(Channel):
 
     def gs(self, probs, entropy, aux=None, apply_noise=True):
         if not apply_noise:
-            # if aux == False, append a column with 0 probabilities
-            placeholder_probs = torch.zeros_like(probs[:, :1])
+            placeholder_probs = torch.zeros_like(probs[:, :, :1])
             probs = torch.cat([probs, placeholder_probs], dim=-1)
             return probs, entropy, None
 
         elif self.training:
-            # append an empty column to the original tensor; each non-EOS
-            # symbol is swapped with a special symbol with probability p
-            non_eos_prob = probs[:, 1:].sum(-1, keepdim=True)
-            erased_probs = torch.ones_like(probs[:, :1])
-            erased_probs = erased_probs * non_eos_prob * self.p
-            probs = torch.cat([probs, erased_probs], dim=-1)
+            target_mask = torch.rand(
+                probs.size()[:-1],
+                generator=self.generator,
+                device=self.device,
+            ) < self.p
 
-            # adjust the prob of successful transmission (not for EOS)
-            probs[:, 1:] = probs[:, 1:] * (1 - self.p)
-            probs[:, -1] = erased_probs.squeeze(1)
+            # append a column for erased symbols
+            placeholder_probs = torch.zeros_like(probs[:, :, :1])
+            probs = torch.cat([probs, placeholder_probs], dim=-1)
 
-            # we don't adjust for (future) message length, as here we're
-            # computing entropy for the specific symbols transmitted/generated
-            entropy += tensor_binary_entropy(self.p)
+            if target_mask.sum() == 0:
+                return probs, entropy, None
 
-            assert torch.allclose(probs.sum(-1), torch.ones_like(probs[:, 0]))
+            # create a replacement probability array and replace
+            erased_probs = torch.zeros_like(probs)
+            erased_probs[:, :, 0] = probs[:, :, 0]  # EOS prob
+            erased_probs[:, :, -1] = 1 - probs[:, :, 0]  # erased prob
+
+            target_probs = torch.zeros_like(probs).to(torch.bool)
+            target_probs[target_mask] = 1
+            probs = torch.where(target_probs, erased_probs, probs)
+
+            entropy += tensor_binary_entropy(self.p)  # how about EOS?
+
             return probs, entropy, None
 
         else:
+            # append a column for erased symbols
+            placeholder_probs = torch.zeros_like(probs[:, :, :1])
+            probs = torch.cat([probs, placeholder_probs], dim=-1)
+
             # apply argmax, exclude EOS, sample batch rows to be replaced
             discrete_symbols = probs.argmax(-1)
             non_eos_mask = discrete_symbols != 0
-            non_eos_ids = torch.arange(len(probs))[non_eos_mask]
+            non_eos_symbols = discrete_symbols[non_eos_mask]
             target_mask = torch.rand(
                 non_eos_mask.sum(),
                 generator=self.generator,
                 device=self.device
             ) < self.p
-            target_ids = non_eos_ids.flatten()[target_mask]
 
-            # append a column for erased symbols
-            erased_probs = torch.zeros_like(probs[:, :1])
-            probs = torch.cat([probs, erased_probs], dim=-1)
+            # prepare the index and source of replacement
+            target_probs = torch.zeros_like(probs).bool()
+            target_probs[non_eos_mask] = torch.where(
+                target_mask.unsqueeze(-1),
+                torch.ones(target_mask.size(0), probs.size(-1)).bool(),
+                False)
+            erased_probs = torch.zeros_like(probs)
+            erased_probs[:, :, -1] = 1
 
-            if target_ids.numel() == 0:
-                return probs, entropy, None
+            # replace
+            probs = torch.where(target_probs, erased_probs, probs)
 
-            # create a replacement probability array and replace
-            erased_probs = torch.zeros(
-                target_ids.size(0),
-                probs.size(1),
-                dtype=probs.dtype,
-                requires_grad=False)
-            erased_probs[:, 0] = probs[target_ids, 0]  # EOS prob
-            erased_probs[:, -1] = 1 - probs[target_ids, 0]  # erased prob
-            index = target_ids.expand(probs.size(1), -1).t()
+            # adjust entropy
+            entropy[non_eos_symbols] += tensor_binary_entropy(self.p)
 
-            # replace & adjust the entropy
-            probs.scatter_(0, index, erased_probs)
-            entropy[target_ids] += tensor_binary_entropy(erased_probs[:, -1])
-
-            return probs, entropy, aux
+            return probs, entropy, None
 
     def reinforce(self, messages, vocab_size=None, lengths=None, apply_noise=False):
         if not apply_noise:
@@ -1024,39 +1044,43 @@ class SymmetricChannel(Channel):
     """
 
     def gs(self, probs, entropy, aux=None, apply_noise=True):
+        
         if self.training:
-            # sample non-eos symbols to be replaced
-            target_ids = torch.rand(  # (32, 9)
-                probs[:, 1:].size(),
+            target_mask = torch.rand(
+                probs.size()[:-1],
                 generator=self.generator,
-                device=self.device
+                device=self.device,
             ) < self.p
-            target_mask = target_ids.nonzero(as_tuple=True)
-            non_eos_ids = torch.arange(1, probs.size(-1)).expand(
-                target_mask[-1].size(0), -1)  # (60, 9)
+            size = target_mask.sum()
 
-            # select remaining non-EOS symbols
-            candidate_mask = torch.logical_not(
-                non_eos_ids - 1 == target_mask[-1].unsqueeze(-1))  # 60, 9
-            candidate_symbols = non_eos_ids[candidate_mask].view(
-                candidate_mask.size(0), -1)
+            if target_mask.sum() == 0:
+                return probs, entropy, None
 
-            # get original probabilities
-            original_target_probs = probs[target_mask[0], target_mask[1] - 1]
-            original_non_target_probs = torch.gather(
-                probs[target_mask[0]], 1, candidate_symbols)
+            replacement_ids = torch.randint(
+                size=(size,),
+                high=probs.size(-1) - 2,
+                generator=self.generator,
+                device=self.device)
+            replacement_symbols = \
+                torch.arange(probs.size(-1) - 2)[replacement_ids]
+            # replacement_symbols = torch.gather(
+            #     all_positions[target_mask], -1,
+            #    replacement_ids.unsqueeze(-1)).to(torch.int64).squeeze()
 
-            # the probability of sampling the target symbol decreases to 0
-            # and is uniformy divided among remaining non-EOS symbols
-            adjustment = torch.zeros_like(probs)
-            adjustment[target_mask[0], target_mask[1] - 1] -= original_target_probs
-            adjustment[target_mask[0]].scatter_(
-                1, candidate_symbols,
-                original_non_target_probs
-                + original_target_probs.unsqueeze(-1) / (probs.size(1) - 2))
+            # print(original_eos_prob.shape)
+            # print(replaced_probs.shape, replaced_probs[:, 0].shape)
+            # print(replaced_probs.shape, replaced_probs[:, 0].shape)
+            # print(original_eos_prob.unsqueeze(-1).shape)
 
-            probs = probs + adjustment
-            entropy += tensor_binary_entropy(self.p.expand(probs.size(0)))
+            original_eos_prob = probs[target_mask][:, 0]
+            replaced_probs = torch.zeros_like(probs[target_mask])
+            replaced_probs[:, 0] = original_eos_prob
+            replaced_probs[:, replacement_symbols] = 1 - original_eos_prob.unsqueeze(-1)
+
+            targets = target_mask.unsqueeze(-1).expand(probs.size())
+            probs.masked_scatter_(targets, replaced_probs)
+
+            entropy += tensor_binary_entropy(self.p)
             entropy += torch.log2(torch.tensor(probs.size(1) - 2))
 
             return probs, entropy, None
@@ -1064,94 +1088,45 @@ class SymmetricChannel(Channel):
         else:
             # apply argmax, exclude EOS, sample batch rows to be replaced
             discrete_symbols = probs.argmax(-1)
-            non_eos_mask = discrete_symbols != 0
-            non_eos_ids = torch.arange(len(probs))[non_eos_mask]
-            target_mask = torch.rand(
-                non_eos_mask.sum(),
-                generator=self.generator,
-                device=self.device
-            ) < self.p
-            target_ids = non_eos_ids.flatten()[target_mask]
 
-            if target_ids.numel() == 0:
-                return probs, entropy, None
+            non_eos_ids = discrete_symbols.nonzero()
+            non_eos_target_ids = (
+                torch.rand(non_eos_ids.size(0), generator=self.generator)
+                < self.p
+            ).int().to(self.device)
+            target_ids = non_eos_ids[non_eos_target_ids.nonzero(), torch.arange(discrete_symbols.dim())]
+            target_chunks = target_ids.t().chunk(chunks=2)
 
-            size = target_ids.size(0)
+            non_eos_symbols = torch.arange(1, probs.size(-1)).expand(
+                target_ids.size(0), -1)
 
-            # find and select possible non-EOS replacements
-            candidates = torch.arange(1, probs.size(-1)).expand(size, -1)
-            candidate_mask = (
-                candidates != discrete_symbols[target_ids].unsqueeze(-1))  # 4, 9
-            candidate_symbols = candidates[candidate_mask].view(
-                candidate_mask.size(0), -1)  # (4, 8), ready to mask
+            actual_symbols = discrete_symbols[target_chunks]
+            actual_symbols = actual_symbols.expand(probs.size(-1) - 1, -1).t()
+
+            # exclude actual message symbols from the set of candidates
+            # each symbol of the message has vocab_size - 2 possible replacements
+            candidate_ids = (non_eos_symbols != actual_symbols)
+            candidate_symbols = non_eos_symbols[candidate_ids].view(-1, probs.size(-1) - 2)
+
+            # sample the replacement symbol to be used
             replacement_ids = torch.randint(
-                size=(size,),
-                high=candidate_symbols.size(-1) - 1,
+                high=probs.size(-1) - 2,
+                size=(target_ids.size(0),),
                 generator=self.generator,
                 device=self.device)
-            replaced_symbols = torch.gather(
-                candidate_symbols, -1, replacement_ids.unsqueeze(-1)
-            ).squeeze().to(torch.int64)
 
-            # create a replacement prob array
-            original_non_eos_probs = probs[target_ids, 1:].sum(-1)
-            source = torch.zeros(
-                size, probs.size(1) - 1,
-                dtype=probs.dtype, requires_grad=False)
-            mask = (torch.arange(size), replaced_symbols)
-            source[mask] = original_non_eos_probs
-            source = torch.cat([probs[target_ids, :1], source], dim=-1)
-            index = target_ids.expand(probs.size(1), -1).t()
+            replacement_chunks = (torch.arange(target_ids.size(0)), replacement_ids)
+            replacement_symbols = candidate_symbols[replacement_chunks]
 
-            # print('index', index, index.shape)
-            # print('source', source)
-            # print('target_ids', target_ids[:8])
-            # print('actual smb', discrete_symbols[target_ids[:8]])
-            # print('candidate_symbols', candidate_symbols[:8])
-            # print('replacement', replaced_symbols[:8])
-            # print('before', probs)
+            target_chunks = target_ids.t().chunk(chunks=3)
+            replacement_probs = torch.zeros_like(
+                probs[target_chunks])
+            replacement_probs[0, torch.arange(len(replacement_symbols)), replacement_symbols] = 1
+            replacement_probs = replacement_probs.unsqueeze(0)
+            probs[target_chunks] = replacement_probs
 
-            # replace
-            probs.scatter_(0, index, source)
-
-            # the resulting entropy for all messages increases
-            entropy += tensor_binary_entropy(self.p.expand(probs.size(0)))
-            entropy += torch.log2(torch.tensor(probs.size(1) - 2))
+            non_eos_mask = discrete_symbols != 0
+            entropy[non_eos_mask] += tensor_binary_entropy(self.p)
+            entropy[non_eos_mask] += torch.log2(torch.tensor(probs.size(1) - 2))
 
             return probs, entropy, None
-
-    def reinforce(self, messages, vocab_size=None, lengths=None, apply_noise=True):
-        if not apply_noise:
-            return messages
-
-        non_eos_ids = messages.nonzero()
-        non_eos_target_ids = torch.rand(
-            non_eos_ids.size(0),
-            generator=self.generator,
-            device=self.device) < self.p
-        target_ids = non_eos_ids[non_eos_target_ids.nonzero(), [0, 1]]
-        target_chunks = target_ids.t().chunk(chunks=2)
-
-        non_eos_symbols = torch.arange(1, vocab_size).expand(
-            target_ids.size(0), -1)
-
-        discrete_symbols = messages[target_chunks]
-        discrete_symbols = discrete_symbols.expand(vocab_size - 1, -1).t()
-
-        # exclude actual messages symbols from the set of candidates
-        # each symbol of the messages has vocab_size - 2 possible replacements
-        candidate_ids = (non_eos_symbols != discrete_symbols)
-        candidate_symbols = non_eos_symbols[candidate_ids].view(-1, vocab_size - 2)
-
-        # sample the replacement symbol to be used
-        replacement_ids = torch.randint(
-            high=vocab_size - 2,
-            size=(target_ids.size(0),),
-            generator=self.generator,
-            device=self.device)
-
-        replacement_chunks = (torch.arange(target_ids.size(0)), replacement_ids)
-        replacement_symbols = candidate_symbols[replacement_chunks]
-
-        messages[target_chunks] = replacement_symbols
-

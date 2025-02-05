@@ -12,6 +12,9 @@ from collections import defaultdict
 from torch.utils.data import Dataset
 from itertools import combinations
 from pyitlib.discrete_random_variable import entropy, entropy_joint
+from nltk.lm import MLE#, NgramModel, LidstoneProbDist
+from nltk.probability import LidstoneProbDist
+from nltk.lm.models import Lidstone
 
 from typing import Optional, Iterable, Tuple
 
@@ -328,6 +331,7 @@ def maximize_sequence_entropy(
         max_entropy = math.log(vocab_size, 2)
         eos_prob = 1. / vocab_size
         return max_entropy, [eos_prob]
+
     elif max_len == 1 and channel == 'erasure':
 
         def _entropy(eos_prob):
@@ -466,9 +470,46 @@ def sequence_entropy_old(symbol_entropies, categorical=None):
     return H_smb_y
 
 
+def compute_bigram_entropy(train_messages, test_messages, key1='message', key2='message'):
+    #train_lengths = find_lengths(train_messages)
+    #test_lengths = find_lengths(test_messages)
+    try:
+        train_strings = [m[key1].split(',') for m in train_messages]
+        test_strings = [m[key2].split(',') for m in test_messages]
+    except:
+        return None, None
+    # train_strings, test_strings = [], []
+    # for message, length in zip(train_messages, train_lengths):
+    #    message = message.tolist()[:length]
+    #    message = [str(int(x)) for x in message]
+    #    train_strings.append(message)
+    #for message, length in zip(test_messages, train_lengths):
+    #    message = message.tolist()[:length]
+    #    message = [str(int(x)) for x in message]
+    #    test_strings.append(message)
+    # text_bigrams = [ngrams(sent, 2) for sent in strings]
+    train_corpus = [smb for string in train_strings for smb in string]
+    test_corpus = [smb for string in test_strings for smb in string]
+    vocab_train = Vocabulary(train_corpus, unk_cutoff=0)
+    #print(train_messages[:10])
+    # print(train_strings[0])
+    #est = lambda fdist, bins: LidstoneProbDist(fdist, 0.2)
+    #lm = NgramModel(2, train_corpus, estimator=est)
+    #lm = MLE(2,
+    #lm = Lidstone(gamma=0.2, 2)
+    #lm.fit(test_strings, vocab_train)
+    #cross_entropy = lm.entropy(test_strings, vocab_train)
+    #perplexity = lm.perplexity(test_strings, vocab_train)
+
+    #return cross_entropy, perplexity
+
+    # text_unigrams = [ngrams(sent, 1) for sent in strings]
+
+
+
 def MI(messages, categorical, estimator='GOOD-TURING'):
     attributes = categorical
-    entropy_msg = messages.sum(-1).mean()
+    entropy_msg = messages.sum(-1).mean().item()
     if attributes.size(1) == 1:
         attributes = messages
         entropy_attr = tensor_entropy(attributes)

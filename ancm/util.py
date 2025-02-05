@@ -212,6 +212,7 @@ class Dump:
     def __init__(self, sender_inputs, messages, receiver_inputs, receiver_outputs, labels, attributes):
         self.sender_inputs = torch.stack(sender_inputs)
         self.messages = crop_messages(torch.stack(messages))
+        print(self.messages.shape)
         self.receiver_inputs = torch.stack(receiver_inputs)
         self.labels = torch.stack(labels)
 
@@ -231,9 +232,11 @@ class Dump:
                 receiver_output[self.lengths[i] - 1].argmax(-1)
                 for i, receiver_output in enumerate(receiver_outputs)
             ], dim=0)
+            self.strings = self.messages.argmax(-1)
         else:
             self.lengths = find_lengths(self.messages)
             self.receiver_outputs = torch.stack(receiver_outputs)
+            self.strings = self.messages
 
     def __len__(self):
         return len(self.sender_inputs)
@@ -242,7 +245,7 @@ class Dump:
         for i in range(len(self)):
             yield (
                 self.sender_inputs[i],
-                self.messages[i, :self.lengths[i]],
+                self.strings[i, :self.lengths[i]],
                 self.receiver_inputs[i],
                 self.receiver_outputs[i].item(),
                 self.labels[i].int().item(),
@@ -405,53 +408,45 @@ def get_results_dict(dump, receiver, opts, unique_dict, channel_dict, noise=True
 
     update_dict_names = lambda dct, sffx: {f'{k}_{sffx}': v for k, v in dct.items()}
     if noise:
-        try:
-            entropy_msg = channel_dict['message_entropy']
-            entropy_smb = channel_dict['symbol_entropy']
-            max_entropy_msg, _ = maximize_sequence_entropy(
-                max_len=opts.max_len,
-                vocab_size=receiver_vocab_size,
-                channel=channel,
-                error_prob=error_prob)
-            max_entropy_smb = maxent_smb(channel, error_prob, opts.vocab_size)
-            results['redund_smb_v2'] = (1 - entropy_msg / max_entropy_smb).mean().item()
-            results['redund_smb_v2'] = (1 - entropy_smb / max_entropy_smb).mean().item()
-            mi = MI(entropy_smb, attr)
-            results.update(update_dict_names(mi, 'v2'))
-        except:
-            pass
-        try:
-            entropy_msg_nn = channel_dict['message_entropy_nn']
-            entropy_smb_nn = channel_dict['symbol_entropy_nn']
-            max_entropy_msg_nn, _ = maximize_sequence_entropy(
-                max_len=opts.max_len,
-                vocab_size=receiver_vocab_size,
-                channel=None,
-                error_prob=0.0)
-            max_entropy_smb_nn = maxent_smb(None, 0.0, opts.vocab_size)
-            results['redund_msg_v2_before_noise'] = (1 - entropy_msg_nn / max_entropy_msg_nn).mean().item().item()
-            results['redund_smb_v2_before_noise'] = (1 - entropy_smb_nn / max_entropy_smb_nn).mean().item().item()
-            mi_nn = MI(entropy_smb_nn, attr)
-            results.update(update_dict_names(mi_nn, 'before_noise'))
-        except:
-            pass
+        entropy_msg = channel_dict['message_entropy']
+        entropy_smb = channel_dict['symbol_entropy']
+        max_entropy_msg, _ = maximize_sequence_entropy(
+            max_len=opts.max_len,
+            vocab_size=receiver_vocab_size,
+            channel=channel,
+            error_prob=error_prob)
+        max_entropy_smb = maxent_smb(channel, error_prob, opts.vocab_size)
+        results['redund_smb_v2'] = (1 - entropy_msg / max_entropy_smb).mean().item()
+        results['redund_smb_v2'] = (1 - entropy_smb / max_entropy_smb).mean().item()
+        mi = MI(entropy_smb, attr)
+        results.update(update_dict_names(mi, 'v2'))
+
+        entropy_msg_nn = channel_dict['message_entropy_nn']
+        entropy_smb_nn = channel_dict['symbol_entropy_nn']
+        max_entropy_msg_nn, _ = maximize_sequence_entropy(
+            max_len=opts.max_len,
+            vocab_size=receiver_vocab_size,
+            channel=None,
+            error_prob=0.0)
+        max_entropy_smb_nn = maxent_smb(None, 0.0, opts.vocab_size)
+        results['redund_msg_v2_before_noise'] = (1 - entropy_msg_nn / max_entropy_msg_nn).mean().item()
+        results['redund_smb_v2_before_noise'] = (1 - entropy_smb_nn / max_entropy_smb_nn).mean().item()
+        mi_nn = MI(entropy_smb_nn, attr)
+        results.update(update_dict_names(mi_nn, 'before_noise'))
 
     else:
-        try:
-            entropy_msg = channel_dict['message_entropy']
-            entropy_smb = channel_dict['symbol_entropy']
-            max_entropy_msg, _ = maximize_sequence_entropy(
-                max_len=opts.max_len,
-                vocab_size=receiver_vocab_size,
-                channel=None,
-                error_prob=0.0)
-            max_entropy_smb = maxent_smb(None, 0., receiver_vocab_size)
-            results['redund_msg_v2_no_noise'] = (1 - entropy_msg / max_entropy_msg).mean().item()
-            results['redund_smb_v2_no_noise'] = (1 - entropy_msg / max_entropy_smb).mean().item()
-            mi = MI(entropy_smb, attr)
-            results.update(update_dict_names(mi, 'v2_no_noise'))
-        except:
-            pass
+        entropy_msg = channel_dict['message_entropy']
+        entropy_smb = channel_dict['symbol_entropy']
+        max_entropy_msg, _ = maximize_sequence_entropy(
+            max_len=opts.max_len,
+            vocab_size=receiver_vocab_size,
+            channel=None,
+            error_prob=0.0)
+        max_entropy_smb = maxent_smb(None, 0., receiver_vocab_size)
+        results['redund_msg_v2_no_noise'] = (1 - entropy_msg / max_entropy_msg).mean().item()
+        results['redund_smb_v2_no_noise'] = (1 - entropy_msg / max_entropy_smb).mean().item()
+        mi = MI(entropy_smb, attr)
+        results.update(update_dict_names(mi, 'no_noise'))
 
     if opts.image_input:
         results['topographic_rho'] = compute_top_sim(attr, msg)
@@ -512,7 +507,7 @@ def get_results_dict(dump, receiver, opts, unique_dict, channel_dict, noise=True
 def print_training_results(output_dict):
     def _format(value):
         if value is None:
-            return '-'
+            return np.nan
         if isinstance(value, int):
             return value
         elif isinstance(value, float):

@@ -40,6 +40,7 @@ from ancm.callbacks import (
     CustomProgressBarLogger,
     TrainingMetricsCallback,
 )
+from ancm.metrics import compute_bigram_entropy
 
 
 def get_params(params):
@@ -262,7 +263,7 @@ def main(params):
                 candidate_vex = [
                     ','.join([str(attr) for attr in attr_dict.values()])
                     for attr_dict in d_attr]
-                message = ','.join([str(x) for x in msg.tolist()])
+                message = ','.join([str(int(x)) for x in msg.tolist()])
                 message_log = {
                     'target_obj': target_vec,
                     'candidate_objs': candidate_vex,
@@ -271,13 +272,10 @@ def main(params):
                     'label': label,
                     'entropy': channel_dict['message_entropy'][i].item(),
                 }
-                try:
-                    message_log.update({
-                        'entropy-before-noise':
-                        channel_dict['message_entropy_nn'][i].item() if apply_noise else 'none',
-                    })
-                except:
-                     pass
+                message_log.update({
+                    'entropy-before-noise':
+                    channel_dict['message_entropy_nn'][i].item() if apply_noise else 'none',
+                })
             else:
                 # VISA concepts are sparse binary tensors, hence we represent each
                 # object as a set of features that it does have
@@ -287,23 +285,20 @@ def main(params):
                     ','.join([
                         str(x) for x in candidate.nonzero().squeeze().tolist()])
                     for candidate in r_inp]
-                message = ','.join([str(x) for x in msg.tolist()])
+                message = ','.join([str(int(x)) for x in msg.tolist()])
                 message_log = {
                     'target_obj': target_vec,
                     'candidate_objs': candidate_vex,
                     'message': message,
-                    'message-no-noise': 'none',
+                    'message-no-noise': None,
                     'label': label,
                     'target_attributes': t_attr,
                     'distractor_attributes': d_attr,
                 }
-                try:
-                    message_log.update({
-                        'entropy': channel_dict['message_entropy'][i].item() if apply_noise else 'none',
-                        'entropy-before-noise':
+                message_log.update({
+                    'entropy': channel_dict['message_entropy'][i].item() if apply_noise else 'none',
+                    'entropy-before-noise':
                             channel_dict['message_entropy_nn'][i].item() if apply_noise else 'none'})
-                except:
-                    pass
 
             messages.append(message_log)
             message_counts[output_key][message] += 1
@@ -326,7 +321,7 @@ def main(params):
                     candidate_vex = [
                         ','.join([attr for attr in attr_dict.values()])
                         for attr_dict in d_attr]
-                    message = ','.join([str(x) for x in msg.tolist()])
+                    message = ','.join([str(int(x)) for x in msg.tolist()])
 
                 else:  # VISA
                     target_vec = ','.join([
@@ -335,7 +330,7 @@ def main(params):
                         ','.join([
                             str(x) for x in candidate.nonzero().squeeze().tolist()])
                         for candidate in r_inp]
-                    message = ','.join([str(x) for x in msg.tolist()])
+                    message = ','.join([str(int(x)) for x in msg.tolist()])
 
                 message_log = messages[i]
                 assert message_log['target_obj'] == target_vec
@@ -367,10 +362,24 @@ def main(params):
     else:
         train_dumps = None
     game.eval()
-    results, messages, message_counts, test_dumps = evaluate(test_data)
+    results, test_messages, message_counts, test_dumps = evaluate(test_data)
+    # if aux_train_data is not None:
+    #    ngram_results = compute_bigram_entropy(messages, test_messages)
+    #    train_ngram_results = compute_bigram_entropy(
+    #        messages, messages, 'message-no-noise', 'message')
+    #    test_ngram_results = compute_bigram_entropy(
+    #        test_messages, test_messages, 'message-no-noise', 'message')
+    #    output_dict['train']['train_test_crossentropy'] = ngram_results[0]
+    #    output_dict['train']['train_test_perplexity'] = ngram_results[1]
+    #    output_dict['train']['noise_no_noise_crossentropy'] = train_ngram_results[0]
+    #    output_dict['train']['noise_no_noise_crossentropy'] = train_ngram_results[1]
+    #    output_dict['test']['train_test_crossentropy'] = ngram_results[0]
+    #    output_dict['train']['train_test_perplexity'] = ngram_results[1]
+    #    output_dict['train']['noise_no_noise_crossentropy'] = test_ngram_results[0]
+    #    output_dict['train']['noise_no_noise_crossentropy'] = test_ngram_results[1]
     output_dict['test'] = {
         'results': results,
-        'messages': messages,
+        'messages': test_messages,
         'message_counts': message_counts}
 
     training_time = timedelta(seconds=t_end - t_start)
@@ -383,8 +392,9 @@ def main(params):
     evaluation_time = str(evaluation_time).split('.', maxsplit=1)[0]
     training_time_per_epoch = f'{int(minutes):02}:{int(seconds):02}'
 
-    def make_jsonable(x):
+    def make_jsonable(x, key=None):
         if isinstance(x, torch.Tensor):
+            print(key)
             try:
                 return x.item()
             except:
@@ -393,7 +403,7 @@ def main(params):
                 else:
                     return 'none'
         if isinstance(x, dict):
-            return { make_jsonable(k): make_jsonable(v) for k, v in x.items()}
+            return { make_jsonable(k): make_jsonable(v,k) for k, v in x.items()}
         if isinstance(x, list) or isinstance(x, tuple):
             return [make_jsonable(item) for item in x]
     
