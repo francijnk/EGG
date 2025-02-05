@@ -747,7 +747,7 @@ class Channel(nn.Module):
         if messages.dim() == 3:
             entropies = kwargs['entropy']
 
-            _messages, _entropies, aux = self.gs(messages, entropies, apply_noise)
+            _messages, _entropies, aux = self.gs(messages, entropies, apply_noise=apply_noise)
 
             entropy_dict = {
                 'message': _messages,
@@ -788,7 +788,7 @@ class Channel(nn.Module):
 
 
 class NoChannel(Channel):
-    def gs(self, probs, entropy, aux, apply_noise=True, *args, **kwargs):
+    def gs(self, probs, entropy, aux, *args, **kwargs):
         return probs, entropy, aux
 
 
@@ -797,7 +797,7 @@ class ErasureChannel(Channel):
     Erases a symbol from a message with a given probability
     """
 
-    def gs(self, probs, entropy, aux=None, apply_noise=True):
+    def gs(self, probs, entropy, apply_noise=True):
         if not apply_noise:
             placeholder_probs = torch.zeros_like(probs[:, :, :1])
             probs = torch.cat([probs, placeholder_probs], dim=-1)

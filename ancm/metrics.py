@@ -128,10 +128,15 @@ def sequence_entropy(
     if alphabet is not None:
         alphabet = alphabet.numpy()
 
-    H = entropy_joint(
-        x.t().numpy(),
-        Alphabet_X=alphabet,
-        estimator=estimator)
+    try:
+        H = entropy_joint(
+            x.t().numpy(),
+            Alphabet_X=alphabet,
+            estimator=estimator)
+    except:
+        print(alphabet)
+        print(x.argmax(-1))
+        print(x)
 
     return H.item()
 
