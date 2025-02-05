@@ -24,6 +24,8 @@ def load_data(input_dir):
 
     history_train = defaultdict(list)
     history_val = defaultdict(list)
+    # results = defaultdict(list)
+    all_results = {}
     results = defaultdict(lambda: defaultdict(list))
 
     for fname in os.listdir(path=input_dir):
@@ -58,18 +60,33 @@ def load_data(input_dir):
                 fdata = json.load(file)
 
             for dataset_key in fdata:  # train or test
-                for condition_key in fdata[dataset_key]:  # noise / no noise
-                    results['max_len'].append(max_len)
-                    results['channel'].append(channel)
-                    results['error_prob'].append(error_prob)
-                    results['noise'].append(condition_key)
-                    results['unique_targets'].append(fdata['results']['unique_targets'])
-                    results['unique_messages'].append(fdata['results']['unique_msg'])
-                    avg_len = np.mean([m['message'].count(',') for m in fdata['messages']]).item()
-                    results['avg_length'].append(avg_len)
-                    for metric_key, metric_val in fdata[dataset_key][condition_key].items():
-                        # _get = lambda metric: fdata['results'][dataset_key][condition_key][metric]
-                        results[metric_key].append(_get(metric_val))
+                if 'results' not in fdata[dataset_key]:
+                    continue
+                # print("DATASET KEY", dataset_key)
+                for condition_key in fdata[dataset_key]['results']:  # noise / no noise
+                    # print("CONDITION key", condition_key)
+                    results[dataset_key]['max_len'].append(max_len)
+                    results[dataset_key]['channel'].append(channel)
+                    results[dataset_key]['error_prob'].append(error_prob)
+                    # results[dataset_key]['dataset'].append(dataset_key)
+                    results[dataset_key]['noise'].append(condition_key)
+                    results[dataset_key]['unique_targets'].append(fdata[dataset_key]['results'][condition_key]['unique_target_objects'])
+                    # results[dataset_key]['unique_messages'].append(fdata[dataset_key]['results'][condition_key]['unique_messages'])
+                    avg_len = np.mean([m['message'].count(',') for m in fdata[dataset_key]['messages']]).item()
+                    results[dataset_key]['avg_length'].append(avg_len)
+                    for metric_key, metric_val in fdata[dataset_key]['results'][condition_key].items():
+                        # print(metric_key, metric_val)
+                        k = metric_key.replace('_v2_v2', '_v2')
+                        k = k.replace('_no_noise', '')
+                        if k == 'redund_msg_v2':
+                            print(dataset_key, condition_key)
+                        results[dataset_key][k].append(metric_val)
+                        #_get = lambda metric: fdata[dataset_key]['results'][condition_key][metric]
+                        # results[metric_key].append(_get(metric_val))
+                    if dataset_key == 'train' and condition_key == 'noise':
+                        results[dataset_key]['redund_msg_v2'].append(-99999)  # missing
+
+                    #        'redund_msg_v2' not in fdata[dataset_key]['results']:
 
     channels = set(results['channel']) - {'baseline'}
 
@@ -101,25 +118,33 @@ def load_data(input_dir):
     history_train = pd.concat([df for key in history_train for df in history_train[key]], ignore_index=True)
 
     # results: export to DataFrame and handle baseline results
-    results = pd.DataFrame(results)
+    result_dfs = {}
+    for key, dictionary in results.items():
+        for k, l in dictionary.items():
+            if len(l) != 130:
+                print(k, len(l), l[0])
+        df = pd.DataFrame(dictionary)#.drop(['dataset'], axis=1)
+        result_dfs[key] = df
 
-    baseline_df_list = []
-    for channel in channels:
-        df = results[results['channel'] == 'baseline'].copy()
-        df['channel'] = channel
-        baseline_df_list.append(df)
-    baseline_df = pd.concat(baseline_df_list, ignore_index=True)
+    # baseline_df_list = []
+    # for channel in channels:
+    #     df = results[results['channel'] == 'baseline'].copy()
+    #     df['channel'] = channel
+    #     baseline_df_list.append(df)
+    # baseline_df = pd.concat(baseline_df_list, ignore_index=True)
 
-    results = results.drop(
-        results[results['channel'] == 'baseline'].index)
-    results = pd.concat([baseline_df, results], ignore_index=True)
+    # results = results.drop(
+    #     results[results['channel'] == 'baseline'].index)
+    # results = pd.concat([baseline_df, results], ignore_index=True)
 
-    return history_train, history_val, results
+    print(result_dfs['test'])
+
+    return history_train, history_val, result_dfs
 
 
-def get_long_data(history_val, metrics):
+def get_long_data(history_val, metrics, dataset):
     data_long = pd.melt(
-        history_val,
+        history_val[history_val.dataset == dataset],
         id_vars='epoch max_len channel error_prob noise'.split(),
         value_vars=metrics, var_name='metric', value_name='value', ignore_index=True)
     # data_long.dropna(inplace=True)
