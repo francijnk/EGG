@@ -788,7 +788,7 @@ class Channel(nn.Module):
 
 
 class NoChannel(Channel):
-    def gs(probs, entropy, aux, *args, **kwargs):
+    def gs(self, probs, entropy, aux, apply_noise=True, *args, **kwargs):
         return probs, entropy, aux
 
 
@@ -971,7 +971,6 @@ class DeletionChannel(Channel):
                 target_ids.numel(), probs.size(1),
                 dtype=probs.dtype,
                 requires_grad=False)
-            #print(source)
             source[target_ids, 0] = -1
             index = target_ids.expand(probs.size(1), -1).t()
 
@@ -983,7 +982,6 @@ class DeletionChannel(Channel):
 
             probs.scatter_(0, index, source)
 
-            #print('after', probs)
 
             aux[target_ids] += 1
 
