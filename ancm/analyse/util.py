@@ -25,7 +25,6 @@ def load_data(input_dir):
     history_train = defaultdict(list)
     history_val = defaultdict(list)
     # results = defaultdict(list)
-    all_results = {}
     results = defaultdict(lambda: defaultdict(list))
 
     for fname in os.listdir(path=input_dir):
@@ -88,7 +87,7 @@ def load_data(input_dir):
 
                     #        'redund_msg_v2' not in fdata[dataset_key]['results']:
 
-    channels = set(results['channel']) - {'baseline'}
+    channels = set(results['test']['channel']) - {'baseline'}
 
     # history val: export to DataFrame and handle baseline results
     for max_len, channel, error_prob in list(history_val.keys()):
@@ -127,16 +126,19 @@ def load_data(input_dir):
         df = pd.DataFrame(dictionary)#.drop(['dataset'], axis=1)
         result_dfs[key] = df
 
-    # baseline_df_list = []
-    # for channel in channels:
-    #     df = results[results['channel'] == 'baseline'].copy()
-    #     df['channel'] = channel
-    #     baseline_df_list.append(df)
-    # baseline_df = pd.concat(baseline_df_list, ignore_index=True)
+    baseline_df_list = []
+    for dataset_key in result_dfs:
+        for channel in channels:
+            df = result_dfs[dataset_key][result_dfs[dataset_key]['channel'] == 'baseline'].copy()
+            df['channel'] = channel
+            baseline_df_list.append(df)
+        baseline_df = pd.concat(baseline_df_list, ignore_index=True)
 
-    # results = results.drop(
-    #     results[results['channel'] == 'baseline'].index)
-    # results = pd.concat([baseline_df, results], ignore_index=True)
+        _results = result_dfs[dataset_key].drop(
+            result_dfs[dataset_key][result_dfs[dataset_key]['channel'] == 'baseline'].index)
+        print(_results)
+        _results = pd.concat([baseline_df, _results], ignore_index=True)
+        result_dfs[dataset_key] = _results
 
     print(result_dfs['test'])
 
