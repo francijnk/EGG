@@ -836,8 +836,6 @@ def compute_posdis(
     non_constant_positions = 0.0
     for j in range(messages.size(1)):
         symbol_mi = []
-        y = sender_inputs[:, i]
-        H_j = entropy(y)
 
         # if receiver_vocab_size is not None:
         #     alphabet_x = torch.arange(receiver_vocab_size) \
@@ -847,7 +845,9 @@ def compute_posdis(
 
         for i in range(sender_inputs.size(1)):
             x, y = messages[:, j], sender_inputs[:, i]
-            info, _ = mutual_info(x, y)
+            y = sender_inputs[:, i]
+            H_j = entropy(y)
+            info = mutual_info(x, y)
             symbol_mi.append(info)
 
         symbol_mi.sort(reverse=True)
