@@ -47,28 +47,27 @@ for channel in channels:
                     f'--n_epochs {n_epochs}',
                     f'--temperature {tau}',
                     f'--embedding {emb}',
-                    '--image_input',
-                    '--data_path ancm/data/input_data/obverter-5-100-64.npz',
-                    #'--data_path ancm/data/input_data/visa-4-250.npz',
+                    #'--image_input',
+                    #'--data_path ancm/data/input_data/obverter-5-100-64.npz',
+                    '--data_path ancm/data/input_data/visa-4-250.npz',
                     '--optim adam',
                     '--n_permutations_train 5',
                     '--sender_entropy_coeff 0.01',
                     '--receiver_entropy_coeff 0.001',
-                    '--sender_cell lstm',
                     '--receiver_cell lstm',
                     '--validation_freq 1',
                     '--wandb_project cezary_snellius ',
                     '--wandb_entity koala-lab',
                     f'--wandb_run_id {max_len}_{channel}_{seed}_{uuid4()}',
-                    '--results_folder /content/drive/MyDrive/MoL/ANCM',
                     f'--channel {channel}',
+                    '--results_folder /runs/results_02_06',
+                    '--sender_cell lstm',
                     
                 ]
 
                 process = subprocess.Popen(
                     ['python3', '-m', 'ancm.train']
                     + [o for opt in opts[:-1] for o in opt.split()]
-                    + []
                     )
                 exitcode = process.wait()
 

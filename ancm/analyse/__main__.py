@@ -28,7 +28,7 @@ def plot_test(data_test, output_dir):
     value_x_tick = [0, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30]
 
     # (1) Accuracy
-    df = test_long[test_long.metric.isin(['accuracy', 'accuracy2', 'topographic_rho'])]  #  'embedding_alignment'])]
+    df = test_long[test_long.metric.isin(['accuracy', 'accuracy2', 'topsim'])]  #  'embedding_alignment'])]
     plot = sns.relplot(
         df,
         x='error_prob', y='value',
@@ -199,7 +199,7 @@ def plot_training(data_val, output_dir, val):
         close_plot(plot)
 
     # compositionality
-    metrics = ['top_sim']  # 'top_sim pos_dis bos_dis'.split()
+    metrics = ['topsim']  # 'top_sim pos_dis bos_dis'.split()
     df = get_long_val_data(data_val, metrics)
     for channel in pd.unique(df.channel):
         df_channel = df[df.channel == channel]
@@ -283,7 +283,6 @@ def analyse(data_test, output_dir):
 
 
 def plot_test_perchannel(data_test, out_dir):
-    print(data_test)
     test_long = pd.melt(pd.DataFrame(data_test),
         id_vars='max_len channel error_prob noise'.split(),
         value_vars=None, var_name='metric', value_name='value', ignore_index=True)
@@ -294,7 +293,7 @@ def plot_test_perchannel(data_test, out_dir):
 
     channels = pd.unique(test_long['channel'])
 
-    col_names = ['accuracy', 'redundancy_symbol', 'topographic_rho']
+    col_names = ['accuracy', 'redundancy', 'topsim']
     df_metrics = test_long[test_long.metric.isin(col_names)]
     
     for channel in channels:
