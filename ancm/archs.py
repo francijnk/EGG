@@ -815,7 +815,7 @@ class ErasureChannel(Channel):
             probs = torch.cat([probs, placeholder_probs], dim=-1)
 
             if target_mask.sum() == 0:
-                return probs, entropy, None
+                return probs, entropy
 
             # create a replacement probability array and replace
             erased_probs = torch.zeros_like(probs)
@@ -1052,7 +1052,7 @@ class SymmetricChannel(Channel):
             size = target_mask.sum()
 
             if target_mask.sum() == 0:
-                return probs, entropy, None
+                return probs, entropy
 
             replacement_ids = torch.randint(
                 size=(size,),
