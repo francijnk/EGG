@@ -259,9 +259,9 @@ def main(params):
             if opts.image_input:
                 # For the Obverter dataset, we save object features rather than
                 # images (color, shape, position, rotation)
-                target_vec = ','.join([str(attr) for attr in t_attr.values()])
+                target_vec = ','.join([str(int(attr)) for attr in t_attr.values()])
                 candidate_vex = [
-                    ','.join([str(attr) for attr in attr_dict.values()])
+                    ','.join([str(int(attr)) for attr in attr_dict.values()])
                     for attr_dict in d_attr]
                 message = ','.join([str(int(x)) for x in msg.tolist()])
                 message_log = {
@@ -325,11 +325,11 @@ def main(params):
                 dump, receiver, opts, unique_dict, channel_dict=channel_dict, noise=False)
 
             # Iterating through Dump without noise
-            for i, (s_inp, msg, r_inp, _, _, _, _) in enumerate(dump):
+            for i, (s_inp, msg, r_inp, _, _, t_attr, d_attr) in enumerate(dump):
                 if opts.image_input:  # Obverter
-                    target_vec = ','.join([attr for attr in t_attr.values()])
+                    target_vec = ','.join([str(int(attr)) for attr in t_attr.values()])
                     candidate_vex = [
-                        ','.join([attr for attr in attr_dict.values()])
+                        ','.join([str(int(attr)) for attr in attr_dict.values()])
                         for attr_dict in d_attr]
                     message = ','.join([str(int(x)) for x in msg.tolist()])
 
@@ -343,6 +343,7 @@ def main(params):
                     message = ','.join([str(int(x)) for x in msg.tolist()])
 
                 message_log = messages[i]
+                print(target_vec, message_log['target_obj'])
                 assert message_log['target_obj'] == target_vec
                 assert message_log['candidate_objs'] == candidate_vex
 

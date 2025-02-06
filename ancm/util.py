@@ -212,7 +212,7 @@ class Dump:
     def __init__(self, sender_inputs, messages, receiver_inputs, receiver_outputs, labels, attributes):
         self.sender_inputs = torch.stack(sender_inputs)
         self.messages = crop_messages(torch.stack(messages))
-        print(self.messages.shape)
+        # print(self.messages.shape)
         self.receiver_inputs = torch.stack(receiver_inputs)
         self.labels = torch.stack(labels)
 
