@@ -11,10 +11,12 @@ from scipy.stats import pearsonr, spearmanr
 from collections import defaultdict
 from torch.utils.data import Dataset
 from itertools import combinations
-from pyitlib.discrete_random_variable import entropy, entropy_joint
+import pyitlib.discrete_random_variable as it
+# from pyitlib.discrete_random_variable import entropy, entropy_joint
 from nltk.lm import MLE#, NgramModel, LidstoneProbDist
 from nltk.probability import LidstoneProbDist
 from nltk.lm.models import Lidstone
+from egg.zoo.language_bottleneck.intervention import entropy, mutual_info
 
 from typing import Optional, Iterable, Tuple
 
@@ -60,7 +62,7 @@ def tensor_entropy(
     elif x.dim() > 1:
         _, x = torch.unique(x, return_inverse=True, dim=0)
 
-    H = entropy(x.numpy(), Alphabet_X=alphabet, estimator=estimator)
+    H = it.entropy(x.numpy(), Alphabet_X=alphabet, estimator=estimator)
 
     return H.item()
 
@@ -141,7 +143,7 @@ def sequence_entropy(
     return H.item()
 
 
-def mutual_info(
+def mutual_information(
         x: torch.Tensor,
         y: torch.Tensor,
         alphabet_x: Optional[torch.Tensor] = None,
@@ -192,7 +194,7 @@ def mutual_info(
     return I_xy, H_xy
 
 
-def compute_mi(messages: torch.Tensor, attributes: torch.Tensor, vocab_size: int, estimator='GOOD-TURING') -> dict:
+def compute_mi_disabled(messages: torch.Tensor, attributes: torch.Tensor, vocab_size: int, estimator='GOOD-TURING') -> dict:
     """
     Computes multiple information-theoretic metrics: message entropy, input entropy,
     mutual information between messages and target objects, entropy of each input
@@ -454,25 +456,21 @@ def maximize_sequence_entropy(
     return _sequence_entropy(optimal_eos_prob.x), eos_probs
 
 
-def sequence_entropy_old(symbol_entropies, categorical=None):
-    if categorical is None:
-        print('SMB', symbol_entropies.sum(-1).mean())
-        return (symbol_entropies.sum(-1).mean())
-
-    print(symbol_entropies.shape, categorical.shape)
-    assert len(symbol_entropies)  == len(categorical)
+def sequence_entropy_old(message_entropy, categorical=None):
+    print(message_entropy.shape, categorical.shape)
+    assert len(message_entropy) == len(categorical)
 
     categories, indices = torch.unique(categorical, return_inverse=True)
     if len(categorical) == categorical.numel():
         categorical = categorical.reshape(-1)
-    H_smb_y = tensor_entropy(categorical)
+    H_msg_y = tensor_entropy(categorical)
     for uni in torch.unique(indices):
         mask = indices[indices == uni]
-        matches = symbol_entropies[mask]
-        H_smb_y += matches.sum(-1).mean()
-        print((indices == uni).int().sum(), len(matches), '/', len(categorical), matches.sum(-1).mean())
+        matches = message_entropy[mask]
+        H_msg_y += matches.mean()
+        print((indices == uni).int().sum(), len(matches), '/', len(categorical), matches.mean())
 
-    return H_smb_y
+    return H_msg_y
 
 
 def compute_bigram_entropy(train_messages, test_messages, key1='message', key2='message'):
@@ -533,8 +531,8 @@ def MI(messages, categorical, estimator='GOOD-TURING'):
         }
 
     else:  # return values per attribute dimension instead
-        #_, attributes = torch.unique(categorical, dim=0, return_inverse=True)
-        entropy_attr = sequence_entropy(attributes, estimator=estimator)
+        # _, attributes = torch.unique(categorical, dim=0, return_inverse=True)
+        # entropy_attr = sequence_entropy(attributes, estimator=estimator)
         entropy_attr_dim = [
             tensor_entropy(attributes[:, i], estimator=estimator)
             for i in range(attributes.size(-1))]
@@ -559,7 +557,7 @@ def MI(messages, categorical, estimator='GOOD-TURING'):
 
         output = {
             'entropy_msg': entropy_msg,
-            'entropy_attr': entropy_attr,
+            # 'entropy_attr': entropy_attr,
             'entropy_attr_dim': entropy_attr_dim,
             'mi_msg_attr_dim': mi_msg_attr_dim,
             'vi_msg_attr_dim': vi_msg_attr_dim,
@@ -676,7 +674,7 @@ def compute_accuracy2(dump, receiver: torch.nn.Module, opts):
     return (predictions == labels).float().mean().item()
 
 
-def compute_redundancy(
+def compute_redundancy_disabled(
         messages: torch.Tensor,
         vocab_size: int,
         channel: Optional[str],
@@ -838,21 +836,19 @@ def compute_posdis(
     non_constant_positions = 0.0
     for j in range(messages.size(1)):
         symbol_mi = []
-        H_j = None
+        y = sender_inputs[:, i]
+        H_j = entropy(y)
 
-        if receiver_vocab_size is not None:
-            alphabet_x = torch.arange(receiver_vocab_size) \
-                if j < messages.size(1) else torch.zeros(1, 1)
-        else:  # bosdis
-            alphabet_x = torch.unique(messages)
+        # if receiver_vocab_size is not None:
+        #     alphabet_x = torch.arange(receiver_vocab_size) \
+        #         if j < messages.size(1) else torch.zeros(1, 1)
+        # else:  # bosdis
+        #     alphabet_x = torch.unique(messages)
 
         for i in range(sender_inputs.size(1)):
             x, y = messages[:, j], sender_inputs[:, i]
-            info, _ = mutual_info(x, y, alphabet_x)
+            info, _ = mutual_info(x, y)
             symbol_mi.append(info)
-
-            if H_j is None:
-                H_j = tensor_entropy(y)
 
         symbol_mi.sort(reverse=True)
 

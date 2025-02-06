@@ -270,12 +270,17 @@ def main(params):
                     'message': message,
                     # 'message-no-noise': None,
                     'label': label,
-                    'entropy': channel_dict['message_entropy'][i].item(),
                 }
-                message_log.update({
-                    'entropy-before-noise':
-                    channel_dict['message_entropy_nn'][i].item() if apply_noise else 'none',
-                })
+                if channel_dict['message_entropy'] is not None:
+                    message_log.update({
+                        'entropy': channel_dict['message_entropy'][i].item(),
+                        'entropy_no_noise':
+                        channel_dict['message_entropy_nn'][i].item(),
+                    })
+                else:
+                    channel_dict['entropy'] = None
+                    channel_dict['entropy_no_noise'] = None
+
             else:
                 # VISA concepts are sparse binary tensors, hence we represent each
                 # object as a set of features that it does have
@@ -290,15 +295,20 @@ def main(params):
                     'target_obj': target_vec,
                     'candidate_objs': candidate_vex,
                     'message': message,
-                    'message-no-noise': None,
+                    'message_no_noise': None,
                     'label': label,
                     'target_attributes': t_attr,
                     'distractor_attributes': d_attr,
                 }
-                message_log.update({
-                    'entropy': channel_dict['message_entropy'][i].item() if apply_noise else 'none',
-                    'entropy-before-noise':
-                            channel_dict['message_entropy_nn'][i].item() if apply_noise else 'none'})
+                if channel_dict['message_entropy'] is not None:
+                    message_log.update({
+                        'entropy': channel_dict['message_entropy'][i].item(),
+                        'entropy_no_noise':
+                                channel_dict['message_entropy_nn'][i].item(),
+                    })
+                else:
+                    message_log['entropy'] = None
+                    message_log['entropy_no_noise'] = None
 
             messages.append(message_log)
             message_counts[output_key][message] += 1
@@ -336,9 +346,13 @@ def main(params):
                 assert message_log['target_obj'] == target_vec
                 assert message_log['candidate_objs'] == candidate_vex
 
-                message_log['message-no-noise'] = message
-                if 'message_entropy' in channel_dict:
-                    message_log['entropy-no-noise'] = channel_dict['message_entropy'][i].item()
+                message_log['message_no_noise'] = message
+                if channel_dict['message_entropy'] is not None:
+                    message_log['entropy'] = channel_dict['message_entropy'][i].item()
+                    message_log['entropy_no_noise'] = channel_dict['message_entropy_nn'][i].item()
+                else:
+                    message_log['entropy'] = None
+                    message_log['entropy_no_noise'] = None  # channel_dict['message_entropy_nn'][i].item()
                 message_counts['no noise'][message] += 1
 
         for key in message_counts:

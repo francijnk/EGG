@@ -15,11 +15,11 @@ from ancm.archs import tensor_binary_entropy
 from ancm.metrics import (
     # compute_conceptual_alignment,
     compute_max_rep,
-    compute_redundancy,
-    compute_adjusted_redundancy,
+    # compute_redundancy,
+    # compute_adjusted_redundancy,
     compute_accuracy2,
     compute_top_sim,
-    compute_mi,
+    # compute_mi,
     compute_posdis,
     compute_bosdis,
     maximize_sequence_entropy,
@@ -358,14 +358,14 @@ def dump_sender_receiver(
 
             else:
                 for k, v in channel_output.items():
-                    channel_dict[k].append(v)
+                    channel_dict[k].append(None)
 
         messages.extend(message)
         with torch.no_grad():
             output = game.receiver(message, receiver_input)
         receiver_outputs.extend(output)
-    channel_dict = {k: torch.cat(v, dim=0) for k, v in channel_dict.items()}
 
+    channel_dict = {k: torch.cat(v, dim=0) if game.training else None for k, v in channel_dict.items()}
 
     return Dump(sender_inputs, messages, receiver_inputs, receiver_outputs, labels, attributes), channel_dict
 
@@ -392,11 +392,11 @@ def get_results_dict(dump, receiver, opts, unique_dict, channel_dict, noise=True
         'unique_messages': len(torch.unique(msg, dim=0)),
         'unique_target_objects': len(unique_dict.keys()),
         'actual_vocab_size': len(actual_vocab),
-        'redundancy': compute_redundancy(msg, receiver_vocab_size, channel, error_prob),
-        'redundancy_adj': compute_adjusted_redundancy(
-            msg, channel, error_prob, torch.arange(receiver_vocab_size)),
-        'redundancy_adj_voc': compute_adjusted_redundancy(
-            msg, channel, error_prob, actual_vocab),
+        # 'redundancy': compute_redundancy(msg, receiver_vocab_size, channel, error_prob),
+        # 'redundancy_adj': compute_adjusted_redundancy(
+        #     msg, channel, error_prob, torch.arange(receiver_vocab_size)),
+        # 'redundancy_adj_voc': compute_adjusted_redundancy(
+        #     msg, channel, error_prob, actual_vocab),
         'max_rep': compute_max_rep(msg).mean().item(),
         # alignment = compute_conceptual_alignment(
         #     test_data, _receiver, _sender, device, opts.batch_size)
@@ -409,9 +409,10 @@ def get_results_dict(dump, receiver, opts, unique_dict, channel_dict, noise=True
             return binary_entropy(p) + (1 - p) * math.log2(vocab_size)
 
     update_dict_names = lambda dct, sffx: {f'{k}_{sffx}': v for k, v in dct.items()}
-    if noise:
-        entropy_msg = channel_dict['message_entropy']
-        entropy_smb = channel_dict['symbol_entropy']
+    entropy_msg = channel_dict['message_entropy']
+    entropy_smb = channel_dict['symbol_entropy']
+
+    if isinstance(entropy_msg, torch.Tensor):
         max_entropy_msg, _ = maximize_sequence_entropy(
             max_len=opts.max_len,
             vocab_size=receiver_vocab_size,
@@ -420,8 +421,9 @@ def get_results_dict(dump, receiver, opts, unique_dict, channel_dict, noise=True
         max_entropy_smb = maxent_smb(channel, error_prob, opts.vocab_size)
         results['redund_msg'] = (1 - entropy_msg / max_entropy_smb).mean().item()
         results['redund_smb'] = (1 - entropy_smb / max_entropy_smb).mean().item()
-        mi = MI(entropy_smb, attr)
-        results.update(update_dict_names(mi, 'v2'))
+        # mi = MI(entropy_smb, attr)
+        results.update(MI(entropy_msg, attr))
+        # update_dict_names(mi, 'v2'))
 
         # entropy_msg_nn = channel_dict['message_entropy_nn']
         # entropy_smb_nn = channel_dict['symbol_entropy_nn']
@@ -436,19 +438,20 @@ def get_results_dict(dump, receiver, opts, unique_dict, channel_dict, noise=True
         # mi_nn = MI(entropy_smb_nn, attr)
         # results.update(update_dict_names(mi_nn, 'before_noise'))
 
-    else:
-        entropy_msg = channel_dict['message_entropy']
-        entropy_smb = channel_dict['symbol_entropy']
-        max_entropy_msg, _ = maximize_sequence_entropy(
-            max_len=opts.max_len,
-            vocab_size=receiver_vocab_size,
-            channel=None,
-            error_prob=0.0)
-        max_entropy_smb = maxent_smb(None, 0., receiver_vocab_size)
-        results['redund_msg'] = (1 - entropy_msg / max_entropy_msg).mean().item()
-        results['redund_smb'] = (1 - entropy_msg / max_entropy_smb).mean().item()
-        mi = MI(entropy_smb, attr)
-        results.update(update_dict_names(mi, 'no_noise'))
+    #else:
+    #    entropy_msg = channel_dict['message_entropy']
+    #    entropy_smb = channel_dict['symbol_entropy']
+    #    if entropy_msg is not None:
+    #        max_entropy_msg, _ = maximize_sequence_entropy(
+    #            max_len=opts.max_len,
+    #            vocab_size=receiver_vocab_size,
+    #            channel=None,
+    #            error_prob=0.0)
+    #        max_entropy_smb = maxent_smb(None, 0., receiver_vocab_size)
+    #        results['redund_msg'] = (1 - entropy_msg / max_entropy_msg).mean().item()
+    #        results['redund_smb'] = (1 - entropy_msg / max_entropy_smb).mean().item()
+    #        mi = MI(entropy_smb, attr)
+    #        results.update(update_dict_names(mi, 'no_noise'))
 
     if opts.image_input:
         results['topographic_rho'] = compute_top_sim(attr, msg)

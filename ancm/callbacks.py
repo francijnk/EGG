@@ -19,15 +19,15 @@ from rich.text import Text
 from ancm.metrics import (
     # compute_conceptual_alignment,
     compute_max_rep,
-    compute_redundancy,
-    compute_adjusted_redundancy,
+    # compute_redundancy,
+    # compute_adjusted_redundancy,
     compute_top_sim,
     compute_posdis,
     compute_bosdis,
     # mutual_info,
     # sequence_entropy,
     # tensor_entropy,
-    compute_mi,
+    # compute_mi,
 )
 from ancm.util import crop_messages
 
@@ -397,15 +397,15 @@ class TrainingMetricsCallback(Callback):
 
         # redundancy
         logs.aux['max_rep'] = compute_max_rep(messages)
-        logs.aux['redundancy'] = compute_redundancy(
-            messages, vocab_size,
-            channel=None, error_prob=0.0)
-        logs.aux['redundancy_adj'] = compute_adjusted_redundancy(
-            messages, channel=None, error_prob=0.0,
-            symbols=torch.arange(vocab_size), erased_symbol=self.vocab_size)
-        logs.aux['redundancy_adj2'] = compute_adjusted_redundancy(
-            messages, channel=None, error_prob=0.0,
-            symbols=actual_vocab, erased_symbol=self.vocab_size)
+        # logs.aux['redundancy'] = compute_redundancy(
+        #     messages, vocab_size,
+        #     channel=None, error_prob=0.0)
+        # logs.aux['redundancy_adj'] = compute_adjusted_redundancy(
+        #     messages, channel=None, error_prob=0.0,
+        #     symbols=torch.arange(vocab_size), erased_symbol=self.vocab_size)
+        # logs.aux['redundancy_adj2'] = compute_adjusted_redundancy(
+        #     messages, channel=None, error_prob=0.0,
+        #    symbols=actual_vocab, erased_symbol=self.vocab_size)
 
         # compositionality
         if self.image_input and aux_attributes is not None:
@@ -475,15 +475,15 @@ class TrainingMetricsCallback(Callback):
 
         # redundancy
         logs.aux['max_rep'] = compute_max_rep(messages)
-        logs.aux['redundancy'] = compute_redundancy(
-            messages, self.vocab_size,
-            channel=None, error_prob=0.0)
-        logs.aux['redundancy_adj'] = compute_adjusted_redundancy(
-            messages, channel=None, error_prob=0.0,
-            symbols=torch.arange(self.vocab_size))
-        logs.aux['redundancy_adj2'] = compute_adjusted_redundancy(
-            messages, channel=None, error_prob=0.0,
-            symbols=actual_vocab, erased_symbol=self.vocab_size)
+        # logs.aux['redundancy'] = compute_redundancy(
+        #     messages, self.vocab_size,
+        #     channel=None, error_prob=0.0)
+        # logs.aux['redundancy_adj'] = compute_adjusted_redundancy(
+        #     messages, channel=None, error_prob=0.0,
+        #     symbols=torch.arange(self.vocab_size))
+        # logs.aux['redundancy_adj2'] = compute_adjusted_redundancy(
+        #     messages, channel=None, error_prob=0.0,
+        #    symbols=actual_vocab, erased_symbol=self.vocab_size)
 
         # compositionality
         if self.image_input and aux_attributes is not None:
@@ -546,15 +546,15 @@ class TrainingMetricsCallback(Callback):
 
         # redundancy
         logs.aux['max_rep'] = compute_max_rep(messages)
-        logs.aux['redundancy'] = compute_redundancy(
-            messages, vocab_size,
-            channel=None, error_prob=0.0)
-        logs.aux['redundancy_adj'] = compute_adjusted_redundancy(
-            messages, channel=None, error_prob=0.0,
-            symbols=torch.arange(vocab_size), erased_symbol=self.vocab_size)
-        logs.aux['redundancy_adj2'] = compute_adjusted_redundancy(
-            messages, channel=None, error_prob=0.0,
-            symbols=actual_vocab, erased_symbol=self.vocab_size)
+        # logs.aux['redundancy'] = compute_redundancy(
+        #     messages, vocab_size,
+        #     channel=None, error_prob=0.0)
+        # logs.aux['redundancy_adj'] = compute_adjusted_redundancy(
+        #     messages, channel=None, error_prob=0.0,
+        #     symbols=torch.arange(vocab_size), erased_symbol=self.vocab_size)
+        # logs.aux['redundancy_adj2'] = compute_adjusted_redundancy(
+        #     messages, channel=None, error_prob=0.0,
+        #     symbols=actual_vocab, erased_symbol=self.vocab_size)
 
         # compositinoality
         logs.aux['topsim'] = None
