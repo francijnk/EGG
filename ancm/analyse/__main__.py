@@ -329,7 +329,8 @@ def main():
     data_train, data_val, data_test = load_data(args.i)
     history_train, history_val, all_results = load_data(args.i)
     # print(all_results)
-    results_train = all_results['train']  # all_results.dataset == 'test']
+    if 'train' in all_results:
+        results_train = all_results['train']  # all_results.dataset == 'test']
     results_test = all_results['test']  # all_results.dataset == 'train']
     # data_train.to_csv(os.path.join(args.i, 'processed', 'data_train.csv'))
     # data_test.to_csv(os.path.join(args.i, 'processed', 'data_test.csv'))

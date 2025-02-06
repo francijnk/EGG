@@ -76,15 +76,15 @@ def load_data(input_dir):
                     results[dataset_key]['avg_length'].append(avg_len)
                     for metric_key, metric_val in fdata[dataset_key]['results'][condition_key].items():
                         # print(metric_key, metric_val)
-                        k = metric_key.replace('_v2_v2', '_v2')
-                        k = k.replace('_no_noise', '')
-                        if k == 'redund_msg_v2':
-                            print(dataset_key, condition_key)
+                        #k = metric_key.replace('_v2_v2', '_v2')
+                        k = metric_key.replace('_no_noise', '')
+                        #if k == 'redund_msg_v2':
+                        #    print(dataset_key, condition_key)
                         results[dataset_key][k].append(metric_val)
                         #_get = lambda metric: fdata[dataset_key]['results'][condition_key][metric]
                         # results[metric_key].append(_get(metric_val))
-                    if dataset_key == 'train' and condition_key == 'noise':
-                        results[dataset_key]['redund_msg_v2'].append(-99999)  # missing
+                    #if dataset_key == 'train' and condition_key == 'noise':
+                    #    results[dataset_key]['redund_msg_v2'].append(-99999)  # missing
 
                     #        'redund_msg_v2' not in fdata[dataset_key]['results']:
 
@@ -114,6 +114,7 @@ def load_data(input_dir):
             df['channel'] = channel
             df['error_prob'] = error_prob
 
+    print(list(history_val.keys()))
     history_val = pd.concat([df for key in history_val for df in history_val[key]], ignore_index=True)
     history_train = pd.concat([df for key in history_train for df in history_train[key]], ignore_index=True)
 
