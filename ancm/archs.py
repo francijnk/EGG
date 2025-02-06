@@ -742,7 +742,7 @@ class Channel(nn.Module):
         self.generator.manual_seed(seed)
         self.device = device
 
-    def forward(self, messages, apply_noise, *args, **kwargs):
+    def forward(self, messages, apply_noise, **kwargs):
         # GS
         if messages.dim() == 3:
             entropies = kwargs['entropy']
@@ -797,11 +797,11 @@ class ErasureChannel(Channel):
     Erases a symbol from a message with a given probability
     """
 
-    def gs(self, probs, entropy, apply_noise=True):
+    def gs(self, probs, entropy, apply_noise=True, *args, **kwargs):
         if not apply_noise:
             placeholder_probs = torch.zeros_like(probs[:, :, :1])
             probs = torch.cat([probs, placeholder_probs], dim=-1)
-            return probs, entropy, None
+            return probs, entropy
 
         elif self.training:
             target_mask = torch.rand(
@@ -828,7 +828,7 @@ class ErasureChannel(Channel):
 
             entropy += tensor_binary_entropy(self.p)  # how about EOS?
 
-            return probs, entropy, None
+            return probs, entropy
 
         else:
             # append a column for erased symbols
@@ -860,7 +860,7 @@ class ErasureChannel(Channel):
             # adjust entropy
             entropy[non_eos_symbols] += tensor_binary_entropy(self.p)
 
-            return probs, entropy, None
+            return probs, entropy
 
     def reinforce(self, messages, vocab_size=None, lengths=None, apply_noise=False):
         if not apply_noise:
@@ -1081,7 +1081,7 @@ class SymmetricChannel(Channel):
             entropy += tensor_binary_entropy(self.p)
             entropy += torch.log2(torch.tensor(probs.size(1) - 2))
 
-            return probs, entropy, None
+            return probs, entropy
 
         else:
             # apply argmax, exclude EOS, sample batch rows to be replaced
@@ -1127,4 +1127,4 @@ class SymmetricChannel(Channel):
             entropy[non_eos_mask] += tensor_binary_entropy(self.p)
             entropy[non_eos_mask] += torch.log2(torch.tensor(probs.size(1) - 2))
 
-            return probs, entropy, None
+            return probs, entropy
