@@ -5,7 +5,7 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 
 import ancm.analyse.style
-from ancm.analyse.util import load_data, get_long_val_data, close_plot
+from ancm.analyse.util import load_data, get_long_data, close_plot   #, get_long_val_data, close_plot
 
 
 def parse_args():
@@ -283,7 +283,7 @@ def analyse(data_test, output_dir):
 
 
 def plot_test_perchannel(data_test, out_dir):
-
+    print(data_test)
     test_long = pd.melt(pd.DataFrame(data_test),
         id_vars='max_len channel error_prob noise'.split(),
         value_vars=None, var_name='metric', value_name='value', ignore_index=True)
@@ -328,8 +328,10 @@ def main():
     # export data and save it
     os.makedirs(processed_data_path, exist_ok=True)
     data_train, data_val, data_test = load_data(args.i)
-    history_train, history_val, results_train, results_test = load_data(args.i)
-
+    history_train, history_val, all_results = load_data(args.i)
+    # print(all_results)
+    results_train = all_results['train']  # all_results.dataset == 'test']
+    results_test = all_results['test']  # all_results.dataset == 'train']
     # data_train.to_csv(os.path.join(args.i, 'processed', 'data_train.csv'))
     # data_test.to_csv(os.path.join(args.i, 'processed', 'data_test.csv'))
     # data_val.to_csv(os.path.join(args.i, 'processed', 'data_val.csv'))

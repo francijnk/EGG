@@ -29,6 +29,7 @@ from ancm.metrics import (
     # tensor_entropy,
     compute_mi,
 )
+from ancm.util import crop_messages
 
 from egg.core.callbacks import Callback, CustomProgress
 from egg.core.interaction import Interaction
@@ -369,7 +370,6 @@ class TrainingMetricsCallback(Callback):
         logs.aux['actual_vocab_size'] = int(actual_vocab_size)
 
         if self.image_input:
-            # messages, vocab_size, True)
             mi_attr = compute_mi(messages, aux_attributes, vocab_size)
             logs.aux['H_msg'] = mi_attr['entropy_msg']
             # logs.aux['H_attr'] = mi_attr['entropy_attr']
@@ -417,7 +417,7 @@ class TrainingMetricsCallback(Callback):
         if self.image_input:
             logs.aux['posdis'] = compute_posdis(aux_attributes, messages, vocab_size)
             logs.aux['bosdis'] = compute_bosdis(
-                aux_attributes, messages, self.vocab_size)
+                aux_attributes, messages, vocab_size)
 
     def on_secondary_validation_end(self, loss: float, logs: Interaction, epoch: int):
         messages = logs.message if logs.message.dim() == 2 \
