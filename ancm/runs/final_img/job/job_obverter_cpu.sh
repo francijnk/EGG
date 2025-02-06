@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH -J o5_5
+#SBATCH -J o5_8
 #SBATCH -N 1
 #SBATCH --mem=0
 #SBATCH --exclusive
@@ -17,7 +17,7 @@ pwd
 INPUT_FILE=$HOME/EGG/ancm/data/input_data/obverter-5-100-64.npz
 HPARAMS_FILE=$HOME/EGG/ancm/jobs/finalparams/obv5.txt
 JOB_FILE=$HOME/EGG/ancm/jobs/job_obverter_cpu.sh
-OUTPUT_DIR=$HOME/runs/final/obv5/
+OUTPUT_DIR=$HOME/runs/final/obv8/
 CUBLAS_WORKSPACE_CONFIG=:4096:2
 
 cp $INPUT_FILE $TMPDIR/obverter.npz

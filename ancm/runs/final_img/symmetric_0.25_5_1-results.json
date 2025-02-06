@@ -30294,7 +30294,7 @@
         }
     },
     "opts": {
-        "data_path": "/scratch-local/cklamra.9796855/obverter.npz",
+        "data_path": "/scratch-local/cklamra.9796858/obverter.npz",
         "channel": "symmetric",
         "error_prob": 0.25,
         "no_shuffle": true,
@@ -30347,8 +30347,8 @@
         "n_features": 64
     },
     "training_time": {
-        "training": "0:26:44",
-        "evaluation": "0:27:01",
+        "training": "0:27:02",
+        "evaluation": "0:27:18",
         "training_per_epoch": "00:32"
     }
 }
