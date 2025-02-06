@@ -418,23 +418,23 @@ def get_results_dict(dump, receiver, opts, unique_dict, channel_dict, noise=True
             channel=channel,
             error_prob=error_prob)
         max_entropy_smb = maxent_smb(channel, error_prob, opts.vocab_size)
-        results['redund_smb_v2'] = (1 - entropy_msg / max_entropy_smb).mean().item()
-        results['redund_smb_v2'] = (1 - entropy_smb / max_entropy_smb).mean().item()
+        results['redund_msg'] = (1 - entropy_msg / max_entropy_smb).mean().item()
+        results['redund_smb'] = (1 - entropy_smb / max_entropy_smb).mean().item()
         mi = MI(entropy_smb, attr)
         results.update(update_dict_names(mi, 'v2'))
 
-        entropy_msg_nn = channel_dict['message_entropy_nn']
-        entropy_smb_nn = channel_dict['symbol_entropy_nn']
-        max_entropy_msg_nn, _ = maximize_sequence_entropy(
-            max_len=opts.max_len,
-            vocab_size=receiver_vocab_size,
-            channel=None,
-            error_prob=0.0)
-        max_entropy_smb_nn = maxent_smb(None, 0.0, opts.vocab_size)
-        results['redund_msg_v2_before_noise'] = (1 - entropy_msg_nn / max_entropy_msg_nn).mean().item()
-        results['redund_smb_v2_before_noise'] = (1 - entropy_smb_nn / max_entropy_smb_nn).mean().item()
-        mi_nn = MI(entropy_smb_nn, attr)
-        results.update(update_dict_names(mi_nn, 'before_noise'))
+        # entropy_msg_nn = channel_dict['message_entropy_nn']
+        # entropy_smb_nn = channel_dict['symbol_entropy_nn']
+        # max_entropy_msg_nn, _ = maximize_sequence_entropy(
+        #     max_len=opts.max_len,
+        #     vocab_size=receiver_vocab_size,
+        #     channel=None,
+        #     error_prob=0.0)
+        # max_entropy_smb_nn = maxent_smb(None, 0.0, opts.vocab_size)
+        # results['redund_msg_v2'] = (1 - entropy_msg_nn / max_entropy_msg_nn).mean().item()
+        # results['redund_smb_v2'] = (1 - entropy_smb_nn / max_entropy_smb_nn).mean().item()
+        # mi_nn = MI(entropy_smb_nn, attr)
+        # results.update(update_dict_names(mi_nn, 'before_noise'))
 
     else:
         entropy_msg = channel_dict['message_entropy']
@@ -445,8 +445,8 @@ def get_results_dict(dump, receiver, opts, unique_dict, channel_dict, noise=True
             channel=None,
             error_prob=0.0)
         max_entropy_smb = maxent_smb(None, 0., receiver_vocab_size)
-        results['redund_msg_v2_no_noise'] = (1 - entropy_msg / max_entropy_msg).mean().item()
-        results['redund_smb_v2_no_noise'] = (1 - entropy_msg / max_entropy_smb).mean().item()
+        results['redund_msg'] = (1 - entropy_msg / max_entropy_msg).mean().item()
+        results['redund_smb'] = (1 - entropy_msg / max_entropy_smb).mean().item()
         mi = MI(entropy_smb, attr)
         results.update(update_dict_names(mi, 'no_noise'))
 
@@ -458,50 +458,50 @@ def get_results_dict(dump, receiver, opts, unique_dict, channel_dict, noise=True
         results['topographic_rho'] = compute_top_sim(s_inp, msg)
         results['topographic_rho_category'] = compute_top_sim(attr, msg)
 
-    if opts.image_input:
-        mi_attr_msg = compute_mi(msg, attr, receiver_vocab_size)
-        results['entropy_msg'] = mi_attr_msg['entropy_msg']
-        results['entropy_attr'] = mi_attr_msg['entropy_attr']
-        results['entropy_attr_dim'] = {
-            name: value for name, value
-            in zip(attr_names, mi_attr_msg['entropy_attr_dim'])}
-        results['mi_msg_attr_dim'] = {
-            name: value for name, value
-            in zip(attr_names, mi_attr_msg['mi_msg_attr_dim'])}
-        results['vi_msg_attr_dim'] = {
-            name: value for name, value
-            in zip(attr_names, mi_attr_msg['vi_msg_attr_dim'])}
-        results['vi_norm_msg_attr_dim'] = {
-            name: value for name, value
-            in zip(attr_names, mi_attr_msg['vi_norm_msg_attr_dim'])}
-        results['is_msg_attr_dim'] = {
-            name: value for name, value
-            in zip(attr_names, mi_attr_msg['is_msg_attr_dim'])}
-    else:
-        unique_objects, categorized_input = torch.unique(
-            s_inp, return_inverse=True, dim=0)
-        if len(unique_objects) < 200:  # test
-            categorized_input = categorized_input.unsqueeze(-1).to(torch.float)
-            mi_inp_msg = compute_mi(msg, categorized_input, receiver_vocab_size)
-            results['entropy_msg'] = mi_inp_msg['entropy_msg']
-            results['entropy_inp'] = mi_inp_msg['entropy_attr']
-            results['mi_msg_inp'] = mi_inp_msg['mi_msg_attr']
-            results['vi_msg_inp'] = mi_inp_msg['vi_msg_attr']
-            results['vi_norm_msg_inp'] = mi_inp_msg['vi_norm_msg_attr']
-            results['is_msg_inp'] = mi_inp_msg['vi_msg_attr']
-        else:  # train
-            results['entropy_msg'] = None  # mi_inp_msg['entropy_msg']
-            results['entropy_inp'] = None  # mi_inp_msg['entropy_attr']
-            results['mi_msg_inp'] = None  # mi_inp_msg['mi_msg_attr']
-            results['vi_msg_inp'] = None  # mi_inp_msg['vi_msg_attr']
-            results['vi_norm_msg_inp'] = None  # mi_inp_msg['vi_norm_msg_attr']
-            results['is_msg_inp'] = None  # mi_inp_msg['vi_msg_attr']
-        mi_cat_msg = compute_mi(msg, attr, receiver_vocab_size)
-        results['entropy_cat'] = mi_cat_msg['entropy_attr']
-        results['mi_msg_cat'] = mi_cat_msg['mi_msg_attr']
-        results['vi_msg_cat'] = mi_cat_msg['vi_msg_attr']
-        results['vi_norm_msg_cat'] = mi_cat_msg['vi_norm_msg_attr']
-        results['is_msg_cat'] = mi_cat_msg['vi_msg_attr']
+    # if opts.image_input:
+    #    mi_attr_msg = compute_mi(msg, attr, receiver_vocab_size)
+    #    results['entropy_msg'] = mi_attr_msg['entropy_msg']
+    #    results['entropy_attr'] = mi_attr_msg['entropy_attr']
+    #    results['entropy_attr_dim'] = {
+    #        name: value for name, value
+    #        in zip(attr_names, mi_attr_msg['entropy_attr_dim'])}
+    #    results['mi_msg_attr_dim'] = {
+    #        name: value for name, value
+    #        in zip(attr_names, mi_attr_msg['mi_msg_attr_dim'])}
+    #    results['vi_msg_attr_dim'] = {
+    #        name: value for name, value
+    #        in zip(attr_names, mi_attr_msg['vi_msg_attr_dim'])}
+    #    results['vi_norm_msg_attr_dim'] = {
+    #        name: value for name, value
+    #        in zip(attr_names, mi_attr_msg['vi_norm_msg_attr_dim'])}
+    #    results['is_msg_attr_dim'] = {
+    #        name: value for name, value
+    #        in zip(attr_names, mi_attr_msg['is_msg_attr_dim'])}
+    # else:
+    #    unique_objects, categorized_input = torch.unique(
+    #        s_inp, return_inverse=True, dim=0)
+    #    if len(unique_objects) < 200:  # test
+    #        categorized_input = categorized_input.unsqueeze(-1).to(torch.float)
+    #        mi_inp_msg = compute_mi(msg, categorized_input, receiver_vocab_size)
+    #        results['entropy_msg'] = mi_inp_msg['entropy_msg']
+    #        results['entropy_inp'] = mi_inp_msg['entropy_attr']
+    #        results['mi_msg_inp'] = mi_inp_msg['mi_msg_attr']
+    #        results['vi_msg_inp'] = mi_inp_msg['vi_msg_attr']
+    #        results['vi_norm_msg_inp'] = mi_inp_msg['vi_norm_msg_attr']
+    #        results['is_msg_inp'] = mi_inp_msg['vi_msg_attr']
+    #    else:  # train
+    #        results['entropy_msg'] = None  # mi_inp_msg['entropy_msg']
+    ##        results['entropy_inp'] = None  # mi_inp_msg['entropy_attr']
+    #        results['mi_msg_inp'] = None  # mi_inp_msg['mi_msg_attr']
+    #        results['vi_msg_inp'] = None  # mi_inp_msg['vi_msg_attr']
+    #        results['vi_norm_msg_inp'] = None  # mi_inp_msg['vi_norm_msg_attr']
+    #        results['is_msg_inp'] = None  # mi_inp_msg['vi_msg_attr']
+    #    mi_cat_msg = compute_mi(msg, attr, receiver_vocab_size)
+    #    results['entropy_cat'] = mi_cat_msg['entropy_attr']
+    #    results['mi_msg_cat'] = mi_cat_msg['mi_msg_attr']
+    #    results['vi_msg_cat'] = mi_cat_msg['vi_msg_attr']
+    #    results['vi_norm_msg_cat'] = mi_cat_msg['vi_norm_msg_attr']
+    #    results['is_msg_cat'] = mi_cat_msg['vi_msg_attr']
 
     return results
 
