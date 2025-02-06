@@ -828,7 +828,7 @@ class ErasureChannel(Channel):
 
             entropy += tensor_binary_entropy(self.p)  # how about EOS?
 
-            return probs, entropy, None
+            return probs, entropy
 
         else:
             # append a column for erased symbols
@@ -860,7 +860,7 @@ class ErasureChannel(Channel):
             # adjust entropy
             entropy[non_eos_symbols] += tensor_binary_entropy(self.p)
 
-            return probs, entropy, None
+            return probs, entropy
 
     def reinforce(self, messages, vocab_size=None, lengths=None, apply_noise=False):
         if not apply_noise:
