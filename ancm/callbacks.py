@@ -17,17 +17,11 @@ from rich.table import Table
 from rich.text import Text
 
 from ancm.metrics import (
-    # compute_conceptual_alignment,
+    message_entropy,
     compute_max_rep,
-    # compute_redundancy,
-    # compute_adjusted_redundancy,
     compute_top_sim,
     compute_posdis,
     compute_bosdis,
-    # mutual_info,
-    # sequence_entropy,
-    # tensor_entropy,
-    # compute_mi,
 )
 from ancm.util import crop_messages
 
@@ -103,7 +97,7 @@ class CustomProgressBarLogger(Callback):
             wandb.config.update(opts)
 
         self.history = defaultdict(lambda: defaultdict(dict))
-        self.hide_cols = ['receiver_entropy', 'sender_entropy', 'VI', 'MI']
+        self.hide_cols = ['receiver_entropy', 'sender_entropy', 'VI', 'MI', 'max_entropy_msg']
 
         self.progress = CustomProgress(
             TextColumn(
@@ -161,13 +155,16 @@ class CustomProgressBarLogger(Callback):
             if any(colname.startswith(col) for col in self.hide_cols):
                 continue
 
-            print_name = colname.replace(
-                'xpos', 'x').replace('ypos', 'y').replace('actual_', '')
+            print_name = (
+                colname
+                .replace('entropy_', 'H_')
+                .replace('redundancy_', 'R_')
+                .replace('xpos', 'x')
+                .replace('ypos', 'y')
+                .replace('actual_', '')
+            )
 
-            if colname == 'epoch':
-                ratio = 0.5
-            else:
-                ratio = 1
+            ratio = 0.5 if colname == 'epoch' else 1.
             row.add_column(
                 print_name,
                 justify='left' if colname in ('phase', 'epoch') else 'right',
@@ -337,12 +334,13 @@ class CustomProgressBarLogger(Callback):
 
 class TrainingMetricsCallback(Callback):
     def __init__(
-        self, vocab_size, max_len, channel_type,
+        self, vocab_size, max_len, channel, channel_type,
         error_prob, sender, receiver, dataloader,
             device, image_input, bs=32):
 
         self.vocab_size = vocab_size
         self.max_len = max_len
+        self.channel = channel
         self.channel_type = channel_type
         self.error_prob = error_prob
         self.image_input = image_input
@@ -365,6 +363,12 @@ class TrainingMetricsCallback(Callback):
         vocab_size = self.vocab_size + 1 \
             if self.channel_type == 'erasure' and self.error_prob > 0. \
             else self.vocab_size
+
+        #entropy, length_probs = message_entropy(logs.message, True)
+        #max_entropy = self.channel.compute_max_entropy(length_probs)
+        #logs.aux['entropy_v2'] = entropy
+        #logs.aux['redundancy_v2'] = 1 - entropy / max_entropy
+        logs.aux['redundancy_v2'] = 1 - logs.aux['entropy_msg'].mean() / logs.aux['max_entropy_msg'].mean()
 
         logs.aux['lexicon_size'] = int(lexicon_size)
         logs.aux['actual_vocab_size'] = int(actual_vocab_size)
@@ -435,6 +439,12 @@ class TrainingMetricsCallback(Callback):
         actual_vocab = torch.unique(torch.flatten(messages), dim=0)
         actual_vocab_size = actual_vocab.size(0)
 
+        #entropy, length_probs = message_entropy(logs.message, True)
+        #max_entropy = self.channel.compute_max_entropy(length_probs)
+        #logs.aux['entropy_v2'] = entropy
+        #logs.aux['redundancy_v2'] = 1 - entropy / max_entropy
+        logs.aux['redundancy_v2'] = 1 - logs.aux['entropy_msg'].mean() / logs.aux['max_entropy_msg'].mean()
+        
         logs.aux['lexicon_size'] = int(lexicon_size)
         logs.aux['actual_vocab_size'] = int(actual_vocab_size)
 
@@ -520,6 +530,13 @@ class TrainingMetricsCallback(Callback):
             if self.channel_type == 'erasure' and self.error_prob > 0. \
             else self.vocab_size
 
+        # entropy, length_probs = message_entropy(logs.message, True)
+        # max_entropy = self.channel.compute_max_entropy(length_probs)
+        # logs.aux['entropy_v2'] = entropy
+        # logs.aux['redundancy_v2'] = 1 - entropy / max_entropy
+        logs.aux['redundancy_v2'] = 1 - logs.aux['entropy_msg'].mean() / logs.aux['max_entropy_msg'].mean()
+        #print("entropy:", entropy)
+        #print("max ent:", max_entropy)
         logs.aux['lexicon_size'] = int(lexicon_size)
         logs.aux['actual_vocab_size'] = int(actual_vocab_size)
 

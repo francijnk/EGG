@@ -13,9 +13,9 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--n_distractors', '-d', type=int, required=True)
-    parser.add_argument('--n_samples_train', type=int, default=100)
-    parser.add_argument('--n_samples_val', type=int, default=20)
-    parser.add_argument('--n_samples_test', type=int, default=20)
+    parser.add_argument('--n_samples_train', type=int, default=128)
+    parser.add_argument('--n_samples_train_eval', type=int, default=8)
+    parser.add_argument('--n_samples_test', type=int, default=16)
     parser.add_argument('--us', action='store_true')
     args = parser.parse_args()
     return args
@@ -73,11 +73,7 @@ def extract_visa(args):
         # remove attributes, which do not differ among the concepts
         for attribute in all_attributes:
             attribute_values = [cd['attributes'][attribute] for cd in concepts.values()]
-            check = False
-            for val in attribute_values:
-                if val != attribute_values[0]:
-                    check = True
-            if check:
+            if len(set(attribute_values)) > 1:
                 output_dict[attribute] = attribute_values
         output = pd.DataFrame(output_dict)
 
@@ -90,16 +86,17 @@ def extract_visa(args):
         print('')
 
 
-def reshape(data_concepts, n_distractors, n_features, n_samples):
-    sample_sets, labels, categories = [], [], defaultdict(list)
+def sample(data_concepts, n_distractors, n_samples):
+    n_features = data_concepts.shape[1] - 1  # exclude the category column
 
-    data_categories = data_concepts.iloc[:, 0]#.astype('category')
+    data_categories = data_concepts.iloc[:, 0]  # .astype('category')
     # data_categories = data_categories.cat.set_categories(
     #     new_categories=data_categories.unique(),
     #     ordered=True)
     # data_categories = data_categories.cat.codes
     data_concepts = np.array(data_concepts.iloc[:, 1:].values, dtype='int')
 
+    sample_sets, labels, categories = [], [], defaultdict(list)
     for concept_i in range(len(data_concepts)):
         target_category = data_categories.iloc[concept_i]  # data_concepts.iloc[concept_i,0]
 
@@ -162,38 +159,27 @@ def export_visa(args):
 
     features = visa.iloc[:, 1:]
     textlabels = visa.iloc[:, :1]
-    n_features = features.shape[1] - 1  # exclude the category column
 
     print('Total concepts:', features.shape[0])
-    print('Total features:', n_features)
-
-    # divide 70% for train, 15% test and val
-    # train_features, temp_features, train_textlabels, temp_labels = train_test_split(
-    #     features, textlabels, test_size=0.3)
-    # val_features, test_features, val_textlabels, test_textlabels = train_test_split(
-    #     temp_features, temp_labels, test_size=0.5)
+    print('Total features:', features.shape[1] - 1)
 
     # 80% train, 20% test
     train_features, test_features, train_textlabels, test_labels = train_test_split(
         features, textlabels, test_size=0.2)
 
     print('Train concepts:', len(train_features))
-    # print('Val concepts:', len(val_features))
     print('Test concepts:', len(test_features))
 
-    train, train_labels, train_categories = reshape(
-        train_features, args.n_distractors, n_features, args.n_samples_train)
-    # train_eval – n_samples_test samples of objects from the train set
-    train_eval, train_eval_labels, train_eval_categories = reshape(
-        train_features, args.n_distractors, n_features, args.n_samples_test)
-    # val, val_labels = reshape(
-    #     val_features, args.n_distractors, n_features, args.n_samples_val, features)
-    test, test_labels, test_categories = reshape(
-        test_features, args.n_distractors, n_features, args.n_samples_test)
+    train, train_labels, train_categories = sample(
+        train_features, args.n_distractors, args.n_samples_train)
+    train_eval, train_eval_labels, train_eval_categories = sample(
+        train_features, args.n_distractors, args.n_samples_train_eval)
+    test, test_labels, test_categories = sample(
+        test_features, args.n_distractors, args.n_samples_test)
 
-    print('Train samples:', len(train_labels))
-    # print('Val samples:', len(val_labels))
-    print('Test/Eval samples:', len(test_labels))
+    print('Training samples:', len(train_labels))
+    print('Evaluation samples (train):', len(train_eval_labels))
+    print('Evaluation samples (test):', len(test_labels))
 
     npz_fname = f"visa-{args.n_distractors}-{args.n_samples_train}.npz"
     npz_fpath = os.path.join(current_dir, '..', 'input_data', npz_fname)

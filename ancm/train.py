@@ -8,7 +8,6 @@ from __future__ import print_function
 import os
 import json
 import time
-import pickle
 import pathlib
 import argparse
 import operator
@@ -20,7 +19,6 @@ import torch.utils.data
 import egg.core as core
 # from egg.core.util import move_to
 
-from ancm.trainers import Trainer
 from ancm.util import (
     DataHandler,
     build_optimizer,
@@ -40,41 +38,82 @@ from ancm.callbacks import (
     CustomProgressBarLogger,
     TrainingMetricsCallback,
 )
-from ancm.metrics import compute_bigram_entropy
 
 
 def get_params(params):
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("--data_path", type=str, default=None, help="Path to .npz data file to load")
-    parser.add_argument("--channel", type=str, default=None, help="Communication channel type {erasure, symmetric, deletion} (default: None)")
-    parser.add_argument("--error_prob", type=float, default=None, help="Probability of error per symbol (default: 0.0)")
-    parser.add_argument("--no_shuffle", action="store_false", default=True, help="Do not shuffle train data before every epoch (default: False)")
-    parser.add_argument("--sender_hidden", type=int, default=50, help="Size of the hidden layer of Sender (default: 50)")
-    parser.add_argument("--receiver_hidden", type=int, default=50, help="Size of the hidden layer of Receiver (default: 50)")
-    parser.add_argument("--embedding", type=int, default=10, help="Dimensionality of the embedding hidden layer for the agents (default: 10)")
-    parser.add_argument("--sender_cell", type=str, default="rnn", help="Type of the cell used for Sender {rnn, gru, lstm} (default: rnn)")
-    parser.add_argument("--receiver_cell", type=str, default="rnn", help="Type of the cell used for Receiver {rnn, gru, lstm} (default: rnn)")
-    parser.add_argument("--sender_lr", type=float, default=1e-1, help="Learning rate for Sender's parameters (default: 1e-1)")
-    parser.add_argument("--receiver_lr", type=float, default=1e-1, help="Learning rate for Receiver's parameters (default: 1e-1)")
-    parser.add_argument("--sender_entropy_coeff", type=float, default=0.01)
-    parser.add_argument("--receiver_entropy_coeff", type=float, default=0.001)
-    parser.add_argument("--length_cost", type=float, default=1e-2, help="Message length cost")
-    parser.add_argument("--mode", type=str, default="gs", help="Selects whether Reinforce or GumbelSoftmax relaxation is used for training {gs only at the moment} (default: rf)")
-    parser.add_argument("--optim", type=str, default="rmsprop", help="Optimizer to use [adam, rmsprop] (default: rmsprop)")
-    parser.add_argument("--n_permutations_train", type=int, default=None, help="Number of order permutations of the objects in the train set.")
-    parser.add_argument("--temperature", type=float, default=1.0, help="GS temperature for the sender (default: 1.0)")
-    parser.add_argument("--trainable_temperature", action="store_true", default=False, help="Enable trainable temperature")
-    parser.add_argument("--temperature_decay", default=0.9, type=float)
-    parser.add_argument("--temperature_minimum", default=0.5, type=float)
-    parser.add_argument("--results_folder", type=str, default='runs', help="Folder where file with dumped messages will be created")
-    parser.add_argument("--filename", type=str, default=None, help="Filename (no extension)")
-    parser.add_argument("--debug", action="store_true", default=False, help="Run egg/objects_game with pdb enabled")
-    parser.add_argument("--image_input", action="store_true", default=False, help="Run image data variant of the game")
-    parser.add_argument("--wandb_entity", type=str, default=None, help="WandB project name")
-    parser.add_argument("--wandb_project", type=str, default=None, help="WandB project name")
-    parser.add_argument("--wandb_run_id", type=str, default=None, help="WandB run id")
-    parser.add_argument("--wandb_group", type=str, default=None, help="WandB project name")
+    parser.add_argument("--data_path", type=str, default=None, help="Path to .npz inpur data file")
+    parser.add_argument("--results_folder", type=str, default='runs', help="Output folder")
+    parser.add_argument("--filename", type=str, default=None, help="Output file name (no extension)")
+
+    parser.add_argument(
+        "--channel", type=str, default=None,
+        help="Communication channel type {erasure, symmetric, deletion} (default: None)")
+    parser.add_argument(
+        "--error_prob", type=float, default=None, help="Probability of error per symbol (default: 0.0)")
+    parser.add_argument(
+        "--sender_hidden", type=int, default=64, help="Size of the hidden layer of Sender (default: 64)")
+    parser.add_argument(
+        "--receiver_hidden", type=int, default=64, help="Size of the hidden layer of Receiver (default: 64)")
+    parser.add_argument(
+        "--embedding", type=int, default=12,
+        help="Dimensionality of the embedding hidden layer for the agents (default: 12)")
+    parser.add_argument(
+        "--sender_cell", type=str, default="lstm",
+        help="Type of the cell used for Sender {rnn, gru, lstm} (default: lstm)")
+    parser.add_argument(
+        "--receiver_cell", type=str, default="lstm",
+        help="Type of the cell used for Receiver {rnn, gru, lstm} (default: lstm)")
+    parser.add_argument(
+        "--sender_lr", type=float, default=1e-1, help="Learning rate for Sender's parameters (default: 1e-1)")
+    parser.add_argument(
+        "--receiver_lr", type=float, default=1e-1, help="Learning rate for Receiver's parameters (default: 1e-1)")
+    parser.add_argument(
+        "--length_cost", type=float, default=1e-2, help="Message length cost")
+    parser.add_argument(
+        "--mode", type=str, default="gs",
+        help="Selects whether Reinforce or GumbelSoftmax relaxation is used for training (default: gs)")
+    parser.add_argument(
+        "--n_permutations_train", type=int, default=None,
+        help="Number of order permutations of the objects in the train set")
+    parser.add_argument(
+        "--image_input", action="store_true", default=False,
+        help="Run the image data variant of the game")
+    parser.add_argument(
+        "--optim", type=str, default="rmsprop", help="Optimizer to use [adam, rmsprop] (default: rmsprop)")
+    parser.add_argument(
+        "--no_shuffle", action="store_false", default=True,
+        help="Do not shuffle train data before every epoch (default: False)")
+
+    # RF-specific
+    parser.add_argument(
+        "--sender_entropy_coeff", type=float, default=0.01,
+        help="RF sender entropy coefficient (default: 0.01)")
+    parser.add_argument(
+        "--receiver_entropy_coeff", type=float, default=0.001,
+        help="RF receiver entropy coefficient (default: 0.001)")
+
+    # GS-specific
+    parser.add_argument(
+        "--temperature", type=float, default=1.0, help="GS temperature for the sender (default: 1.0)")
+    parser.add_argument(
+        "--trainable_temperature", action="store_true", default=False, help="Enable trainable temperature")
+    parser.add_argument(
+        "--temperature_decay", default=None, type=float,
+        help="Factor, by which the temperature is decreased every epoch.")
+    parser.add_argument(
+        "--temperature_minimum", default=None, type=float, help="Minimum temperature value.")
+
+    # W&B
+    parser.add_argument(
+        "--wandb_entity", type=str, default=None, help="WandB entity name")
+    parser.add_argument(
+        "--wandb_project", type=str, default=None, help="WandB project name")
+    parser.add_argument(
+        "--wandb_run_id", type=str, default=None, help="WandB run id")
+    parser.add_argument(
+        "--wandb_group", type=str, default=None, help="WandB group name")
 
     args = core.init(parser, params)
     check_args(args)
@@ -97,16 +136,18 @@ def check_args(args):
         args.error_prob = 0.0
         args.channel = 'none'
 
+    decay = args.temperature_decay
+    minimum = args.temperature_minimum
+    assert (
+        (decay is None and minimum is None)
+        or (decay is not None and minimum is not None)
+    )
+
     if args.results_folder is not None:
         os.makedirs(os.path.dirname(args.results_folder), exist_ok=True)
 
     args.results_folder = pathlib.Path(args.results_folder) \
         if args.results_folder is not None else None
-
-    if args.debug:
-        import pdb
-
-        pdb.set_trace()
 
 
 def main(params):
@@ -188,7 +229,8 @@ def main(params):
         TrainingMetricsCallback(
             vocab_size=opts.vocab_size,
             max_len=opts.max_len,
-            channel_type=opts.channel,
+            channel=game.channel,
+            channel_type=opts.channel,  # TODO
             error_prob=opts.error_prob,
             sender=_sender,
             receiver=_receiver,
@@ -202,13 +244,14 @@ def main(params):
             test_data_len=len(validation_data)),
     ]
 
-    if opts.mode == "gs" and not opts.trainable_temperature:
+    if opts.mode == "gs" and not opts.trainable_temperature \
+            and opts.temperature_decay is not None:
         callbacks.append(core.TemperatureUpdater(
             agent=sender,
             decay=opts.temperature_decay,
             minimum=opts.temperature_minimum))
 
-    trainer = Trainer(
+    trainer = core.Trainer(
         game=game,
         optimizer=optimizer,
         optimizer_scheduler=None,
@@ -217,19 +260,17 @@ def main(params):
         callbacks=callbacks)
 
     t_start = time.monotonic()
-    second_val = (opts.channel is not None and opts.error_prob > 0.)
-    trainer.train(n_epochs=opts.n_epochs, second_val=second_val)
+    trainer.train(n_epochs=opts.n_epochs)
     t_end = time.monotonic()
 
     def evaluate(dataloader):
-        results, messages, dumps = defaultdict(dict), [], {}
-        message_counts = defaultdict(lambda: defaultdict(int))
+        results, messages = {}, []
+        message_counts = defaultdict(int)
 
-        apply_noise = opts.error_prob > 0. and opts.channel is not None
         receiver = game.receiver
 
-        dump, channel_dict = dump_sender_receiver(
-            game, dataloader, apply_noise=apply_noise, max_len=opts.max_len,
+        dump = dump_sender_receiver(
+            game, dataloader, max_len=opts.max_len,
             vocab_size=vocab_size, mode=opts.mode, device=device)
 
         # Unique targets
@@ -247,14 +288,10 @@ def main(params):
                     str(int(x)) for x in s_inp.nonzero().squeeze().tolist()])
                 unique_dict[target] += 1
 
-        # Evaluation in the same setting as during training
-        output_key = 'noise' if apply_noise else 'no noise'
-        dumps[output_key] = dump
-        results[output_key] = get_results_dict(
-            dump, receiver, opts, unique_dict,
-            channel_dict=channel_dict, noise=apply_noise)
+        results = get_results_dict(dump, receiver, opts, unique_dict)
 
-        for i, (s_inp, msg, r_inp, r_out, label, t_attr, d_attr) in enumerate(dump):
+        for s_inp, msg, msg_nn, r_inp, r_out, r_out_nn, \
+                label, t_attr, d_attr, ch_out in dump:
 
             if opts.image_input:
                 # For the Obverter dataset, we save object features rather than
@@ -264,22 +301,17 @@ def main(params):
                     ','.join([str(int(attr)) for attr in attr_dict.values()])
                     for attr_dict in d_attr]
                 message = ','.join([str(int(x)) for x in msg.tolist()])
+                message_nn = ','.join([str(int(x)) for x in msg_nn.tolist()])
+                print(r_out, "receiver_pred")
                 message_log = {
                     'target_obj': target_vec,
                     'candidate_objs': candidate_vex,
-                    'message': message,
-                    # 'message-no-noise': None,
                     'label': label,
+                    'message': message,
+                    'prediction': r_out,
+                    'message_no_noise': message_nn,
+                    'prediction_no_noise': r_out_nn,
                 }
-                if channel_dict['message_entropy'] is not None:
-                    message_log.update({
-                        'entropy': channel_dict['message_entropy'][i].item(),
-                        'entropy_no_noise':
-                        channel_dict['message_entropy_nn'][i].item(),
-                    })
-                else:
-                    channel_dict['entropy'] = None
-                    channel_dict['entropy_no_noise'] = None
 
             else:
                 # VISA concepts are sparse binary tensors, hence we represent each
@@ -291,112 +323,49 @@ def main(params):
                         str(x) for x in candidate.nonzero().squeeze().tolist()])
                     for candidate in r_inp]
                 message = ','.join([str(int(x)) for x in msg.tolist()])
+                message_nn = ','.join([str(int(x)) for x in msg_nn.tolist()])
                 message_log = {
                     'target_obj': target_vec,
                     'candidate_objs': candidate_vex,
-                    'message': message,
-                    'message_no_noise': None,
                     'label': label,
+                    'message': message,
+                    'prediction': r_out,
+                    'message_no_noise': message_nn,
+                    'prediction_no_noise': r_out_nn,
                     'target_attributes': t_attr,
                     'distractor_attributes': d_attr,
                 }
-                if channel_dict['message_entropy'] is not None:
-                    message_log.update({
-                        'entropy': channel_dict['message_entropy'][i].item(),
-                        'entropy_no_noise':
-                                channel_dict['message_entropy_nn'][i].item(),
-                    })
-                else:
-                    message_log['entropy'] = None
-                    message_log['entropy_no_noise'] = None
+
+            message_log['entropy'] = ch_out['entropy_msg']
+            message_log['entropy_no_noise'] = ch_out['entropy_msg_nn']
+            message_log['redundancy'] = ch_out['redundancy_msg']
 
             messages.append(message_log)
-            message_counts[output_key][message] += 1
+            message_counts[message] += 1
 
-        # If we applied noise during training, disable it and evaluate again
-        if apply_noise:
-            dump, channel_dict = dump_sender_receiver(
-                game, dataloader, apply_noise=False,
-                max_len=opts.max_len,
-                vocab_size=opts.vocab_size,
-                mode=opts.mode, device=device)
-            dumps['no noise'] = dump
-            results['no noise'] = get_results_dict(
-                dump, receiver, opts, unique_dict, channel_dict=channel_dict, noise=False)
+        message_counts = sorted(
+            message_counts.items(),
+            key=operator.itemgetter(1),
+            reverse=True)
 
-            # Iterating through Dump without noise
-            for i, (s_inp, msg, r_inp, _, _, t_attr, d_attr) in enumerate(dump):
-                if opts.image_input:  # Obverter
-                    target_vec = ','.join([str(int(attr)) for attr in t_attr.values()])
-                    candidate_vex = [
-                        ','.join([str(int(attr)) for attr in attr_dict.values()])
-                        for attr_dict in d_attr]
-                    message = ','.join([str(int(x)) for x in msg.tolist()])
-
-                else:  # VISA
-                    target_vec = ','.join([
-                        str(x) for x in s_inp.nonzero().squeeze().tolist()])
-                    candidate_vex = [
-                        ','.join([
-                            str(x) for x in candidate.nonzero().squeeze().tolist()])
-                        for candidate in r_inp]
-                    message = ','.join([str(int(x)) for x in msg.tolist()])
-
-                message_log = messages[i]
-                print(target_vec, message_log['target_obj'])
-                assert message_log['target_obj'] == target_vec
-                assert message_log['candidate_objs'] == candidate_vex
-
-                message_log['message_no_noise'] = message
-                if channel_dict['message_entropy'] is not None:
-                    message_log['entropy'] = channel_dict['message_entropy'][i].item()
-                    message_log['entropy_no_noise'] = channel_dict['message_entropy_nn'][i].item()
-                else:
-                    message_log['entropy'] = None
-                    message_log['entropy_no_noise'] = None  # channel_dict['message_entropy_nn'][i].item()
-                message_counts['no noise'][message] += 1
-
-        for key in message_counts:
-            message_counts[key] = sorted(
-                message_counts[key].items(),
-                key=operator.itemgetter(1),
-                reverse=True)
-
-        return results, messages, message_counts, dumps
+        return {
+            'results': results,
+            'messages': messages,
+            'message_counts': message_counts,
+        }
 
     output_dict = {}
 
-    # get results on the train and test test
+    # results on the eval subset of the training set (VISA)
     if aux_train_data is not None:
         game.train()
-        results, messages, message_counts, train_dumps = evaluate(aux_train_data)
-        output_dict['train'] = {
-            'results': results,
-            'messages': messages,
-            'message_counts': message_counts}
-    else:
-        train_dumps = None
-    game.eval()
-    results, test_messages, message_counts, test_dumps = evaluate(test_data)
-    # if aux_train_data is not None:
-    #    ngram_results = compute_bigram_entropy(messages, test_messages)
-    #    train_ngram_results = compute_bigram_entropy(
-    #        messages, messages, 'message-no-noise', 'message')
-    #    test_ngram_results = compute_bigram_entropy(
-    #        test_messages, test_messages, 'message-no-noise', 'message')
-    #    output_dict['train']['train_test_crossentropy'] = ngram_results[0]
-    #    output_dict['train']['train_test_perplexity'] = ngram_results[1]
-    #    output_dict['train']['noise_no_noise_crossentropy'] = train_ngram_results[0]
-    #    output_dict['train']['noise_no_noise_crossentropy'] = train_ngram_results[1]
-    #    output_dict['test']['train_test_crossentropy'] = ngram_results[0]
-    #    output_dict['train']['train_test_perplexity'] = ngram_results[1]
-    #    output_dict['train']['noise_no_noise_crossentropy'] = test_ngram_results[0]
-    #    output_dict['train']['noise_no_noise_crossentropy'] = test_ngram_results[1]
-    output_dict['test'] = {
-        'results': results,
-        'messages': test_messages,
-        'message_counts': message_counts}
+        output_dict['train'] = evaluate(aux_train_data)
 
+    # results on the test set
+    game.eval()
+    output_dict['test'] = evaluate(test_data)
+
+    # save training time
     training_time = timedelta(seconds=t_end - t_start)
     evaluation_time = timedelta(seconds=time.monotonic() - t_start)
 
@@ -409,7 +378,7 @@ def main(params):
 
     def make_jsonable(x, key=None):
         if isinstance(x, torch.Tensor):
-            print(key)
+            print(key, 'processing tensor')
             try:
                 return x.item()
             except:
@@ -418,31 +387,26 @@ def main(params):
                 else:
                     return 'none'
         if isinstance(x, dict):
-            return { make_jsonable(k): make_jsonable(v,k) for k, v in x.items()}
+            return {make_jsonable(k): make_jsonable(v, k) for k, v in x.items()}
         if isinstance(x, list) or isinstance(x, tuple):
             return [make_jsonable(item) for item in x]
-    
+
         return x
 
     opts_dict = {k: make_jsonable(v.item()) if isinstance(v, torch.Tensor)
                  else v for k, v in vars(opts).items() if is_jsonable(v) and k != 'optimizer'}
+    # opts_dict = {k: v for k, v in vars(opts) if is_jsonable(v) and k != 'optimizer'}
     output_dict['opts'] = opts_dict
     output_dict['training_time'] = {
         'training': training_time,
         'evaluation': evaluation_time,
-        'training_per_epoch': training_time_per_epoch}
+        'training_per_epoch': training_time_per_epoch,
+    }
 
     if opts.results_folder:
         opts.results_folder.mkdir(exist_ok=True)
         with open(opts.results_folder / f'{opts.filename}-results.json', 'w') as f:
             json.dump(make_jsonable(output_dict), f, indent=4)
-
-        # if train_dumps is not None:
-        #     with open(opts.results_folder / f'{opts.filename}-train-dump.pkl', 'wb') as f:
-        #         pickle.dump(train_dumps, f)
-
-        # with open(opts.results_folder / f'{opts.filename}-test-dump.pkl', 'wb') as f:
-        #     pickle.dump(test_dumps, f)
 
         print(f"Results saved to {opts.results_folder / opts.filename}-results.json")
 
@@ -450,7 +414,8 @@ def main(params):
     print('Training time per epoch:', training_time_per_epoch)
     print('Evaluation time:', evaluation_time)
 
-    # print_training_results(output_dict)
+    print_training_results(output_dict)
+
 
 if __name__ == "__main__":
     import sys

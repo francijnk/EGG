@@ -5,13 +5,13 @@ import numpy as np
 from tabulate import tabulate
 from collections import defaultdict
 from torch.utils.data import Dataset, DataLoader
-from torch.distributions import OneHotCategorical
+# from torch.distributions import OneHotCategorical
 
 from typing import Optional
 
 from egg.core.util import find_lengths, move_to, get_opts
 
-from ancm.archs import tensor_binary_entropy
+# from ancm.archs import tensor_binary_entropy
 from ancm.metrics import (
     # compute_conceptual_alignment,
     compute_max_rep,
@@ -19,13 +19,13 @@ from ancm.metrics import (
     # compute_adjusted_redundancy,
     compute_accuracy2,
     compute_top_sim,
-    # compute_mi,
+    compute_mi,
     compute_posdis,
     compute_bosdis,
-    maximize_sequence_entropy,
+    # maximize_sequence_entropy,
     binary_entropy,
-    MI,
 )
+from ancm.archs import NoChannel
 
 common_opts = get_opts()
 
@@ -209,12 +209,16 @@ def build_optimizer(game, opts):
 
 
 class Dump:
-    def __init__(self, sender_inputs, messages, receiver_inputs, receiver_outputs, labels, attributes):
+    def __init__(
+            self, sender_inputs, messages, messages_nn, receiver_inputs,
+            receiver_outputs, receiver_outputs_nn, labels, attributes, channel_output):
         self.sender_inputs = torch.stack(sender_inputs)
         self.messages = crop_messages(torch.stack(messages))
-        # print(self.messages.shape)
+        self.messages_nn = crop_messages(torch.stack(messages_nn)) \
+            if isinstance(messages_nn, torch.Tensor) else self.messages
         self.receiver_inputs = torch.stack(receiver_inputs)
         self.labels = torch.stack(labels)
+        self.channel_output = channel_output
 
         attributes = {k: torch.cat(v, dim=0) for k, v in attributes.items()}
 
@@ -227,16 +231,25 @@ class Dump:
 
         if self.messages.dim() == 3:
             self.lengths = find_lengths(self.messages.argmax(-1))
-            self.receiver_outputs = torch.stack(receiver_outputs)
+            self.lengths_nn = find_lengths(self.messages.argmax(-1))
+            # self.receiver_outputs = torch.stack(receiver_outputs)
             self.receiver_outputs = torch.stack([
                 receiver_output[self.lengths[i] - 1].argmax(-1)
                 for i, receiver_output in enumerate(receiver_outputs)
             ], dim=0)
+            # self.receiver_outputs_nn = torch.stack(receiver_outputs_nn)
+            self.receiver_outputs_nn = torch.stack([
+                receiver_output[self.lengths[i] - 1].argmax(-1)
+                for i, receiver_output in enumerate(receiver_outputs_nn)
+            ], dim=0)
             self.strings = self.messages.argmax(-1)
+            self.strings_nn = self.messages_nn.argmax(-1)
         else:
             self.lengths = find_lengths(self.messages)
             self.receiver_outputs = torch.stack(receiver_outputs)
+            self.receiver_outputs_nn = torch.stack(receiver_outputs_nn)
             self.strings = self.messages
+            self.strings = self.messages_nn
 
     def __len__(self):
         return len(self.sender_inputs)
@@ -246,8 +259,10 @@ class Dump:
             yield (
                 self.sender_inputs[i],
                 self.strings[i, :self.lengths[i]],
+                self.strings_nn[i, :self.lengths_nn[i]],
                 self.receiver_inputs[i],
                 self.receiver_outputs[i].item(),
+                self.receiver_outputs_nn[i].item(),
                 self.labels[i].int().item(),
                 {
                     k: self.target_attributes[k][i].int().item()
@@ -257,11 +272,20 @@ class Dump:
                     {k: self.distractor_attributes[k][i].int().item()}
                     for k in self.distractor_attributes
                 ],
+                {
+                    k: self.channel_output[k][i].item()
+                    if self.channel_output[k][i].numel() == 1
+                    else self.channel_output[k][i]
+                    for k in self.channel_output
+                },
             )
 
     def get_tensors(self):
         if self.messages.dim() == 3:
             messages = self.messages.argmax(-1)
+            messages_nn = self.messages_nn.argmax(-1)
+        else:
+            messages, messages_nn = self.messages, self.messages_nn
         target_attributes = torch.cat(list(self.target_attributes.values()), dim=-1)
         distractor_attributes = torch.cat(list(self.distractor_attributes.values()), dim=-1)
         # distractor_attributes = [
@@ -269,15 +293,15 @@ class Dump:
         #     for attributes in self.distractor_attributes]
         attribute_names = list(self.target_attributes.keys())
 
-        return self.sender_inputs, messages, self.receiver_inputs, \
-            self.receiver_outputs, self.labels, target_attributes, \
-            distractor_attributes, attribute_names
+        return self.sender_inputs, messages, messages_nn, \
+            self.receiver_inputs, self.receiver_outputs, \
+            self.receiver_outputs_nn, self.labels, target_attributes, \
+            distractor_attributes, attribute_names, self.channel_output
 
 
 def dump_sender_receiver(
         game: torch.nn.Module,
         dataset: torch.utils.data.DataLoader,
-        apply_noise: bool,
         max_len: int,
         vocab_size: int,
         mode: str,
@@ -286,18 +310,20 @@ def dump_sender_receiver(
     A tool to dump the interaction between Sender and Receiver
     :param game: A Game instance
     :param dataset: Dataset of inputs to be used when analyzing the communication
-    :param apply_noise: whether noise should be applied
-    :param max_entropy: needed to calculate redundancy of the message
     :param max_len: max message length
+    :param vocab_size: vocab size, without channel-specific additional symbols
     :param device: device (e.g. 'cuda') to be used
     :return:
     """
+    train_state = game.training
+    game.eval()
 
     device = device if device is not None else common_opts.device
 
-    sender_inputs, messages = [], []
-    receiver_inputs, receiver_outputs, labels = [], [], []
-    attributes, channel_dict = defaultdict(list), defaultdict(list) 
+    sender_inputs, receiver_inputs, labels = [], [], []
+    messages, messages_nn = [], []
+    receiver_outputs, receiver_outputs_nn = [], []
+    attributes, channel_output = defaultdict(list), defaultdict(list)
 
     for i, batch in enumerate(dataset):
         sender_input = move_to(batch[0], device)
@@ -305,31 +331,33 @@ def dump_sender_receiver(
         labels.extend(batch[1])
         receiver_input = move_to(batch[2], device)
         receiver_inputs.extend(receiver_input)
-        for key, val in batch[3].items():  #  ok
+        for key, val in batch[3].items():
             attributes[key].append(val)
         with torch.no_grad():
             sender_output = game.sender(sender_input)
-        message_nn = sender_output[0]
-        entropy_nn = sender_output[2]
+        message = sender_output[0]
+        symbol_entropy = sender_output[2]
 
         if mode == 'rf':  # Add noise to the message
-            message = crop_messages(message_nn)
-            message = game.channel(message_nn, entropy_nn, apply_noise=apply_noise)
+            raise NotImplementedError
+            # message = crop_messages(message)
+            # message = game.channel(message, entropy_nn, apply_noise=apply_noise)
 
-            # TODO 
         elif mode == 'gs':
-            message, channel_output, = game.channel(
-                message_nn, entropy=entropy_nn, apply_noise=apply_noise)
-            #for key, val in channel_output.items():  # 32 messages appends is ok
-            #    channel_dict[key].append(val)
-            if game.training:
+            message, message_nn, channel_dict = game.channel(
+                message, entropy=symbol_entropy)
+            if True:  # game.training:
                 not_eosed_before = torch.ones(message.size(0)).to(device)
                 not_eosed_before_nn = not_eosed_before.clone().detach()
+                prefix_entropy = torch.zeros_like(not_eosed_before)
+                prefix_entropy_nn = torch.zeros_like(not_eosed_before)
 
                 symbols = []
                 for step in range(message.size(1)):
                     eos_mask = message[:, step, 0]
-                    # add_mask = eos_mask * not_eosed_before
+                    add_mask = eos_mask * not_eosed_before
+                    add_mask_nn = message_nn[:, step, 0].detach() \
+                        * not_eosed_before_nn
                     symbol_probs = message[:, step]
                     symbol_probs[:, 1:] *= not_eosed_before.unsqueeze(-1)
                     eos = torch.zeros_like(symbol_probs)
@@ -338,68 +366,154 @@ def dump_sender_receiver(
                         symbol_probs.sum(-1, keepdim=True) > 0,
                         symbol_probs / symbol_probs.sum(-1, keepdim=True),
                         eos)
-                    distr = OneHotCategorical(probs=symbol_probs)  # 32x10 = 1 smb
-                    symbols.append(distr.sample())
+                    symbols.append(symbol_probs)
 
-                    h_not_eosed = tensor_binary_entropy(not_eosed_before)
-                    channel_output['message_entropy'] += h_not_eosed \
-                        + not_eosed_before * channel_output['symbol_entropy'][:, step]
-                        # + (1 - prob_not_eosed) * 0
+                    channel_dict['length_probs'][:, step] = add_mask.detach()
+
+                    # symbols = symbol_probs.argmax(-1)
+                    # TODO we might want to take argmax here for during training
+                    # distr = OneHotCategorical(probs=symbol_probs)  # 32x10 = 1 smb
+                    # symbols.append(distr.sample())
+
+                    channel_dict['length_probs'][:, step] = add_mask.detach()
+                    # aggregate message entropy
+                    channel_dict['entropy_msg'] = channel_dict['entropy_msg'] \
+                        + torch.where(
+                            add_mask > 1e-5,
+                            add_mask.detach() * prefix_entropy,
+                            0)
+
+                    # entropy of the symbol, assuming it is not eos
+                    # (the furmula exploits decomposability of entropy)
+                    prefix_entropy += (
+                        channel_dict['entropy_smb'][:, step]
+                        - game.channel.tensor_binary_entropy(eos_mask.detach())
+                    ) / (1 - eos_mask.detach())
+
                     not_eosed_before = not_eosed_before * (1.0 - eos_mask)
 
-                    channel_output['message_entropy_nn'] += h_not_eosed \
-                        + not_eosed_before_nn * channel_output['symbol_entropy_nn'][:, step]
-                        # + (1 - prob_not_eosed_nn * 0
-                    not_eosed_before_nn *= 1.0 - message_nn[:, step, 0]
+                    # TODO make sure this part is the same as in archs.py if something changes there
+                    channel_dict['entropy_msg_nn'] = channel_dict['entropy_msg_nn'] \
+                        + torch.where(
+                            add_mask_nn > 1e-5,
+                            add_mask_nn.detach() * prefix_entropy_nn,
+                            0)
+                    prefix_entropy_nn += (
+                        channel_dict['entropy_smb_nn'][:, step]
+                        - game.channel.tensor_binary_entropy(message_nn[:, step, 0])
+                    ).detach() / (1 - eos_mask.detach())
 
-                for k, v in channel_output.items():
-                    channel_dict[k].append(v)
+                    not_eosed_before_nn = (
+                        not_eosed_before_nn * (1.0 - message_nn[:, step, 0])
+                    ).detach()
+
+                # adjust message entropy to cover message length variability
+                # exclude appended EOS from symbol entropy and compute redundancy
+                game.channel.update_values(channel_dict)
+                for k in (
+                    'entropy_msg',
+                    'entropy_msg_nn',
+                    'entropy_smb',
+                    'entropy_smb_nn',
+                    'redundancy_msg',
+                    'redundancy_smb',
+                    'max_entropy',
+                ):
+                    channel_output[k].append(channel_dict[k])
                 message = torch.stack(symbols).permute(1, 0, 2)
 
             else:
-                for k, v in channel_output.items():
-                    channel_dict[k].append(None)
+                for k in (
+                    'entropy_msg',
+                    'entropy_msg_nn',
+                    'entropy_smb',
+                    'entropy_smb_nn',
+                    'redundancy_msg',
+                    'redundancy_smb',
+                    'max_entropy',
+                ):
+                    channel_output[k].append(None)
 
-        messages.extend(message)
-        with torch.no_grad():
-            output = game.receiver(message, receiver_input)
-        receiver_outputs.extend(output)
+        if isinstance(game.channel, NoChannel):
+            receiver_output = game.receiver(message, receiver_input)
 
-    channel_dict = {k: torch.cat(v, dim=0) if game.training else None for k, v in channel_dict.items()}
+            messages.extend(message)
+            messages_nn.extend([None for _ in range(len(messages))])
+            receiver_outputs.extend(receiver_output)
+            receiver_outputs_nn.extend([None for _ in range(len(messages))])
+        else:
+            # compute receiver outputs for messages without noise
+            message_joined = torch.cat([message, message_nn], dim=0)
+            receiver_input_joined = torch.cat([receiver_input, receiver_input], dim=0)
+            with torch.no_grad():
+                receiver_output_joined = game.receiver(
+                    message_joined,
+                    receiver_input_joined)
+            receiver_output = receiver_output_joined[:len(message)]
+            receiver_output_nn = receiver_output_joined[len(message):]
 
-    return Dump(sender_inputs, messages, receiver_inputs, receiver_outputs, labels, attributes), channel_dict
+            messages.extend(message)
+            messages_nn.extend(message_nn)
+            receiver_outputs.extend(receiver_output)
+            receiver_outputs_nn.extend(receiver_output_nn)
+
+    channel_output = {
+        k: torch.cat(v, dim=0) if v[0] is not None
+        else [None for _ in range(len(v))]
+        for k, v in channel_output.items()
+    }
+    # channel_dict = game.channel.update_values(channel_dict)
+    # channel_dict = {k: v if game.training else None for k, v in channel_dict.items()}
+
+    game.train(mode=train_state)
+
+    return Dump(
+        sender_inputs,
+        messages,
+        messages_nn,
+        receiver_inputs,
+        receiver_outputs,
+        receiver_outputs_nn,
+        labels,
+        attributes,
+        channel_output
+    )
 
 
-def get_results_dict(dump, receiver, opts, unique_dict, channel_dict, noise=True):
-    s_inp, msg, r_inp, r_out, labels, attr, distr_attr, attr_names \
-        = dump.get_tensors()
+def get_results_dict(dump, receiver, opts, unique_dict):
+    s_inp, msg, msg_nn, r_inp, r_out, r_out_nn, labels, attr, distr_attr, \
+        attr_names, ch_out = dump.get_tensors()
 
-    if noise and opts.channel == 'erasure' and opts.error_prob > 0.:
-        receiver_vocab_size = opts.vocab_size + 1
-    else:
-        receiver_vocab_size = opts.vocab_size
+    receiver_vocab_size = opts.vocab_size + 1 if opts.channel == 'erasure' \
+        else opts.vocab_size
     actual_vocab = set(int(s) for m in msg for s in m.tolist())
 
     # receiver_outputs = move_to(receiver_outputs, device)
     # labels = move_to(labels, device)
 
-    channel, error_prob = (None, 0.) if not noise \
-        else (opts.channel, opts.error_prob)
-
     results = {
+        'samples': len(labels),
+        'samples_per_target_obj': len(labels) / len(unique_dict.keys()),
         'accuracy': (r_out == labels).float().mean().item(),
+        'accuracy_nn': (r_out_nn == labels).float().mean().item(),
         'accuracy2': compute_accuracy2(dump, receiver, opts),
         'unique_messages': len(torch.unique(msg, dim=0)),
         'unique_target_objects': len(unique_dict.keys()),
         'actual_vocab_size': len(actual_vocab),
+        'entropy_msg': ch_out['entropy_msg'].mean().item(),
+        'redundancy_msg': ch_out['redundancy_msg'].mean().item(),
+        'redundancy_msg_v2': (
+            ch_out['entropy_msg'].mean()
+            / ch_out['max_entropy'].mean()
+        ).item(),
+        'entropy_smb': ch_out['entropy_smb'].mean().item(),
+        'redundancy_smb': ch_out['redundancy_smb'].mean().item(),
         # 'redundancy': compute_redundancy(msg, receiver_vocab_size, channel, error_prob),
         # 'redundancy_adj': compute_adjusted_redundancy(
         #     msg, channel, error_prob, torch.arange(receiver_vocab_size)),
         # 'redundancy_adj_voc': compute_adjusted_redundancy(
         #     msg, channel, error_prob, actual_vocab),
         'max_rep': compute_max_rep(msg).mean().item(),
-        # alignment = compute_conceptual_alignment(
-        #     test_data, _receiver, _sender, device, opts.batch_size)
     }
 
     def maxent_smb(channel, p, vocab_size):
@@ -408,51 +522,10 @@ def get_results_dict(dump, receiver, opts, unique_dict, channel_dict, noise=True
         elif channel == 'erasure':
             return binary_entropy(p) + (1 - p) * math.log2(vocab_size)
 
-    update_dict_names = lambda dct, sffx: {f'{k}_{sffx}': v for k, v in dct.items()}
-    entropy_msg = channel_dict['message_entropy']
-    entropy_smb = channel_dict['symbol_entropy']
-
-    if isinstance(entropy_msg, torch.Tensor):
-        max_entropy_msg, _ = maximize_sequence_entropy(
-            max_len=opts.max_len,
-            vocab_size=receiver_vocab_size,
-            channel=channel,
-            error_prob=error_prob)
-        max_entropy_smb = maxent_smb(channel, error_prob, opts.vocab_size)
-        results['redund_msg'] = (1 - entropy_msg / max_entropy_smb).mean().item()
-        results['redund_smb'] = (1 - entropy_smb / max_entropy_smb).mean().item()
-        # mi = MI(entropy_smb, attr)
-        results.update(MI(entropy_msg, attr))
-        # update_dict_names(mi, 'v2'))
-
-        # entropy_msg_nn = channel_dict['message_entropy_nn']
-        # entropy_smb_nn = channel_dict['symbol_entropy_nn']
-        # max_entropy_msg_nn, _ = maximize_sequence_entropy(
-        #     max_len=opts.max_len,
-        #     vocab_size=receiver_vocab_size,
-        #     channel=None,
-        #     error_prob=0.0)
-        # max_entropy_smb_nn = maxent_smb(None, 0.0, opts.vocab_size)
-        # results['redund_msg_v2'] = (1 - entropy_msg_nn / max_entropy_msg_nn).mean().item()
-        # results['redund_smb_v2'] = (1 - entropy_smb_nn / max_entropy_smb_nn).mean().item()
-        # mi_nn = MI(entropy_smb_nn, attr)
-        # results.update(update_dict_names(mi_nn, 'before_noise'))
-
-    #else:
-    #    entropy_msg = channel_dict['message_entropy']
-    #    entropy_smb = channel_dict['symbol_entropy']
-    #    if entropy_msg is not None:
-    #        max_entropy_msg, _ = maximize_sequence_entropy(
-    #            max_len=opts.max_len,
-    #            vocab_size=receiver_vocab_size,
-    #            channel=None,
-    #            error_prob=0.0)
-    #        max_entropy_smb = maxent_smb(None, 0., receiver_vocab_size)
-    #        results['redund_msg'] = (1 - entropy_msg / max_entropy_msg).mean().item()
-    #        results['redund_smb'] = (1 - entropy_msg / max_entropy_smb).mean().item()
-    #        mi = MI(entropy_smb, attr)
-    #        results.update(update_dict_names(mi, 'no_noise'))
-
+    # update_dict_names = lambda dct, sffx: {f'{k}_{sffx}': v for k, v in dct.items()}
+    results['redund_msg'] = ch_out['redundancy_msg'].mean().item()
+    results['redund_smb'] = ch_out['redundancy_smb'].mean().item()
+    # results.update(compute_mi(channel_dict['entropy_msg'].mean(), attr))
     if opts.image_input:
         results['topographic_rho'] = compute_top_sim(attr, msg)
         results['posdis'] = compute_posdis(attr, msg)
@@ -460,52 +533,6 @@ def get_results_dict(dump, receiver, opts, unique_dict, channel_dict, noise=True
     else:
         results['topographic_rho'] = compute_top_sim(s_inp, msg)
         results['topographic_rho_category'] = compute_top_sim(attr, msg)
-
-    # if opts.image_input:
-    #    mi_attr_msg = compute_mi(msg, attr, receiver_vocab_size)
-    #    results['entropy_msg'] = mi_attr_msg['entropy_msg']
-    #    results['entropy_attr'] = mi_attr_msg['entropy_attr']
-    #    results['entropy_attr_dim'] = {
-    #        name: value for name, value
-    #        in zip(attr_names, mi_attr_msg['entropy_attr_dim'])}
-    #    results['mi_msg_attr_dim'] = {
-    #        name: value for name, value
-    #        in zip(attr_names, mi_attr_msg['mi_msg_attr_dim'])}
-    #    results['vi_msg_attr_dim'] = {
-    #        name: value for name, value
-    #        in zip(attr_names, mi_attr_msg['vi_msg_attr_dim'])}
-    #    results['vi_norm_msg_attr_dim'] = {
-    #        name: value for name, value
-    #        in zip(attr_names, mi_attr_msg['vi_norm_msg_attr_dim'])}
-    #    results['is_msg_attr_dim'] = {
-    #        name: value for name, value
-    #        in zip(attr_names, mi_attr_msg['is_msg_attr_dim'])}
-    # else:
-    #    unique_objects, categorized_input = torch.unique(
-    #        s_inp, return_inverse=True, dim=0)
-    #    if len(unique_objects) < 200:  # test
-    #        categorized_input = categorized_input.unsqueeze(-1).to(torch.float)
-    #        mi_inp_msg = compute_mi(msg, categorized_input, receiver_vocab_size)
-    #        results['entropy_msg'] = mi_inp_msg['entropy_msg']
-    #        results['entropy_inp'] = mi_inp_msg['entropy_attr']
-    #        results['mi_msg_inp'] = mi_inp_msg['mi_msg_attr']
-    #        results['vi_msg_inp'] = mi_inp_msg['vi_msg_attr']
-    #        results['vi_norm_msg_inp'] = mi_inp_msg['vi_norm_msg_attr']
-    #        results['is_msg_inp'] = mi_inp_msg['vi_msg_attr']
-    #    else:  # train
-    #        results['entropy_msg'] = None  # mi_inp_msg['entropy_msg']
-    ##        results['entropy_inp'] = None  # mi_inp_msg['entropy_attr']
-    #        results['mi_msg_inp'] = None  # mi_inp_msg['mi_msg_attr']
-    #        results['vi_msg_inp'] = None  # mi_inp_msg['vi_msg_attr']
-    #        results['vi_norm_msg_inp'] = None  # mi_inp_msg['vi_norm_msg_attr']
-    #        results['is_msg_inp'] = None  # mi_inp_msg['vi_msg_attr']
-    #    mi_cat_msg = compute_mi(msg, attr, receiver_vocab_size)
-    #    results['entropy_cat'] = mi_cat_msg['entropy_attr']
-    #    results['mi_msg_cat'] = mi_cat_msg['mi_msg_attr']
-    #    results['vi_msg_cat'] = mi_cat_msg['vi_msg_attr']
-    #    results['vi_norm_msg_cat'] = mi_cat_msg['vi_norm_msg_attr']
-    #    results['is_msg_cat'] = mi_cat_msg['vi_msg_attr']
-
     return results
 
 
@@ -524,18 +551,24 @@ def print_training_results(output_dict):
             return value
 
     flattened_dict = {
-        ' '.join((key1, key3)): value3
-        for key1, value1 in output_dict.items()
-        for key2, value2 in value1.items()
-        if key2 == 'results'
-        for key3, value3 in value2.items()
+        dataset_key: results
+        for dataset_key, dataset_dict in output_dict.items()
+        for key, results in dataset_dict.items()
+        if key == 'results'
     }
+
+    header = ['metric'] + list(flattened_dict.keys())
     header = ['metric'] + list(flattened_dict.keys())
     metrics = list(list(flattened_dict.values())[0].keys())
     values = [metrics] + [
         [_format(v) for v in col.values()]
         for col in flattened_dict.values()]
     table_dict = {h: v for h, v in zip(header, values)}
+    # for h, v in table_dict.items():
+    #     print('--')
+    #     print(h)
+    #     for val in v:
+    #         print(v)
     print(tabulate(
         table_dict,
         headers='keys',
@@ -585,7 +618,8 @@ def crop_messages(messages: torch.Tensor, message_length: Optional[torch.Tensor]
             messages[target_chunks] = replacement_probs
 
         # if not torch.all(torch.eq(messages.argmax(-1), msg)):
-        #     check = [(messages[i], messages[i].argmax(-1), msg[i]) for i in range(len(msg)) if not torch.all(torch.eq(messages[i].argmax(-1), msg[i]))]
+        #     check = [(messages[i], messages[i].argmax(-1), msg[i]) for i in range(len(msg))
+        # if not torch.all(torch.eq(messages[i].argmax(-1), msg[i]))]
         #    for item in check:
         #        print(item[0])
         #        print(item[1])
