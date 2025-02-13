@@ -371,9 +371,9 @@ class ErasureChannel(Channel):
 
             # adjust entropy
             entropies = entropies.clone()
-            entropies[non_eos_symbols] = (
+            entropies[non_eos_mask] = (
                 self.tensor_binary_entropy(self.p)
-                + (1 - self.p) * entropies[non_eos_symbols]
+                + (1 - self.p) * entropies[non_eos_mask]
             )
 
             return probs, entropies
@@ -395,8 +395,8 @@ class ErasureChannel(Channel):
         if n_targets == 0:
             return messages, entropies
 
-        non_eos_symbols = torch.arange(1, size[-1]).expand(size[0], -1)
-        target_symbols = non_eos_symbols[target_mask]
+        non_eos_positions = torch.arange(1, size[-1]).expand(size[0], -1)
+        target_symbols = non_eos_positions[target_mask]
         target_rows = torch.arange(size[0]).unsqueeze(1)
         target_rows = target_rows.expand(-1, size[-1])[target_mask]
 
@@ -419,11 +419,11 @@ class SymmetricChannel(Channel):
             vocab_size = self.vocab_size - 1
         return np.log2(vocab_size)
 
-    def gs(self, probs, entropy, apply_noise):
+    def gs(self, probs, entropies, apply_noise):
         if not apply_noise:
-            return probs, entropy
+            return probs, entropies
 
-        if self.training:
+        elif self.training:
             # reshape & sample targets
             size = probs.size()
             probs = probs.clone().view(size[0] * size[1], size[-1])
@@ -435,19 +435,20 @@ class SymmetricChannel(Channel):
             n_targets = target_mask.sum()
 
             if n_targets == 0:
-                return probs.view(size), entropy
+                # TODO entropy should still be adjusted (also for other channels)
+                return probs.view(size), entropies
 
             # get target positions & probs
-            non_eos_symbols = torch.arange(1, size[-1]).expand(len(probs), -1)
-            target_symbols = non_eos_symbols[target_mask]
+            non_eos_positions = torch.arange(1, size[-1]).expand(len(probs), -1)
+            target_symbols = non_eos_positions[target_mask]
             target_rows = torch.arange(len(probs)).unsqueeze(1)
             target_rows = target_rows.expand(-1, size[-1] - 1)[target_mask]
             target_probs = probs[target_rows, target_symbols]
 
             # find candidate symbols different from target symbols
-            non_eos_symbols = non_eos_symbols[0].expand(n_targets, -1)
-            candidate_mask = non_eos_symbols != target_symbols.unsqueeze(-1)
-            candidate_symbols = non_eos_symbols[candidate_mask]
+            non_eos_positions = non_eos_positions[0].expand(n_targets, -1)
+            candidate_mask = non_eos_positions != target_symbols.unsqueeze(-1)
+            candidate_symbols = non_eos_positions[candidate_mask]
             candidate_symbols = candidate_symbols.view(-1, size[-1] - 2)
 
             # sample replacement symbols
@@ -456,7 +457,8 @@ class SymmetricChannel(Channel):
                 high=probs.size(-1) - 2,
                 generator=self.generator,
                 device=self.device)
-            replacement_symbols = candidate_symbols[torch.arange(n_targets), replacement_ids]
+            replacement_symbols = \
+                candidate_symbols[torch.arange(n_targets), replacement_ids]
 
             # adjust symbol probabilities
             adjustment = torch.zeros_like(probs)
@@ -468,8 +470,8 @@ class SymmetricChannel(Channel):
             # adjust entropy
             p_eos = probs[:, :, 0].detach()
             h_eos = self.tensor_binary_entropy(p_eos)
-            H_non_eos = (entropy - h_eos) / (1 - p_eos)
-            entropy = (
+            H_non_eos = (entropies - h_eos) / (1 - p_eos)
+            entropies = (
                 h_eos  # + p_eos * 0
                 + (1 - p_eos) * (
                     self.tensor_binary_entropy(self.p)
@@ -478,7 +480,7 @@ class SymmetricChannel(Channel):
                 )
             )
 
-            return probs, entropy
+            return probs, entropies
 
         else:
             # reshape, apply argmax, exclude EOS, sample symbols to be replaced
@@ -521,14 +523,14 @@ class SymmetricChannel(Channel):
 
             # adjust entropy for all non EOS symbols
             non_eos_mask = probs.argmax(-1) != 0
-            entropy = entropy.clone()
-            entropy[non_eos_mask] = (
+            entropies = entropies.clone()
+            entropies[non_eos_mask] = (
                 self.tensor_binary_entropy(self.p)
                 + self.p * torch.log2(torch.tensor(probs.size(-1) - 2))
-                + (1 - self.p) * entropy[non_eos_mask]
+                + (1 - self.p) * entropies[non_eos_mask]
             )
 
-            return probs, entropy
+            return probs, entropies
 
     def reinforce(self, messages, entropies, apply_noise, lengths=None):
         if not apply_noise:

@@ -215,7 +215,7 @@ class Dump:
         self.sender_inputs = torch.stack(sender_inputs)
         self.messages = crop_messages(torch.stack(messages))
         self.messages_nn = crop_messages(torch.stack(messages_nn)) \
-            if isinstance(messages_nn, torch.Tensor) else self.messages
+            if isinstance(messages_nn[0], torch.Tensor) else self.messages
         self.receiver_inputs = torch.stack(receiver_inputs)
         self.labels = torch.stack(labels)
         self.channel_output = channel_output
@@ -231,17 +231,18 @@ class Dump:
 
         if self.messages.dim() == 3:
             self.lengths = find_lengths(self.messages.argmax(-1))
-            self.lengths_nn = find_lengths(self.messages.argmax(-1))
+            self.lengths_nn = find_lengths(self.messages_nn.argmax(-1))
             # self.receiver_outputs = torch.stack(receiver_outputs)
             self.receiver_outputs = torch.stack([
                 receiver_output[self.lengths[i] - 1].argmax(-1)
                 for i, receiver_output in enumerate(receiver_outputs)
             ], dim=0)
-            # self.receiver_outputs_nn = torch.stack(receiver_outputs_nn)
             self.receiver_outputs_nn = torch.stack([
                 receiver_output[self.lengths[i] - 1].argmax(-1)
                 for i, receiver_output in enumerate(receiver_outputs_nn)
-            ], dim=0)
+            ], dim=0) \
+                if isinstance(receiver_outputs_nn[0], torch.Tensor) \
+                else self.receiver_outputs
             self.strings = self.messages.argmax(-1)
             self.strings_nn = self.messages_nn.argmax(-1)
         else:

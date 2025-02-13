@@ -343,7 +343,6 @@ def remove_n_items(tensor, n=1):
 
 
 def remove_n_dims(tensor, n=1):
-    print(tensor.shape)
     # Get the number of rows (N)
     num_rows = tensor.shape[0]
 
