@@ -302,7 +302,7 @@ def main(params):
                     for attr_dict in d_attr]
                 message = ','.join([str(int(x)) for x in msg.tolist()])
                 message_nn = ','.join([str(int(x)) for x in msg_nn.tolist()])
-                print(r_out, "receiver_pred")
+                #print(r_out, "receiver_pred")
                 message_log = {
                     'target_obj': target_vec,
                     'candidate_objs': candidate_vex,

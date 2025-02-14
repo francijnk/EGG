@@ -380,9 +380,11 @@ def compute_accuracy2(dump, receiver: torch.nn.Module, opts):
         dataset,
         batch_size=opts.batch_size,
         shuffle=False,
-        drop_last=True)
+        drop_last=False)
 
     predictions = []
+    messages = []
+    receiver_outputs = []
     for batched_messages, batched_inputs in dataloader:
         with torch.no_grad():
             outputs = receiver(batched_messages, batched_inputs)
@@ -390,15 +392,18 @@ def compute_accuracy2(dump, receiver: torch.nn.Module, opts):
         if opts.mode == 'rf':
             outputs = outputs[0]
             predictions.append(outputs.detach().reshape(-1, 1))
-        else:
-            # TODO depenging on whether we take argmax on the train dataset,
+        elif opts.mode == 'gs':
+            # TODO depending on whether we take argmax on the train dataset,
             # the step/length might need to be adjusted
             lengths = find_lengths(batched_messages.argmax(-1))
+
             for i in range(batched_messages.size(0)):
                 outputs_i = outputs[i, lengths[i] - 1].argmax(-1)
                 predictions.append(outputs_i.detach().reshape(-1, 1))
 
     predictions = torch.cat(predictions, dim=0)
+    predictions = predictions.squeeze()
+    
     labels = torch.stack(labels)[:len(predictions)]
 
     return (predictions == labels).float().mean().item()
