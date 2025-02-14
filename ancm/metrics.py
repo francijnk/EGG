@@ -102,11 +102,11 @@ def message_entropy(messages, return_length_probs=False, order=2):
         ).t()#.view(-1, preceding_probs.size(-2))
         # if preceding_probs.size(1) == 1:
         #    prefix_indices = prefix_indices.squeeze()
-        print(symbol_i, prefix_indices.shape, preceding_probs.shape)
+        #print(symbol_i, prefix_indices.shape, preceding_probs.shape)
         # prefix_probs = torch.gather(preceding_probs, 1, prefix_indices)
         prefix_probs = preceding_probs[..., prefix_indices, torch.arange(preceding_probs.size(-1))]
-        print(prefix_probs)
-        print(prefix_probs.shape)
+        #print(prefix_probs)
+        #print(prefix_probs.shape)
         # prefix_probs = torch.gather(
     #    if symbol_i < order:
     #        prefix_indices = indices[indices[0] < symbol_i]
@@ -214,7 +214,7 @@ def compute_max_rep(messages: torch.Tensor) -> torch.Tensor:
 
 
 def sequence_entropy_old(entropy, categorical=None):
-    print(entropy.shape, categorical.shape)
+    #print(entropy.shape, categorical.shape)
     assert len(entropy) == len(categorical)
 
     categories, indices = torch.unique(categorical, return_inverse=True)
@@ -343,7 +343,7 @@ def remove_n_items(tensor, n=1):
 
 
 def remove_n_dims(tensor, n=1):
-    print(tensor.shape)
+    #print(tensor.shape)
     # Get the number of rows (N)
     num_rows = tensor.shape[0]
 
@@ -381,9 +381,11 @@ def compute_accuracy2(dump, receiver: torch.nn.Module, opts):
         dataset,
         batch_size=opts.batch_size,
         shuffle=False,
-        drop_last=True)
+        drop_last=False)
 
     predictions = []
+    messages = []
+    receiver_outputs = []
     for batched_messages, batched_inputs in dataloader:
         with torch.no_grad():
             outputs = receiver(batched_messages, batched_inputs)
@@ -391,15 +393,18 @@ def compute_accuracy2(dump, receiver: torch.nn.Module, opts):
         if opts.mode == 'rf':
             outputs = outputs[0]
             predictions.append(outputs.detach().reshape(-1, 1))
-        else:
-            # TODO depenging on whether we take argmax on the train dataset,
+        elif opts.mode == 'gs':
+            # TODO depending on whether we take argmax on the train dataset,
             # the step/length might need to be adjusted
             lengths = find_lengths(batched_messages.argmax(-1))
+
             for i in range(batched_messages.size(0)):
                 outputs_i = outputs[i, lengths[i] - 1].argmax(-1)
                 predictions.append(outputs_i.detach().reshape(-1, 1))
 
     predictions = torch.cat(predictions, dim=0)
+    predictions = predictions.squeeze()
+    
     labels = torch.stack(labels)[:len(predictions)]
 
     return (predictions == labels).float().mean().item()
