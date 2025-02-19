@@ -384,12 +384,12 @@ class Dump:
     def __iter__(self):
         for i in range(len(self)):
             yield (
-                self.sender_inputs[i],
-                self.messages[i, :self.lengths[i]],
-                self.messages_nn[i, :self.lengths_nn[i]],
-                self.receiver_inputs[i],
-                self.receiver_outputs[i].item(),
-                self.receiver_outputs_nn[i].item(),
+                self.sender_inputs[i].int(),
+                self.messages[i, :self.lengths[i]].int(),
+                self.messages_nn[i, :self.lengths_nn[i]].int(),
+                self.receiver_inputs[i].int(),
+                self.receiver_outputs[i].int().item(),
+                self.receiver_outputs_nn[i].int().item(),
                 self.labels[i].int().item(),
                 {
                     key: self.target_attributes[i, j].int().item()
@@ -429,7 +429,6 @@ class Dump:
                 self.attribute_names
             )
 
-
     def get_results_dict(self, game, opts, unique_dict):
         results = {}
 
@@ -443,7 +442,7 @@ class Dump:
             vocab_size = self.probs.size(-1) if key == 'noise' else opts.vocab_size
 
             entropy, length_probs = message_entropy(probs)
-            max_entropy = game.channel.compute_max_entropy(length_probs)
+            max_entropy = game.channel.compute_max_entropy(length_probs, key == 'noise')
 
             results[key] = {
                 'samples': len(labels),
@@ -461,12 +460,12 @@ class Dump:
             }
 
             if opts.image_input:
-                mi_attr = compute_mi(probs, t_attributes, entropy).items()
+                mi_attr = compute_mi(probs, t_attributes, entropy)
                 results[key]['entropy_attr'] = mi_attr['entropy_attr']
                 for i, name in enumerate(attr_names):
                     results[key].update({
                         k.replace('attr_dim', name): v[i]
-                        for k, v in mi_attr if 'attr_dim' in k
+                        for k, v in mi_attr.items() if 'attr_dim' in k
                     })
                 results[key].update({
                     'topsim': compute_top_sim(t_attributes, messages),
@@ -474,29 +473,29 @@ class Dump:
                     'bosdis': compute_bosdis(t_attributes, messages, vocab_size),
                 })
             else:
-                _, categorized_input = torch.unique(
+                # assign a different number to every input vector
+                _, input_cat = torch.unique(
                     sender_inputs, return_inverse=True, dim=0)
-                categorized_inp = categorized_input.unsqueeze(-1).to(torch.float)
+                input_cat = input_cat.unsqueeze(-1).to(torch.float)
                 results[key].update({
                     k.replace('attr', 'input'): v for k, v
-                    in compute_mi(probs, categorized_inp, entropy).items()
-                    if k != 'entropy_msg'
+                    in compute_mi(probs, input_cat, entropy).items()
                 })
                 results[key].update({
                     k.replace('attr', 'category'): v
                     for k, v in compute_mi(probs, t_attributes, entropy).items()
-                    if k != 'entropy_msg'
                 })
                 results[key].update({
                     'topsim': compute_top_sim(sender_inputs, messages),
                     'topsim_cat': compute_top_sim(t_attributes, messages),
                 })
-                # TODO cross entropy between the training and test set?
 
-        for key, result_dict in results.items():
+                # TODO cross entropy / KLD between the training and test set?
+
+            # convert tensors to numeric
             results[key] = {
                 k: v.item() if isinstance(v, torch.Tensor) else v
-                for k, v in result_dict.items()
+                for k, v in results[key].items()
             }
 
         return results
@@ -536,5 +535,5 @@ def print_training_results(output_dict):
         maxcolwidths=[24] * len(header),
         # numalign='center',
         # stralign='left',
-        disable_numparse=True,
+        # disable_numparse=True,
     ))

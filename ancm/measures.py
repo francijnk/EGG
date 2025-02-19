@@ -66,7 +66,7 @@ def message_entropy(probs, order=4, split_size=1000):
         if symbol_i == 0:
             log_prob = torch.logsumexp(symbol_logits, 0)
             log_prob -= log_prob.logsumexp(0)  # normalize
-            log2_prob = log_prob / np.log(2)
+            log2_prob = log_prob / np.log(2)  # switch to base 2
             # c_log2_prob = torch.clamp(c_logits / np.log(2), min=min_real)
             prob = logits_to_probs(log_prob)
             eos_probs[0] = prob[0]
@@ -106,7 +106,7 @@ def message_entropy(probs, order=4, split_size=1000):
             # prefix log-probabilities
             p_logits = prev_logits.transpose(0, -1)[idx].sum(1).t()
 
-            # entropy for each prefix
+            # conditional entropy for each prefix
             c_logits = torch.logsumexp(
                 symbol_logits.unsqueeze(1) + p_logits.unsqueeze(-1), 0)
             c_logits -= c_logits.logsumexp(-1, keepdim=True)  # normalize
@@ -182,12 +182,12 @@ def compute_max_rep(messages: torch.Tensor) -> torch.Tensor:
 
 def joint_entropy(probs, y, split_size=512):
     """
-    H(M1, ..., Mn, Y) = H(Y) + H(M1, ..., Mn | Y)
+    Given symbol probabilities representing realizations of a message M
+    (M = M1, ..., Mn) and corresponding realizations of a non-compound RV Y,
+    computes joint entropy H(M1, ..., Mn, Y) of message symbols and Y using
+    the formula H(M1, ..., Mn, Y) = H(Y) + H(M1, ..., Mn | Y).
     """
     assert len(y) == y.numel()
-    #     categorical = categorical.view(-1)
-    # else:
-    #     _, catego = torch.unique(categorical, return_inverse=True)
     _, indices = torch.unique(y, dim=0, return_inverse=True)
 
     H_msg_y = entropy(indices)  # H(Y)
@@ -195,7 +195,7 @@ def joint_entropy(probs, y, split_size=512):
         cat_mask = indices == cat
         prob_cat = (indices == cat).float().mean()
         entropy_cat, _ = message_entropy(probs[cat_mask], split_size)
-        H_msg_y += prob_cat * entropy_cat  # P(Y=y) * H(M | Y=y)
+        H_msg_y += prob_cat * entropy_cat  # P(Y = y) * H(M | Y = y)
         # print((indices == cat).int().sum(), len(probs_cat), '/', len(y), H_msg_y)
 
     return H_msg_y
@@ -222,8 +222,8 @@ def compute_mi(probs, attributes, entropy_message=None):
         }
 
     else:  # return values per attribute dimension instead
-        _, attributes = torch.unique(categorical, dim=0, return_inverse=True)
-        entropy_attr = entropy(attributes)
+        _, categorical = torch.unique(attributes, dim=0, return_inverse=True)
+        entropy_attr = entropy(categorical)
         # entropy_attr = sequence_entropy(attributes, estimator=estimator)
         entropy_attr_dim = [
             entropy(attributes[:, i])

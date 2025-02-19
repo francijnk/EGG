@@ -226,17 +226,7 @@ def main(params):
     optimizer = build_optimizer(game, opts)
 
     callbacks = [
-        TrainingEvaluationCallback(
-            vocab_size=opts.vocab_size,
-            max_len=opts.max_len,
-            channel=game.channel,
-            error_prob=opts.error_prob,
-            sender=_sender,
-            receiver=_receiver,
-            dataloader=validation_data,
-            device=device,
-            image_input=opts.image_input,
-            bs=opts.batch_size),
+        TrainingEvaluationCallback(opts, game.channel),
         CustomProgressBarLogger(
             opts,
             train_data_len=len(train_data),
@@ -267,18 +257,15 @@ def main(params):
 
         # unique target objects
         unique_targets = defaultdict(int)
-        if opts.image_input:
-            for i in range(len(dump)):
-                target_attrs = [
-                    str(int(attr_values[i]))
-                    for attr_values in dump.target_attributes.values()]
-                target_repr = ','.join(target_attrs)
-                unique_targets[target_repr] += 1
-        else:
-            for s_inp in dump.sender_inputs:
-                target = ','.join([
-                    str(int(x)) for x in s_inp.nonzero().squeeze().tolist()])
-                unique_targets[target] += 1
+        # for i in range(len(dump)):
+        #     if opts.image_input:
+        #         target = [
+        #             dump.target_attributes[k][i]
+        #             for k in dump.target_attributes]
+        #     else:
+        #         target = dump.sender_inputs[i].nonzero().squeeze().tolist()
+        #    target_repr = ','.join([str(int(x)) for x in target.tolist()])
+        #     unique_targets[target_repr] += 1
 
         # dump messages
         messages = []
@@ -288,39 +275,47 @@ def main(params):
             if opts.image_input:
                 # For the Obverter dataset, we save object features rather than
                 # images (color, shape, position, rotation)
-                target_vec = ','.join([str(int(attr)) for attr in target_attr.values()])
-                distr_vex = [
-                    ','.join([str(int(attr)) for attr in attr_dict.values()])
-                    for attr_dict in distr_attr]
+                def attr_repr(attr_dict):
+                    attr_strings = [f'{k}: {v}' for k, v in attr_dict.items()]
+                    return ', '.join(attr_strings)
+
+                target_vec = attr_repr(target_attr)
+                distr_vex = [attr_repr(attr_dict) for attr_dict in distr_attr]
             else:
                 # as VISA concepts are sparse binary tensors, we represent each
                 # object as indices of features that it does have
-                target_vec = ','.join([
-                    str(x) for x in s_input.nonzero().squeeze().tolist()])
-                distr_vex = [
-                    ','.join([
-                        str(x) for x in candidate.nonzero().squeeze().tolist()])
-                    for i, candidate in enumerate(r_input) if i != label]
+                def input_repr(input_tensor):
+                    indices = input_tensor.nonzero().squeeze().tolist()
+                    return ','.join([str(x) for x in indices])
 
-            message = ','.join([str(int(x)) for x in msg.tolist()])
-            message_nn = ','.join([str(int(x)) for x in msg_nn.tolist()])
+                target_vec = input_repr(s_input)
+                distr_vex = [
+                    input_repr(candidate)
+                    for i, candidate in enumerate(r_input) if i != label
+                ]
 
             message_log = {
                 'target_obj': target_vec,
                 'distractor_objs': distr_vex,
                 'label': label,
-                'message': message,
+                'message': ','.join([str(x) for x in msg.tolist()]),
                 'prediction': r_output,
-                'message_no_noise': message_nn,
-                'prediction_no_noise': r_output_nn,
             }
+
+            if opts.channel != 'none':
+                message_nn = ','.join([str(x) for x in msg_nn.tolist()])
+                message_log.update({
+                    'message_no_noise': message_nn,
+                    'prediction_no_noise': r_output_nn,
+                })
 
             if not opts.image_input:
                 message_log.update({
-                    'target_attributes': target_attr,
-                    'distractor_attributes': distr_attr,
+                    'target_cat': target_attr['category'],
+                    'distractor_cats': [x['category'] for x in distr_attr],
                 })
 
+            unique_targets[target_vec] += 1
             messages.append(message_log)
 
         return {

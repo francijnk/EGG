@@ -25,12 +25,16 @@ class Channel(nn.Module, metaclass=ABCMeta):
         self.device = device
 
         # compute maximum achievable entropies
-        self.max_symbol_entropy = torch.tensor(self._max_symbol_entropy())
-        # self.max_message_entropy = torch.tensor(self._max_message_entropy())
         self.max_message_entropy = {
-            i: self._max_message_entropy(i)
-            for i in range(self.max_len + 1)
-        }  # for every message length
+            i: (
+                i * self.max_symbol_entropy(
+                    vocab_size=self.vocab_size - 1,
+                    noise=True),
+                i * self.max_symbol_entropy(
+                    vocab_size=self.vocab_size - 1,
+                    noise=False)
+            ) for i in range(self.max_len + 1)
+        }  # for every message length (incl. additional EOS)
 
     @abstractmethod
     def gs(
@@ -61,11 +65,19 @@ class Channel(nn.Module, metaclass=ABCMeta):
         return -p * np.log2(p) - (1 - p) * np.log2(1 - p)
 
     @abstractmethod
-    def _max_symbol_entropy(self, vocab_size: Optional[int]):
+    def _max_symbol_entropy(self, vocab_size: int):
         return
 
-    def _max_message_entropy(self, length: int):
-        return self._max_symbol_entropy(self.vocab_size - 1) * length
+    def max_symbol_entropy(self, noise: bool, vocab_size: Optional[int] = None):
+        vocab_size = vocab_size if vocab_size is not None else self.vocab_size
+
+        if noise:
+            return self._max_symbol_entropy(vocab_size)
+        else:
+            return np.log2(vocab_size)
+
+    # def max_message_entropy(self, length: int):
+    #     return self._max_symbol_entropy(self.vocab_size - 1) * length
 
     # @abstractmethod
     # def _message_entropy(self, eos_prob, max_suffix_entropy):
@@ -93,7 +105,7 @@ class Channel(nn.Module, metaclass=ABCMeta):
 
     #    return -entropy(optimal_eos_prob.x)  # , eos_messages
 
-    def compute_max_entropy(self, length_probs):
+    def compute_max_entropy(self, length_probs: torch.Tensor, noise: bool):
         # size = probs.size()
         # logits = probs_to_logits(
         #     probs.view(size[0] * size[1], size[2])).view(size)
@@ -113,7 +125,10 @@ class Channel(nn.Module, metaclass=ABCMeta):
         # print(length_probs)
         max_entropy = entropy_length#.clone()
         for i in range(len(length_probs)):
-            max_entropy_i = self.max_message_entropy[i]
+            if noise:
+                max_entropy_i = self.max_message_entropy[i][0]
+            else:
+                max_entropy_i = self.max_message_entropy[i][1]
             max_entropy += length_probs[i] * max_entropy_i
         # print(max_entropy)
 
@@ -218,10 +233,8 @@ class Channel(nn.Module, metaclass=ABCMeta):
 
 
 class NoChannel(Channel):
-    def _max_symbol_entropy(self, vocab_size=None):
-        if vocab_size is None:
-            vocab_size = self.vocab_size - 1
-        return np.log2(vocab_size)
+    def _max_symbol_entropy(self, vocab_size):
+        return self.max_symbol_entropy(vocab_size, noise=False)
 
     def gs(self, messages, probs, apply_noise):
         return messages, probs
