@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions.utils import logits_to_probs, probs_to_logits
-from torch.distributions import RelaxedOneHotCategorical, Categorical  # OneHotCategorical
+from torch.distributions import RelaxedOneHotCategorical, Categorical, OneHotCategorical
 
 # from ancm.util import crop_messages
 
@@ -19,7 +19,7 @@ from ancm.channels import (
 # import egg.core as core
 # from egg.core.reinforce_wrappers import RnnEncoder
 from egg.core.baselines import Baseline  # NoBaseline, MeanBaseline, BuiltInBaseline
-from egg.core.interaction import LoggingStrategy
+from ancm.interaction import LoggingStrategy
 from egg.core.util import find_lengths
 
 
@@ -328,7 +328,7 @@ class RnnSenderReinforce(nn.Module):
         sequence = []
         logits = []
         entropy = []
-        probs = []
+        # probs = []
 
         for step in range(self.max_len):
             for i, layer in enumerate(self.cells):
@@ -343,32 +343,32 @@ class RnnSenderReinforce(nn.Module):
             step_logits = F.log_softmax(self.hidden_to_output(h_t), dim=1)
             distr = Categorical(logits=step_logits)
             entropy.append(distr.entropy())
-            probs.append(distr.probs())
+            # probs.append(distr.probs())
 
             if True:  # self.training: TODO test
-                x = distr.sample()
+                symbols = distr.sample()
             else:
-                x = step_logits.argmax(dim=1)
+                symbols = step_logits.argmax(dim=1)
             logits.append(distr.log_prob(x))
 
-            e_t = self.embedding(x)
-            sequence.append(x)
+            e_t = self.embedding(symbols)
+            sequence.append(symbols)
 
         sequence = torch.stack(sequence, dim=1)
         logits = torch.stack(logits, dim=1)
         entropy = torch.stack(entropy, dim=1)
-        probs = torch.stack(probs, dim=1)
+        # probs = torch.stack(probs, dim=1)
 
         zeros = torch.zeros((sequence.size(0), 1)).to(sequence.device)
-        eos = torch.zeros_like(probs[:, :1, :])
-        eos[:, 0, :] = 1
+        # eos = torch.zeros_like(probs[:, :1, :])
+        # eos[:, 0, :] = 1
 
         sequence = torch.cat([sequence, zeros.long()], dim=1)
         logits = torch.cat([logits, zeros], dim=1)
         entropy = torch.cat([entropy, zeros], dim=1)
-        probs = torch.cat([probs, eos], dim=1)
+        # probs = torch.cat([probs, eos], dim=1)
 
-        return sequence, probs, logits, entropy
+        return sequence, logits, entropy
 
 
 class SenderReceiverRnnReinforce(nn.Module):
@@ -385,8 +385,6 @@ class SenderReceiverRnnReinforce(nn.Module):
         receiver_entropy_coeff: float = 0.0,
         device: torch.device = torch.device("cpu"),
         baseline_type: Baseline = BoundedMeanBaseline,
-        train_logging_strategy: LoggingStrategy = None,
-        test_logging_strategy: LoggingStrategy = None,
         seed: int = 42,
     ):
         """
@@ -406,7 +404,6 @@ class SenderReceiverRnnReinforce(nn.Module):
         :param receiver_entropy_coeff: entropy regularization coeff for receiver
         :param length_cost: the penalty applied to Sender for each symbol produced
         :param baseline_type: Callable, returns a baseline instance (eg a class specializing core.baselines.Baseline)
-        :param train_logging_strategy, test_logging_strategy: specify what parts of interactions to persist for
             later analysis in callbacks
         """
         super(SenderReceiverRnnReinforce, self).__init__()
@@ -422,8 +419,8 @@ class SenderReceiverRnnReinforce(nn.Module):
             length_cost,
             device,
             baseline_type,
-            train_logging_strategy,
-            test_logging_strategy,
+            # train_logging_strategy,
+            # test_logging_strategy,
             seed)
         self.channel = self.mechanics.channel
 
@@ -450,8 +447,6 @@ class CommunicationRnnReinforce(nn.Module):
         length_cost: float = 0.0,
         device: torch.device = torch.device('cpu'),
         baseline_type: Baseline = BoundedMeanBaseline,
-        train_logging_strategy: LoggingStrategy = None,
-        test_logging_strategy: LoggingStrategy = None,
         seed: int = 42,
     ):
         """
@@ -459,8 +454,6 @@ class CommunicationRnnReinforce(nn.Module):
         :param receiver_entropy_coeff: entropy regularization coeff for receiver
         :param length_cost: the penalty applied to Sender for each symbol produced
         :param baseline_type: Callable, returns a baseline instance (eg a class specializing core.baselines.Baseline)
-        :param train_logging_strategy, test_logging_strategy: specify what parts of interactions to persist for
-            later analysis in callbacks
         """
         super().__init__()
 
@@ -476,12 +469,6 @@ class CommunicationRnnReinforce(nn.Module):
         self.length_cost = length_cost
         self.channel = channel_types[channel_type](error_prob, vocab_size, device, seed)
         self.baselines = defaultdict(baseline_type)
-        self.train_logging_strategy = LoggingStrategy() \
-            if train_logging_strategy is None \
-            else train_logging_strategy
-        self.test_logging_strategy = LoggingStrategy() \
-            if test_logging_strategy is None \
-            else test_logging_strategy
 
     def forward(
         self,
@@ -541,8 +528,8 @@ class CommunicationRnnReinforce(nn.Module):
         loss, aux_info = loss_fn(
             sender_input, message, receiver_input,
             receiver_output, labels, aux_input)
-        aux_info['acc_nn'] = \
-            (receiver_output_nn == labels).detach().float() * 100
+        # aux_info['accuracy_nn'] = \
+        #     (receiver_output_nn == labels).detach().float() * 100
 
         # the entropy of the outputs of S before and including the eos symbol - as we don't care about what's after
         effective_entropy_s = torch.zeros_like(entropy_r)
@@ -583,9 +570,7 @@ class CommunicationRnnReinforce(nn.Module):
         aux_info["receiver_entropy"] = entropy_r.detach()
         aux_info["length"] = message_length.float()  # will be averaged
 
-        logging_strategy = (
-            self.train_logging_strategy if self.training else self.test_logging_strategy
-        )
+        logging_strategy = LoggingStrategy()
 
         interaction = logging_strategy.filtered_interaction(
             sender_input=sender_input,
@@ -603,9 +588,9 @@ class CommunicationRnnReinforce(nn.Module):
 
 # Gumbel-Softmax
 def loss_gs(_sender_input, _message, _receiver_input, receiver_output, _labels, _aux_input):
-    acc = (receiver_output.argmax(dim=-1) == _labels).detach().float()
+    accuracy = (receiver_output.argmax(dim=-1) == _labels).detach().float()
     cross_entropy = F.cross_entropy(receiver_output, _labels, reduction="none")
-    return cross_entropy, {"acc": acc * 100}
+    return cross_entropy, {"accuracy": accuracy * 100}
 
 
 class RnnSenderGS(nn.Module):
@@ -676,39 +661,20 @@ class RnnSenderGS(nn.Module):
         self.reset_parameters()
 
     def gumbel_softmax_sample(self, logits: torch.Tensor):
-        distr = RelaxedOneHotCategorical(
-            logits=logits,
-            temperature=self.temperature)
-        sample = distr.rsample()
-        min_real = torch.finfo(logits.dtype).min
-        # _sum = sample.sum(-1)
-        # if torch.any(_sum != 1):
-        # mask = _sum != 1
-        # print(sample[mask, :], "sample")
-        # print(_sum[mask] - 1)
+        probs = logits_to_probs(logits.detach() / self.temperature)
 
         if self.training:
-            probs = sample.detach()
-            log2_prob = torch.clamp(torch.log2(probs), min=min_real)
-            entropy = (-log2_prob * probs).sum(-1)
-
-            return sample, distr.logits, entropy
+            distr = RelaxedOneHotCategorical(
+                logits=logits,
+                temperature=self.temperature)
+            sample = distr.rsample()
+            return sample, probs
         else:
-            # argmax of Gumbel-Softmax sample is equivalent to sampling from
-            # the original distribution
-            indexes = sample.argmax(dim=-1)
-            one_hot = torch.zeros_like(logits).view(-1, logits.size(-1))
-            one_hot.scatter_(1, indexes.view(-1, 1), 1)
-            one_hot = one_hot.view(*logits.size())
-            # entropy = torch.zeros_like(logits[:, 0])
-            # probs = distr.probs[:, 1:].pow(1 / temperature)
-            probs = logits_to_probs(logits).pow(1 / self.temperature)
-            log2_prob = torch.clamp(torch.log2(probs), min=min_real)
-            entropy = (-log2_prob * probs).sum(-1)
-            # distr = Categorical(logits=logits)
-            # entropy = distr.entropy()
-
-            return one_hot, probs_to_logits(probs), entropy
+            # argmax of GS sample is equivalent to sampling from the original
+            # distribution: Softmax(logits, temperature)
+            distr = OneHotCategorical(logits=(logits / self.temperature))
+            sample = distr.sample()
+            return sample, probs
 
     def reset_parameters(self):
         nn.init.normal_(self.sos_embedding, 0.0, 0.01)
@@ -719,7 +685,7 @@ class RnnSenderGS(nn.Module):
 
         e_t = torch.stack([self.sos_embedding] * prev_hidden.size(0))
 
-        sequence, entropies = [], []
+        sequence, probs = [], []
         for step in range(self.max_len):
             if isinstance(self.cell, nn.LSTMCell):
                 h_t, prev_c = self.cell(e_t, (prev_hidden, prev_c))
@@ -727,20 +693,18 @@ class RnnSenderGS(nn.Module):
                 h_t = self.cell(e_t, prev_hidden)
 
             step_logits = self.hidden_to_output(h_t)
-            symbols, _, symbol_entropy = self.gumbel_softmax_sample(step_logits)
+            symbols, symbol_probs = self.gumbel_softmax_sample(step_logits)
 
             prev_hidden = h_t
             e_t = self.embedding(symbols)
 
             sequence.append(symbols)
-            entropies.append(symbol_entropy)
+            probs.append(symbol_probs)
 
         sequence = torch.stack(sequence, dim=1)
-        entropies = torch.stack(entropies, dim=1)
+        probs = torch.stack(probs, dim=1)
 
-        # None for compatibility with reinforce
-        # TODO probs
-        return sequence, None, entropies
+        return sequence, probs
 
 
 class SenderReceiverRnnGS(nn.Module):
@@ -754,8 +718,6 @@ class SenderReceiverRnnGS(nn.Module):
         error_prob: float = 0.0,
         length_cost: int = 0.0,
         device: torch.device = torch.device("cpu"),
-        train_logging_strategy: Optional[LoggingStrategy] = None,
-        test_logging_strategy: Optional[LoggingStrategy] = None,
         seed: int = 42,
     ):
         """
@@ -771,9 +733,6 @@ class SenderReceiverRnnGS(nn.Module):
           of the same shape. The loss will be minimized during training, and the auxiliary information aggregated over
           all batches in the dataset.
         :param length_cost: the penalty applied to Sender for each symbol produced
-        :param train_logging_strategy, test_logging_strategy: specify what parts of interactions to persist for
-            later analysis in the callbacks.
-
         """
 
         channel_types = {
@@ -788,38 +747,29 @@ class SenderReceiverRnnGS(nn.Module):
         self.receiver = receiver
         self.loss = loss
         self.length_cost = length_cost
-        self.channel = channel_types[channel_type](error_prob, sender.max_len, vocab_size, device, seed)
-        self.train_logging_strategy = LoggingStrategy() \
-            if train_logging_strategy is None \
-            else train_logging_strategy
-        self.test_logging_strategy = LoggingStrategy() \
-            if test_logging_strategy is None \
-            else test_logging_strategy
+        self.channel = channel_types[channel_type](
+            error_prob, sender.max_len, vocab_size, device, seed)
 
     def forward(self, sender_input, labels, receiver_input, aux_input):
-        message, _, symbol_entropy = self.sender(sender_input, aux_input)
+        _message, _probs = self.sender(sender_input, aux_input)
 
-        # pass the message through the channel
-        message, message_nn, channel_dict = \
-            self.channel(message, entropy=symbol_entropy)
+        # pass messages and symbol probabilities through the channel
+        message, message_nn, probs, probs_nn, channel_aux = \
+            self.channel(_message, _probs)
 
-        # append EOS symbol to every message, adjust symbol entropy tensors
+        # append EOS to each message
         eos = torch.zeros_like(message[:, :1, :])
-        eos_nn = torch.zeros_like(message_nn[:, :1])
-        eos[:, 0, 0], eos_nn[:, 0, 0] = 1, 1
-
+        eos[:, 0, 0] = 1
         message = torch.cat([message, eos], dim=1)
-        message_nn = torch.cat([message_nn, eos_nn], dim=1)
-        for key in ('entropy_smb', 'entropy_smb_nn'):
-            smb_entropy = channel_dict[key]
-            channel_dict[key] = torch.cat(
-                [smb_entropy, torch.zeros_like(smb_entropy[:, :1])], dim=-1)
+        message_nn = torch.cat([message_nn, eos], dim=1)
+        probs = torch.cat([probs, eos], dim=1)
+        probs_nn = torch.cat([probs_nn, eos], dim=1)
 
         if isinstance(self.channel, NoChannel):
             receiver_output = self.receiver(message, receiver_input, aux_input)
             receiver_output_nn = receiver_output.detach()
         else:
-            # compute receiver outputs for messages without noise
+            # compute receiver outputs for messages without noise as well
             message_joined = torch.cat([
                 message,
                 message_nn.detach(),
@@ -844,12 +794,13 @@ class SenderReceiverRnnGS(nn.Module):
             receiver_output = receiver_output_joined[:len(message)]
             receiver_output_nn = receiver_output_joined[len(message):]
 
-        loss, expected_length, z = 0.0, 0.0, 0.0
+        loss, z = 0.0, 0.0
+        length_probs = torch.zeros_like(message[:, :, 0])
         not_eosed_before = torch.ones(
-            receiver_output.size(0)).to(receiver_output.device)
-        not_eosed_before_nn = not_eosed_before.clone().detach()
-        prefix_entropy = torch.zeros_like(not_eosed_before)
-        prefix_entropy_nn = torch.zeros_like(not_eosed_before)
+            receiver_output.size(0),
+            device=receiver_output.device)
+        length_probs_nn = length_probs.clone()
+        not_eosed_before_nn = not_eosed_before.detach().clone()
         aux_info = {}
 
         for step in range(receiver_output.size(1)):
@@ -861,9 +812,9 @@ class SenderReceiverRnnGS(nn.Module):
                 labels,
                 aux_input)
 
-            acc_nn = 100 * (
+            accuracy_nn = 100 * (
                 receiver_output_nn[:, step, ...].argmax(dim=-1) == labels
-            ).float().detach()
+            ).detach().float()
 
             #  additional accumulated EOS prob
             # if isinstance(self.channel, DeletionChannel) and self.training:
@@ -879,46 +830,46 @@ class SenderReceiverRnnGS(nn.Module):
             add_mask_nn = eos_mask_nn * not_eosed_before_nn
 
             z += add_mask
-            expected_length += add_mask.detach() * (1.0 + step)
+            # expected_length += add_mask.detach() * (1.0 + step)
             loss += step_loss * add_mask
             loss += self.length_cost * (1.0 + step) * add_mask
 
             # aggregate aux info
             for name, value in step_aux.items():
                 aux_info[name] = value * add_mask + aux_info.get(name, 0.)
-            aux_info['acc_nn'] = acc_nn * add_mask_nn \
-                + aux_info.get('acc_nn', 0.)
-
-            channel_dict['length_probs'][:, step] = add_mask.detach()
+            aux_info['accuracy_nn'] = accuracy_nn * add_mask_nn \
+                + aux_info.get('accuracy_nn', 0.)
+            length_probs[:, step] = add_mask.detach()
+            length_probs_nn[:, step] = add_mask_nn.detach()
 
             # aggregate message entropy
             # if the probability that message has a given length is very low,
             # do not aggregate (due to numerical errors)
-            channel_dict['entropy_msg'] = channel_dict['entropy_msg'] \
-                + torch.where(
-                    add_mask > 1e-5,
-                    add_mask.detach() * prefix_entropy,
-                    0)
+            # channel_dict['entropy_msg'] = channel_dict['entropy_msg'] \
+            #    + torch.where(
+            #        add_mask > 1e-5,
+            #        add_mask.detach() * prefix_entropy,
+            #        0)
 
             # entropy of the symbol, assuming it is not eos
             # (the furmula exploits decomposability of entropy)
-            prefix_entropy += (
-                channel_dict['entropy_smb'][:, step]
-                - self.channel.tensor_binary_entropy(eos_mask.detach())
-            ) / (1 - eos_mask.detach())  # no gradient
+            # prefix_entropy += (
+            #     channel_dict['entropy_smb'][:, step]
+            #     - self.channel.tensor_binary_entropy(eos_mask.detach())
+            # ) / (1 - eos_mask.detach())  # no gradient
 
             not_eosed_before = not_eosed_before * (1.0 - eos_mask)
 
             # TODO check the below works correctly & detaches
-            channel_dict['entropy_msg_nn'] = channel_dict['entropy_msg_nn'] \
-                + torch.where(
-                    add_mask_nn > 1e-5,
-                    add_mask_nn.detach() * prefix_entropy_nn,
-                    0)
-            prefix_entropy_nn += (
-                channel_dict['entropy_smb_nn'][:, step]
-                - self.channel.tensor_binary_entropy(message_nn[:, step, 0])
-            ).detach() / (1 - eos_mask.detach())
+            # channel_dict['entropy_msg_nn'] = channel_dict['entropy_msg_nn'] \
+            #     + torch.where(
+            #        add_mask_nn > 1e-5,
+            #        add_mask_nn.detach() * prefix_entropy_nn,
+            #        0)
+            # prefix_entropy_nn += (
+            #    channel_dict['entropy_smb_nn'][:, step]
+            #    - self.channel.tensor_binary_entropy(message_nn[:, step, 0])
+            # ).detach() / (1 - eos_mask.detach())
 
             not_eosed_before_nn = (
                 not_eosed_before_nn * (1.0 - eos_mask_nn)
@@ -928,7 +879,6 @@ class SenderReceiverRnnGS(nn.Module):
         loss += step_loss * not_eosed_before
         loss += self.length_cost * (step + 1.0) * not_eosed_before
 
-        expected_length += (step + 1) * not_eosed_before
         z += not_eosed_before
 
         assert z.allclose(
@@ -938,39 +888,47 @@ class SenderReceiverRnnGS(nn.Module):
         for name, value in step_aux.items():
             aux_info[name] = value * not_eosed_before + aux_info.get(name, 0.0)
 
+        expected_length = (torch.arange(step + 1) * length_probs).sum(-1) + 1
         aux_info["length"] = expected_length
+        # aux_info["length_nn"] = expected_length_nn
+        aux_info["length_probs"] = length_probs  # channel_aux["
 
         # adjust message entropy to cover message length variability
         # exclude appended EOS from symbol entropy and compute redundancy
-        self.channel.update_values(channel_dict)
+        # self.channel.update_values(channel_dict)
 
-        if True:  # self.training:
-            aux_info.update({
-                'entropy_msg': channel_dict['entropy_msg'].detach(),
-                'redundancy_msg': channel_dict['redundancy_msg'].detach(),
-                # 'entropy_smb': channel_dict['entropy_smb'].mean(-1).detach(),
-                # 'redundancy_smb': channel_dict['redundancy_msg'].detach(),
-                'max_entropy_msg': channel_dict['max_entropy'].detach(),
-            })
-        else:
-            aux_info.update({
-                'entropy_msg': None,
-                'redundancy_msg': None,
-                'entropy_smb': None,
-                'redundancy_smb': None,
-            })
+        # if True:  # self.training:
+        #     aux_info.update({
+        #        'entropy_msg': channel_dict['entropy_msg'].detach(),
+        #        'redundancy_msg': channel_dict['redundancy_msg'].detach(),
+        #        # 'entropy_smb': channel_dict['entropy_smb'].mean(-1).detach(),
+        #        # 'redundancy_smb': channel_dict['redundancy_msg'].detach(),
+        #        'max_entropy_msg': channel_dict['max_entropy'].detach(),
+        #    })
+        # else:
+        #    aux_info.update({
+        #        'entropy_msg': None,
+        #        'redundancy_msg': None,
+        #        'entropy_smb': None,
+        #        'redundancy_smb': None,
+        #    })
 
-        logging_strategy = self.train_logging_strategy \
-            if self.training else self.test_logging_strategy
+        logging_strategy = LoggingStrategy()
 
+        expected_length_nn = expected_length
         interaction = logging_strategy.filtered_interaction(
             sender_input=sender_input,
             receiver_input=receiver_input,
             labels=labels,
             aux_input=aux_input,
-            receiver_output=receiver_output.detach(),
-            message=message.detach(),
+            message=message.detach().argmax(-1),
+            probs=probs.detach(),
             message_length=expected_length.detach(),
+            receiver_output=receiver_output.detach(),
+            message_nn=message_nn.detach().argmax(-1),
+            probs_nn=probs_nn.detach(),
+            message_length_nn=expected_length_nn.detach(),
+            receiver_output_nn=receiver_output_nn.detach(),
             aux=aux_info)
 
         return loss.mean(), interaction

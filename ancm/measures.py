@@ -17,23 +17,9 @@ from nltk.lm import MLE#, NgramModel, LidstoneProbDist
 from nltk.probability import LidstoneProbDist
 from nltk.lm.models import Lidstone
 from egg.zoo.language_bottleneck.intervention import entropy, mutual_info
+from torch.distributions.utils import logits_to_probs, probs_to_logits, clamp_probs
 
 from typing import Optional, Iterable, Tuple
-
-from time import time
-
-
-def timer(func):
-    return func
-    # This function shows the execution time of
-    # the function object passed
-    def wrap_func(*args, **kwargs):
-        t1 = time()
-        result = func(*args, **kwargs)
-        t2 = time()
-        print(f'Function {func.__name__!r} executed in {(t2-t1):.4f}s')
-        return result
-    return wrap_func
 
 
 class CustomDataset(Dataset):
@@ -62,130 +48,111 @@ def binary_entropy(p: float):
     return -p * np.log2(p) - (1 - p) * np.log2(1 - p)
 
 
-def message_entropy(messages, return_length_probs=False, order=2):
+def message_entropy(probs, order=4, split_size=1000):
     """
     work in progress...
     """
-    if messages.dim() == 2:
-        raise NotImplementedError
+    # min_real = torch.finfo(probs.dtype).min
 
-    min_real = torch.finfo(messages.dtype).min
+    size = probs.size()
+    logits = probs_to_logits(
+        probs.view(size[0] * size[1], size[2])).view(size)
 
-    symbol_entropies = torch.zeros_like(messages[0, :, 0])
-    eos_probs = torch.zeros_like(messages[0, :, 0])
+    symbol_entropies = torch.zeros_like(probs[0, :, 0])
+    eos_probs = torch.ones_like(probs[0, :, 0])
 
-    indices = [
-        torch.empty(
-            [messages.size(-1) - 1 for _ in range(order)],
-            dtype=torch.long,
-            device=messages.device)
-        for _ in range(order)]
-    for i, tensor in enumerate(indices):
-        for j in range(messages.size(-1) - 1):
-            tensor.index_fill_(i, torch.tensor(j), j + 1)
-    indices = torch.stack([t.flatten() for t in indices], dim=-1)
-
-    for symbol_i in range(messages.size(1)):
-        symbol_probs = messages[:, symbol_i, :]
+    for symbol_i in range(probs.size(1) - 1):
+        symbol_logits = logits[:, symbol_i, :]
         if symbol_i == 0:
-            eos_probs[0] = symbol_probs[:, 0].mean()
-            probs = symbol_probs[:, 1:].mean(0)
-            probs = probs / probs.sum(0, keepdim=True)
-            log2_prob = torch.clamp(torch.log2(probs), min=min_real)
-            symbol_entropies[symbol_i] = (-log2_prob * probs).sum()
+            log_prob = torch.logsumexp(symbol_logits, 0)
+            log_prob -= log_prob.logsumexp(0)  # normalize
+            log2_prob = log_prob / np.log(2)
+            # c_log2_prob = torch.clamp(c_logits / np.log(2), min=min_real)
+            prob = logits_to_probs(log_prob)
+            eos_probs[0] = prob[0]
+            symbol_entropies[0] = (-log2_prob * prob).sum()
             continue
 
-        preceding_probs = messages[:, max(0, symbol_i - order):symbol_i]
-        prefix_indices = torch.unique(
-            indices[:, :min(order, symbol_i)],
-            dim=0
-        ).t()#.view(-1, preceding_probs.size(-2))
-        # if preceding_probs.size(1) == 1:
-        #    prefix_indices = prefix_indices.squeeze()
-        print(symbol_i, prefix_indices.shape, preceding_probs.shape)
-        # prefix_probs = torch.gather(preceding_probs, 1, prefix_indices)
-        prefix_probs = preceding_probs[..., prefix_indices, torch.arange(preceding_probs.size(-1))]
-        print(prefix_probs)
-        print(prefix_probs.shape)
-        # prefix_probs = torch.gather(
-    #    if symbol_i < order:
-    #        prefix_indices = indices[indices[0] < symbol_i]
-    #    else:
-    #        prefix_indices = indices.clone()
-    #        prefix_indices[0] += indices[0].max() - (order - 1)
+        if order is not None:
+            # prev_probs = non_eos_probs[:, max(0, symbol_i - order):symbol_i]
+            # prev_probs = probs[:, max(0, symbol_i - order):symbol_i]
+            # prev_logits = logits[:, max(0, symbol_i - order):symbol_i]
+            prev_logits = logits[:, max(0, symbol_i - order):symbol_i, 1:]
+        else:
+            # prev_probs = non_eos_probs[:, :symbol_i]
+            # prev_probs = probs[:, :symbol_i]
+            # prev_logits = logits[:, :symbol_i]
+            prev_logits = logits[:, :symbol_i, 1:]
 
-    #    print(prefix_indices)
-    #    for idx in prefix_indices:
-    #        prefix_probs = messages[torch.arange(len(messages)), idx]
-    #        print(prefix_probs)
-        
-        # print("step", symbol_i)
-        # prefix_probs = messages[:, symbol_i - 1, :] if symbol_i != 0 \
-        #     else torch.ones_like(messages[:, symbol_i, :])
+        # oprint('prev pobs shape', prev_probs.shape)
+        # print("prev_logits shape", prev_logits.shape)
+        # print("symbol logits shape", symbol_logits.shape)
+        prefix_indices = torch.cartesian_prod(
+            *(torch.arange(prev_logits.size(-1))
+              for i in range(prev_logits.size(1)))
+        ).view(-1, prev_logits.size(1))
+        prefix_logits, conditional_entropy = [], []
+        eos_logits = []
 
-    #    print("prefix_probs", prefix_probs.shape)
-    #    print("symbol_probs", symbol_probs.shape)
+        for p_indices in torch.split(prefix_indices, split_size):
+            # indices of all possible non-EOS prefixes
+            idx = (
+                p_indices,
+                torch.arange(prev_logits.size(1))
+                .unsqueeze(0)
+                .expand(p_indices.size(0), -1),
+            )
 
-    #    probs = (prefix_probs * symbol_probs).sum(0)
-    #    probs = probs / probs.sum(0, keepdim=True)
+            # prefix log-probabilities
+            p_logits = prev_logits.transpose(0, -1)[idx].sum(1).t()
 
-    #    print("probs shape", probs.shape)
+            # entropy for each prefix
+            c_logits = torch.logsumexp(
+                symbol_logits.unsqueeze(1) + p_logits.unsqueeze(-1), 0)
+            c_logits -= c_logits.logsumexp(-1, keepdim=True)  # normalize
+            c_log2_prob = c_logits / np.log(2)  # switch to base 2
+            c_prob = logits_to_probs(c_logits)
+            c_entropy = (-c_prob * c_log2_prob).sum(-1)
 
-    #    eos_probs[symbol_i] = probs[0]
-    #    probs = probs[1:] / probs[1:].sum()  # exclude EOS prob
+            # print('c_logits', c_logits.shape)
+            prefix_logits.append(p_logits.logsumexp(0))
+            eos_logits.append(c_logits[:, 0])
+            conditional_entropy.append(c_entropy)
 
-    #    log2_prob = torch.clamp(torch.log2(probs), min=min_real)
-    #    symbol_entropies[symbol_i] = (-log2_prob * probs).sum()
+        prefix_probs = logits_to_probs(torch.cat(prefix_logits))
+        conditional_entropy = torch.cat(conditional_entropy)
+        conditional_eos_prob = torch.exp(torch.cat(eos_logits))
+        # print(
+        #     "cond eos pr",
+        #     conditional_eos_prob.shape,
+        #     conditional_eos_prob.sum() / conditional_eos_prob.size(0))
+        eos_probs[symbol_i] = torch.tensordot(
+            prefix_probs,
+            conditional_eos_prob,
+            dims=([0], [0]))
+        symbol_entropies[symbol_i] = torch.tensordot(
+            prefix_probs,
+            conditional_entropy,
+            dims=([0], [0]))
+        # print('conditional_entropy', conditional_entropy.shape, conditional_entropy[:5])
 
-        # prefix_probs[:, step_i  = prefix_probs * symbol_probs
-
-        # shape = [probs.size(0)] + [1 for _ in range(prefix_probs.dim())]
-        # prefix_probs = prefix_probs.unsqueeze(0).expand(probs.size(0), *prefix_probs.shape)
-        # print(prefix_probs.shape, shape)
-        # prefix_probs = prefix_probs * probs.view(shape)
-
-    # prefix_probs = torch.ones_like(messages[:, 0, :])
-    # prefix_probs = torch.ones_like(messages[0, 0, 0])
-    # prefix_probs = torch.cat([
-    #     torch.ones_like(messages[0, :1, 1:]),
-    #     messages[0, 1:, 1:],
-    # ], dim=1)
-    #indices = torch.empty([messages.size(-1) - 1] * order, device=messages.device).long()
-
-    print("smb entrs:", symbol_entropies)
-    print("eos probs:", eos_probs)
-
-    entropy = 0.
-    for i in range(len(symbol_entropies) - 1):  # last symbol is always EOS
-        symbol_entropy = symbol_entropies[i].item()
-        # print(symbol_entropy, 'smb entropy', i)
-        eos_prob = eos_probs[i].item()
-
-        entropy += (
-            binary_entropy(eos_prob)
-            # + eos_prob * 0
-            + (1 - eos_prob) * symbol_entropy
-        )
+    # print(symbol_entropies)
+    # print('eos_probs', eos_probs)
+    # alt_eos_probs = logits_to_probs(logits.logsumexp(0))[:, 0]
+    # print('alt_eos_probs', alt_eos_probs)
+    entropy = symbol_entropies.sum()
 
     not_eosed_before = 1.
     length_probs = torch.zeros_like(eos_probs)
-    for i in range(messages.size(1)):
+    for i in range(probs.size(1)):
         length_probs[i] = not_eosed_before * eos_probs[i]
         not_eosed_before *= 1 - eos_probs[i]
-    # print('LEN PROBS', length_probs)
-    # print('EOS PROBS', eos_probs)
 
-    # length_log2_prob = torch.clamp(torch.log2(length_probs), min=min_real)
-    # entropy += (-length_probs * length_log2_prob).sum(-1).item()
+    return entropy, length_probs
 
-    if return_length_probs:
-        return entropy, length_probs
-    else:
-        return entropy
 
 
 # Redundancy
-@timer
 def compute_max_rep(messages: torch.Tensor) -> torch.Tensor:
     """
     Computes the number of occurrences of the most frequent symbol in each
@@ -213,58 +180,57 @@ def compute_max_rep(messages: torch.Tensor) -> torch.Tensor:
     return output
 
 
-def sequence_entropy_old(entropy, categorical=None):
-    print(entropy.shape, categorical.shape)
-    assert len(entropy) == len(categorical)
+def joint_entropy(probs, y, split_size=512):
+    """
+    H(M1, ..., Mn, Y) = H(Y) + H(M1, ..., Mn | Y)
+    """
+    assert len(y) == y.numel()
+    #     categorical = categorical.view(-1)
+    # else:
+    #     _, catego = torch.unique(categorical, return_inverse=True)
+    _, indices = torch.unique(y, dim=0, return_inverse=True)
 
-    categories, indices = torch.unique(categorical, return_inverse=True)
-    if len(categorical) == categorical.numel():
-        categorical = categorical.reshape(-1)
-
-    H_msg_y = entropy(categorical)
-    for uni in torch.unique(indices):
-        mask = indices[indices == uni]
-        matches = entropy[mask]
-        H_msg_y += matches.mean()
-        print((indices == uni).int().sum(), len(matches), '/', len(categorical), matches.mean())
+    H_msg_y = entropy(indices)  # H(Y)
+    for cat in range(indices.max() + 1):
+        cat_mask = indices == cat
+        prob_cat = (indices == cat).float().mean()
+        entropy_cat, _ = message_entropy(probs[cat_mask], split_size)
+        H_msg_y += prob_cat * entropy_cat  # P(Y=y) * H(M | Y=y)
+        # print((indices == cat).int().sum(), len(probs_cat), '/', len(y), H_msg_y)
 
     return H_msg_y
 
 
-def compute_mi(entropy_message, attributes, estimator='GOOD-TURING'):
-    # TODO ...
-    # attributes = categorical
-    # entropy_msg = messages.sum(-1).mean().item()
-    print("entropy mgs MI", entropy_message.shape)
+def compute_mi(probs, attributes, entropy_message=None):
+    if entropy_message is None:
+        entropy_message, _ = message_entropy(probs)
+
     if attributes.size(1) == 1:
-        # attributes = messages
-        entropy_attr = tensor_entropy(attributes)
-        if entropy_message is not None:
-            entropy_msg_attr = sequence_entropy_old(entropy_message, attributes)
-            mi_msg_attr = entropy_message + entropy_attr - entropy_msg_attr
-            vi_msg_attr = 2 * entropy_msg_attr - entropy_message - entropy_attr
-            vi_norm_msg_attr = 1. - mi_msg_attr / entropy_msg_attr
-        else:
-            entropy_msg_attr, mi_msg_attr, vi_msg_attr, vi_norm_msg_attr = \
-                None, None, None, None
+        entropy_attr = entropy(attributes)
+        entropy_msg_attr = joint_entropy(probs, attributes)
+        mi_msg_attr = entropy_message + entropy_attr - entropy_msg_attr
+        vi_msg_attr = 2 * entropy_msg_attr - entropy_message - entropy_attr
+        vi_norm_msg_attr = 1. - mi_msg_attr / entropy_msg_attr
 
         output = {
             'entropy_msg': entropy_message,
             'entropy_attr': entropy_attr,
-            'mi_msg_attr': mi_msg_attr,
-            'vi_msg_attr': vi_msg_attr,
-            'vi_norm_msg_attr': vi_norm_msg_attr,
-            'is_msg_attr': 1 - vi_norm_msg_attr,
+            'MI_msg_attr': mi_msg_attr,
+            'VI_msg_attr': vi_msg_attr,
+            'VInorm_msg_attr': vi_norm_msg_attr,
+            'IS_msg_attr': 1 - vi_norm_msg_attr,
         }
 
     else:  # return values per attribute dimension instead
-        # _, attributes = torch.unique(categorical, dim=0, return_inverse=True)
+        _, attributes = torch.unique(categorical, dim=0, return_inverse=True)
+        entropy_attr = entropy(attributes)
         # entropy_attr = sequence_entropy(attributes, estimator=estimator)
         entropy_attr_dim = [
-            tensor_entropy(attributes[:, i], estimator=estimator)
+            entropy(attributes[:, i])
             for i in range(attributes.size(-1))]
-        entropy_msg_attr_dim = [sequence_entropy_old(messages, attributes[:,i]) 
-                                for i in range(attributes.size(1))]
+        entropy_msg_attr_dim = [
+            joint_entropy(probs, attributes[:, i])
+            for i in range(attributes.size(1))]
         mi_msg_attr_dim = [
             entropy_message + H_y - H_xy
             for H_y, H_xy in zip(entropy_attr_dim, entropy_msg_attr_dim)
@@ -284,15 +250,15 @@ def compute_mi(entropy_message, attributes, estimator='GOOD-TURING'):
 
         output = {
             'entropy_msg': entropy_message,
-            # 'entropy_attr': entropy_attr,
+            'entropy_attr': entropy_attr,
             'entropy_attr_dim': entropy_attr_dim,
-            'mi_msg_attr_dim': mi_msg_attr_dim,
-            'vi_msg_attr_dim': vi_msg_attr_dim,
-            'vi_norm_msg_attr_dim': vi_norm_msg_attr_dim,
-            'is_msg_attr_dim': is_msg_attr_dim,
+            'MI_msg_attr_dim': mi_msg_attr_dim,
+            'VI_msg_attr_dim': vi_msg_attr_dim,
+            'VInorm_msg_attr_dim': vi_norm_msg_attr_dim,
+            'IS_msg_attr_dim': is_msg_attr_dim,
         }
 
-    return {f'{k}_v2': v for k, v in output.items()}
+    return output
 
 
 def truncate_messages(messages, receiver_input, labels, mode):
@@ -343,7 +309,6 @@ def remove_n_items(tensor, n=1):
 
 
 def remove_n_dims(tensor, n=1):
-    print(tensor.shape)
     # Get the number of rows (N)
     num_rows = tensor.shape[0]
 
@@ -370,11 +335,9 @@ def remove_n_dims(tensor, n=1):
     return result
 
 
-@timer
-def compute_accuracy2(dump, receiver: torch.nn.Module, opts):
-
+def compute_accuracy2(messages, receiver_inputs, labels, receiver: torch.nn.Module, opts):
     messages, receiver_inputs, labels = truncate_messages(
-        dump.messages, dump.receiver_inputs, dump.labels, opts.mode)
+        messages, receiver_inputs, labels, opts.mode)
 
     dataset = CustomDataset(messages, receiver_inputs)
     dataloader = torch.utils.data.DataLoader(
@@ -392,21 +355,17 @@ def compute_accuracy2(dump, receiver: torch.nn.Module, opts):
             outputs = outputs[0]
             predictions.append(outputs.detach().reshape(-1, 1))
         else:
-            # TODO depenging on whether we take argmax on the train dataset,
-            # the step/length might need to be adjusted
             lengths = find_lengths(batched_messages.argmax(-1))
-            for i in range(batched_messages.size(0)):
-                outputs_i = outputs[i, lengths[i] - 1].argmax(-1)
-                predictions.append(outputs_i.detach().reshape(-1, 1))
+            idx = (torch.arange(len(batched_messages)), lengths - 1)
+            predictions.extend(outputs[idx].argmax(-1))
 
-    predictions = torch.cat(predictions, dim=0)
+    predictions = torch.stack(predictions, dim=0)
     labels = torch.stack(labels)[:len(predictions)]
 
     return (predictions == labels).float().mean().item()
 
 
 # Compositionality
-@timer
 def compute_top_sim(attributes: torch.Tensor, messages: torch.Tensor) -> float:
     """
     Computes topographic rho.
@@ -451,7 +410,6 @@ def compute_top_sim(attributes: torch.Tensor, messages: torch.Tensor) -> float:
     return rho
 
 
-@timer
 def compute_posdis(
         sender_inputs: torch.Tensor,
         messages: torch.Tensor,
@@ -506,7 +464,6 @@ def histogram(messages: torch.Tensor, vocab_size: int) -> torch.Tensor:
     return histogram
 
 
-@timer
 def compute_bosdis(
         sender_inputs: torch.Tensor,
         messages: torch.Tensor,

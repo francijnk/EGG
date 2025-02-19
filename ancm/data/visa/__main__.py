@@ -122,7 +122,7 @@ def sample(data_concepts, n_distractors, n_samples):
             categories['target_category'].append(target_category)
             for k, distr_ind in enumerate(distractor_ind):
                 distr_cat = data_categories.iloc[distr_ind]
-                categories[f'distr_{k}_category'].append(distr_cat)
+                categories[f'distr{k}_category'].append(distr_cat)
 
     input_data = np.vstack(sample_sets)
 

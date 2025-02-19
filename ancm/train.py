@@ -19,11 +19,11 @@ import torch.utils.data
 import egg.core as core
 # from egg.core.util import move_to
 
+from ancm.trainers import Trainer
 from ancm.util import (
     DataHandler,
+    Dump,
     build_optimizer,
-    dump_sender_receiver,
-    get_results_dict,
     print_training_results,
     is_jsonable,
 )
@@ -36,7 +36,7 @@ from ancm.archs import (
 )
 from ancm.callbacks import (
     CustomProgressBarLogger,
-    TrainingMetricsCallback,
+    TrainingEvaluationCallback,
 )
 
 
@@ -226,11 +226,10 @@ def main(params):
     optimizer = build_optimizer(game, opts)
 
     callbacks = [
-        TrainingMetricsCallback(
+        TrainingEvaluationCallback(
             vocab_size=opts.vocab_size,
             max_len=opts.max_len,
             channel=game.channel,
-            channel_type=opts.channel,  # TODO
             error_prob=opts.error_prob,
             sender=_sender,
             receiver=_receiver,
@@ -251,7 +250,7 @@ def main(params):
             decay=opts.temperature_decay,
             minimum=opts.temperature_minimum))
 
-    trainer = core.Trainer(
+    trainer = Trainer(
         game=game,
         optimizer=optimizer,
         optimizer_scheduler=None,
@@ -264,105 +263,80 @@ def main(params):
     t_end = time.monotonic()
 
     def evaluate(dataloader):
-        results, messages = {}, []
-        message_counts = defaultdict(int)
+        dump = Dump(game, dataloader, device)
 
-        receiver = game.receiver
-
-        dump = dump_sender_receiver(
-            game, dataloader, max_len=opts.max_len,
-            vocab_size=vocab_size, mode=opts.mode, device=device)
-
-        # Unique targets
-        unique_dict = defaultdict(int)
+        # unique target objects
+        unique_targets = defaultdict(int)
         if opts.image_input:
             for i in range(len(dump)):
                 target_attrs = [
                     str(int(attr_values[i]))
                     for attr_values in dump.target_attributes.values()]
                 target_repr = ','.join(target_attrs)
-                unique_dict[target_repr] += 1
+                unique_targets[target_repr] += 1
         else:
             for s_inp in dump.sender_inputs:
                 target = ','.join([
                     str(int(x)) for x in s_inp.nonzero().squeeze().tolist()])
-                unique_dict[target] += 1
+                unique_targets[target] += 1
 
-        results = get_results_dict(dump, receiver, opts, unique_dict)
-
-        for s_inp, msg, msg_nn, r_inp, r_out, r_out_nn, \
-                label, t_attr, d_attr, ch_out in dump:
+        # dump messages
+        messages = []
+        for s_input, msg, msg_nn, r_input, r_output, r_output_nn, label, \
+                target_attr, distr_attr in dump:
 
             if opts.image_input:
                 # For the Obverter dataset, we save object features rather than
                 # images (color, shape, position, rotation)
-                target_vec = ','.join([str(int(attr)) for attr in t_attr.values()])
-                candidate_vex = [
+                target_vec = ','.join([str(int(attr)) for attr in target_attr.values()])
+                distr_vex = [
                     ','.join([str(int(attr)) for attr in attr_dict.values()])
-                    for attr_dict in d_attr]
-                message = ','.join([str(int(x)) for x in msg.tolist()])
-                message_nn = ','.join([str(int(x)) for x in msg_nn.tolist()])
-                print(r_out, "receiver_pred")
-                message_log = {
-                    'target_obj': target_vec,
-                    'candidate_objs': candidate_vex,
-                    'label': label,
-                    'message': message,
-                    'prediction': r_out,
-                    'message_no_noise': message_nn,
-                    'prediction_no_noise': r_out_nn,
-                }
-
+                    for attr_dict in distr_attr]
             else:
-                # VISA concepts are sparse binary tensors, hence we represent each
-                # object as a set of features that it does have
+                # as VISA concepts are sparse binary tensors, we represent each
+                # object as indices of features that it does have
                 target_vec = ','.join([
-                    str(x) for x in s_inp.nonzero().squeeze().tolist()])
-                candidate_vex = [
+                    str(x) for x in s_input.nonzero().squeeze().tolist()])
+                distr_vex = [
                     ','.join([
                         str(x) for x in candidate.nonzero().squeeze().tolist()])
-                    for candidate in r_inp]
-                message = ','.join([str(int(x)) for x in msg.tolist()])
-                message_nn = ','.join([str(int(x)) for x in msg_nn.tolist()])
-                message_log = {
-                    'target_obj': target_vec,
-                    'candidate_objs': candidate_vex,
-                    'label': label,
-                    'message': message,
-                    'prediction': r_out,
-                    'message_no_noise': message_nn,
-                    'prediction_no_noise': r_out_nn,
-                    'target_attributes': t_attr,
-                    'distractor_attributes': d_attr,
-                }
+                    for i, candidate in enumerate(r_input) if i != label]
 
-            message_log['entropy'] = ch_out['entropy_msg']
-            message_log['entropy_no_noise'] = ch_out['entropy_msg_nn']
-            message_log['redundancy'] = ch_out['redundancy_msg']
+            message = ','.join([str(int(x)) for x in msg.tolist()])
+            message_nn = ','.join([str(int(x)) for x in msg_nn.tolist()])
+
+            message_log = {
+                'target_obj': target_vec,
+                'distractor_objs': distr_vex,
+                'label': label,
+                'message': message,
+                'prediction': r_output,
+                'message_no_noise': message_nn,
+                'prediction_no_noise': r_output_nn,
+            }
+
+            if not opts.image_input:
+                message_log.update({
+                    'target_attributes': target_attr,
+                    'distractor_attributes': distr_attr,
+                })
 
             messages.append(message_log)
-            message_counts[message] += 1
-
-        message_counts = sorted(
-            message_counts.items(),
-            key=operator.itemgetter(1),
-            reverse=True)
 
         return {
-            'results': results,
+            'results': dump.get_results_dict(game, opts, unique_targets),
             'messages': messages,
-            'message_counts': message_counts,
         }
 
+    game.eval()
     output_dict = {}
 
     # results on the eval subset of the training set (VISA)
     if aux_train_data is not None:
-        game.train()
+        # game.train()
         output_dict['train'] = evaluate(aux_train_data)
 
     # results on the test set
-    game.eval()
     output_dict['test'] = evaluate(test_data)
 
     # save training time
@@ -377,6 +351,7 @@ def main(params):
     training_time_per_epoch = f'{int(minutes):02}:{int(seconds):02}'
 
     def make_jsonable(x, key=None):
+        # TODO remove
         if isinstance(x, torch.Tensor):
             print(key, 'processing tensor')
             try:

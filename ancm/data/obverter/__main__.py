@@ -174,11 +174,11 @@ def export_input_data(n_distractors, n_samples, n_img, resolution, select_distra
                             distr_rot, resolution=resolution)
                     sample_set[0, distractor_pos[j]] = distr_image
 
-                    attributes[f'distr_{j}_color'].append(distr_color)
-                    attributes[f'distr_{j}_shape'].append(distr_shape)
-                    attributes[f'distr_{j}_xpos'].append(distr_xpos)
-                    attributes[f'distr_{j}_ypos'].append(distr_ypos)
-                    attributes[f'distr_{j}_rotation'].append(distr_rot)
+                    attributes[f'distr{j}_color'].append(distr_color)
+                    attributes[f'distr{j}_shape'].append(distr_shape)
+                    attributes[f'distr{j}_xpos'].append(distr_xpos)
+                    attributes[f'distr{j}_ypos'].append(distr_ypos)
+                    attributes[f'distr{j}_rotation'].append(distr_rot)
 
                 sample_sets.append(sample_set)
 
