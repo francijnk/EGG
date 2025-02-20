@@ -16,13 +16,15 @@ from rich.progress import (
 from rich.table import Table
 from rich.text import Text
 
-from ancm.metrics import (
+from ancm.eval import (
     message_entropy,
+    compute_mi,
     compute_max_rep,
     compute_top_sim,
     compute_posdis,
     compute_bosdis,
 )
+from ancm.channels import Channel, NoChannel
 from ancm.util import crop_messages
 
 from egg.core.callbacks import Callback, CustomProgress
@@ -79,6 +81,7 @@ class CustomProgressBarLogger(Callback):
         self.step = opts.validation_freq
         self.wandb = opts.wandb_project is not None
         self.current_step = 0
+        self.display_nn = opts.channel != 'none'
 
         if self.wandb:
             if opts.wandb_group is None:
@@ -96,8 +99,10 @@ class CustomProgressBarLogger(Callback):
             )
             wandb.config.update(opts)
 
-        self.history = defaultdict(lambda: defaultdict(dict))
-        self.hide_cols = ['receiver_entropy', 'sender_entropy', 'VI', 'MI', 'max_entropy_msg']
+        self.history = defaultdict(lambda: defaultdict(list))
+        self.hide_cols = [
+            'receiver_entropy', 'sender_entropy', 'VI', 'MI',
+            'length_probs', 'entropy_inp', 'entropy_cat']
 
         self.progress = CustomProgress(
             TextColumn(
@@ -147,39 +152,9 @@ class CustomProgressBarLogger(Callback):
         od.update(aux)
         return od
 
-    def get_row(self, od, header=False):
-        row = Table(expand=True, box=None, show_header=header,
-                    show_footer=False, padding=(0, 1), pad_edge=True)
-
-        for colname in od.keys():
-            if any(colname.startswith(col) for col in self.hide_cols):
-                continue
-
-            print_name = (
-                colname
-                .replace('entropy_', 'H_')
-                .replace('redundancy_', 'R_')
-                .replace('xpos', 'x')
-                .replace('ypos', 'y')
-                .replace('actual_', '')
-            )
-
-            ratio = 0.5 if colname == 'epoch' else 1.
-            row.add_column(
-                print_name,
-                justify='left' if colname in ('phase', 'epoch') else 'right',
-                ratio=ratio)
-        if not header:
-            row.add_row(
-                str(od.pop('epoch')),
-                *[self.format_metric_val(v) for k, v in od.items()
-                  if not any(k.startswith(col) for col in self.hide_cols)],
-                style=self.style[od['phase']])
-        return row
-
-    @staticmethod
-    def format_metric_val(val):
-        if val is None or val != val:
+    def format_values(self, val):
+        if (isinstance(val, tuple) and val[0] is None) \
+                or val is None or val != val:
             return '–'
         elif isinstance(val, int):
             return str(val)
@@ -187,6 +162,53 @@ class CustomProgressBarLogger(Callback):
             return f'{val:.2f}'
         else:
             return val
+
+    def get_row(self, od, noise=True, header=False):
+        row = Table(
+            expand=True, box=None, show_header=header,
+            show_footer=False, padding=(0, 1), pad_edge=True)
+
+        row_values = []
+        for colname in ('epoch', 'phase', 'condition'):
+            if colname == 'condition' and not self.display_nn:
+                od['condition'] = 'baseline'
+                continue
+            elif colname == 'condition' and self.display_nn:
+                od['condition'] = 'noise' if noise else 'no noise'
+                row_values.append('noise' if noise else 'no noise')
+            else:
+                row_values.append(str(od[colname]))
+            row.add_column(
+                colname,
+                justify='left',
+                ratio=0.5 if colname != 'condition' else 1)
+
+        for colname in od:
+            if any(colname.startswith(c) for c in self.hide_cols) \
+                    or colname.endswith('_nn') \
+                    or colname in ('epoch', 'phase', 'condition'):
+                continue
+            if noise:
+                value = self.format_values(od[colname])
+            else:
+                value = self.format_values(
+                    od[f'{colname}_nn'] if f'{colname}_nn' in od
+                    else od[colname])
+            row_values.append(value)
+            print_name = (
+                colname
+                .replace('entropy', 'H')
+                .replace('redundancy', 'R')
+                .replace('actual_', '')
+                .replace('_msg_', '_'))
+            row.add_column(
+                print_name,
+                justify='right',
+                ratio=1)
+                # ratio=0.5 if colname == 'loss' else 1)
+        if not header:
+            row.add_row(*row_values, style=self.style[od['phase']])
+        return row
 
     def log_to_wandb(self, data: Dict[str, Any], **kwargs):
         if self.wandb:
@@ -233,9 +255,13 @@ class CustomProgressBarLogger(Callback):
         if epoch == self.step or self.step == 1:
             self.live.update(self.generate_live_table(od))
         if epoch % self.step == 0:
-            self.history['train'][epoch] = od
+            for k, v in od.items():
+                self.history['train'][k].append(v)
             row = self.get_row(od)
             self.console.print(row)
+            if self.display_nn:
+                row = self.get_row(od, noise=False)
+                self.console.print(row)
 
         self.trainer = None
         if self.wandb:
@@ -289,21 +315,19 @@ class CustomProgressBarLogger(Callback):
             n_epochs=self.n_epochs,
             mode="Validate")
 
-        if epoch not in self.history['val']:
-            phase = 'val'
-            p_key = 'val'
-        else:
-            phase = 'val-nn'
-            p_key = 'val-no-noise'
+        od = self.build_od(logs, loss, epoch, 'test')
 
-        od = self.build_od(logs, loss, epoch, phase)
-        self.history[p_key][epoch] = od
+        for k, v in od.items():
+            self.history['test'][k].append(v)
         row = self.get_row(od)
         self.console.print(row)
+        if self.display_nn:
+            row = self.get_row(od, noise=False)
+            self.console.print(row)
 
         if self.wandb:
             wb_dict = {'epoch': epoch}
-            wb_dict.update({f'{p_key}/{k}': v for k, v in od.items()})
+            wb_dict.update({f'val/{k}': v for k, v in od.items()})
             self.log_to_wandb(wb_dict)
 
     def on_train_begin(self, trainer_instance):
@@ -316,267 +340,140 @@ class CustomProgressBarLogger(Callback):
         self.live.stop()
 
         if self.results_folder is not None:
-            history_dfs = []
-            history_keys = list(self.history.keys())
-            if history_keys:
-                key = history_keys[0]
-                od_keys = self.history[key][list(self.history[key].keys())[0]]
-                for key in self.history:
-                    df = pd.DataFrame({'epoch': [int(epoch) for epoch in self.history[key]]})
-                    for k in od_keys:
-                        df[k] = [self.history[key][epoch][k] for epoch in self.history[key]]
-                    history_dfs.append(df)
-                history_df = pd.concat(history_dfs)
-                dump_path = self.results_folder / f'{self.filename}-training-history.csv'
-                history_df.to_csv(dump_path, index=False)
-                print(f"Training history saved to {dump_path}")
+            for history_dict in self.history.values():
+                del history_dict['loss_nn']
+            df = pd.concat([
+                pd.DataFrame(history_dict)
+                for history_dict in self.history.values()
+            ])
+            cols = ['epoch', 'phase', 'condition']
+            df = df[cols + [c for c in df.columns if c not in cols]]
+            filename = f'{self.filename}-training-history.csv'
+            dump_path = self.results_folder / filename
+            df.to_csv(dump_path, index=False)
+            print(f"Training history saved to {dump_path}")
 
 
-class TrainingMetricsCallback(Callback):
-    def __init__(
-        self, vocab_size, max_len, channel, channel_type,
-        error_prob, sender, receiver, dataloader,
-            device, image_input, bs=32):
-
-        self.vocab_size = vocab_size
-        self.max_len = max_len
+class TrainingEvaluationCallback(Callback):
+    def __init__(self, opts: argparse.Namespace, channel: Channel):
+        self.vocab_size = opts.vocab_size
+        self.max_len = opts.max_len
         self.channel = channel
-        self.channel_type = channel_type
-        self.error_prob = error_prob
-        self.image_input = image_input
-
-    def on_validation_end(self, loss: float, logs: Interaction, epoch: int):
-        messages = logs.message if logs.message.dim() == 2 \
-            else logs.message.argmax(-1)
-
-        if logs.aux_input:
-            aux_attribute_keys = [
-                k for k in logs.aux_input if k.startswith('target')]
-            aux_attributes = torch.cat([
-                logs.aux_input[k] for k in aux_attribute_keys], dim=1)
-        else:
-            aux_attributes = None
-
-        lexicon_size = torch.unique(messages, dim=0).shape[0]
-        actual_vocab = torch.unique(torch.flatten(messages), dim=0)
-        actual_vocab_size = actual_vocab.size(0)
-        vocab_size = self.vocab_size + 1 \
-            if self.channel_type == 'erasure' and self.error_prob > 0. \
-            else self.vocab_size
-
-        #entropy, length_probs = message_entropy(logs.message, True)
-        #max_entropy = self.channel.compute_max_entropy(length_probs)
-        #logs.aux['entropy_v2'] = entropy
-        #logs.aux['redundancy_v2'] = 1 - entropy / max_entropy
-        logs.aux['redundancy_v2'] = 1 - logs.aux['entropy_msg'].mean() / logs.aux['max_entropy_msg'].mean()
-
-        logs.aux['lexicon_size'] = int(lexicon_size)
-        logs.aux['actual_vocab_size'] = int(actual_vocab_size)
-
-        # if self.image_input:
-            # mi_attr = compute_mi(messages, aux_attributes, vocab_size)
-            # logs.aux['H_msg'] = mi_attr['entropy_msg']
-            # logs.aux['H_attr'] = mi_attr['entropy_attr']
-            # for i, key in enumerate(aux_attribute_keys):
-            #    k = key.replace('target_', '')
-            #    logs.aux[f'MI_{k}'] = mi_attr['mi_msg_attr_dim'][i]
-            #    logs.aux[f'VI_{k}'] = mi_attr['vi_msg_attr_dim'][i]
-            #    logs.aux[f'VInorm_{k}'] = mi_attr['vi_norm_msg_attr_dim'][i]
-            #    logs.aux[f'IS_{k}'] = mi_attr['is_msg_attr_dim'][i]
-        # else:
-        #    _, categorized_input = torch.unique(
-        #        logs.sender_input, return_inverse=True, dim=0)
-        #    categorized_input = categorized_input.unsqueeze(-1).to(torch.float)
-        #    mi_inp = compute_mi(messages, categorized_input, vocab_size)
-        #    mi_cat = compute_mi(messages, aux_attributes, vocab_size)
-        #    logs.aux['H_msg'] = mi_cat['entropy_msg']
-        #    logs.aux['MI_inp'] = mi_inp['mi_msg_attr']
-        #    logs.aux['VI_inp'] = mi_inp['vi_msg_attr']
-        #    logs.aux['VInorm_inp'] = mi_inp['vi_norm_msg_attr']
-        #    logs.aux['IS_inp'] = mi_inp['is_msg_attr']
-        #    logs.aux['MI_cat'] = mi_cat['mi_msg_attr']
-        #    logs.aux['VI_cat'] = mi_cat['vi_msg_attr']
-        #    logs.aux['VInorm_cat'] = mi_cat['vi_norm_msg_attr']
-        #    logs.aux['IS_cat'] = mi_cat['is_msg_attr']
-
-        # redundancy
-        logs.aux['max_rep'] = compute_max_rep(messages)
-        # logs.aux['redundancy'] = compute_redundancy(
-        #     messages, vocab_size,
-        #     channel=None, error_prob=0.0)
-        # logs.aux['redundancy_adj'] = compute_adjusted_redundancy(
-        #     messages, channel=None, error_prob=0.0,
-        #     symbols=torch.arange(vocab_size), erased_symbol=self.vocab_size)
-        # logs.aux['redundancy_adj2'] = compute_adjusted_redundancy(
-        #     messages, channel=None, error_prob=0.0,
-        #    symbols=actual_vocab, erased_symbol=self.vocab_size)
-
-        # compositionality
-        if self.image_input and aux_attributes is not None:
-            logs.aux['topsim'] = compute_top_sim(aux_attributes, messages)
-        elif not self.image_input:
-            logs.aux['topsim'] = compute_top_sim(logs.sender_input, messages)
-            logs.aux['topsim_cat'] = compute_top_sim(aux_attributes, messages)
-
-        if self.image_input:
-            logs.aux['posdis'] = compute_posdis(aux_attributes, messages, vocab_size)
-            logs.aux['bosdis'] = compute_bosdis(
-                aux_attributes, messages, vocab_size)
-
-    def on_secondary_validation_end(self, loss: float, logs: Interaction, epoch: int):
-        messages = logs.message if logs.message.dim() == 2 \
-            else logs.message.argmax(-1)
-
-        if logs.aux_input:
-            aux_attribute_keys = [
-                k for k in logs.aux_input if k.startswith('target')]
-            aux_attributes = torch.cat([
-                logs.aux_input[k] for k in aux_attribute_keys], dim=1)
-        else:
-            aux_attributes = None
-
-        lexicon_size = torch.unique(messages, dim=0).shape[0]
-        actual_vocab = torch.unique(torch.flatten(messages), dim=0)
-        actual_vocab_size = actual_vocab.size(0)
-
-        #entropy, length_probs = message_entropy(logs.message, True)
-        #max_entropy = self.channel.compute_max_entropy(length_probs)
-        #logs.aux['entropy_v2'] = entropy
-        #logs.aux['redundancy_v2'] = 1 - entropy / max_entropy
-        logs.aux['redundancy_v2'] = 1 - logs.aux['entropy_msg'].mean() / logs.aux['max_entropy_msg'].mean()
-        
-        logs.aux['lexicon_size'] = int(lexicon_size)
-        logs.aux['actual_vocab_size'] = int(actual_vocab_size)
-
-        # if self.image_input:
-        #    mi_attr = compute_mi(messages, aux_attributes, self.vocab_size)
-        #    logs.aux['H_msg'] = mi_attr['entropy_msg']
-        #    # logs.aux['H_attr'] = mi_attr['entropy_attr']
-        #    for i, key in enumerate(aux_attribute_keys):
-        #        k = key.replace('target_', '')
-        #        # logs.aux[f'H_{k}'] = mi_attr['entropy_attr_dim'][i]
-        #        logs.aux[f'MI_{k}'] = mi_attr['mi_msg_attr_dim'][i]
-        #        logs.aux[f'VI_{k}'] = mi_attr['vi_msg_attr_dim'][i]
-        #        logs.aux[f'VInorm_{k}'] = mi_attr['vi_norm_msg_attr_dim'][i]
-        #        logs.aux[f'IS_{k}'] = mi_attr['is_msg_attr_dim'][i]
-        #else:
-        #    _, categorized_input = torch.unique(
-        #        logs.sender_input, return_inverse=True, dim=0)
-        #    categorized_input = categorized_input.unsqueeze(-1).to(torch.float)
-        #    mi_inp = compute_mi(messages, categorized_input, self.vocab_size)
-        #    mi_cat = compute_mi(messages, aux_attributes, self.vocab_size)
-        #    logs.aux['H_msg'] = mi_cat['entropy_msg']
-        #    # logs.aux['H_inp'] = mi_inp['entropy_attr']
-        #    logs.aux['MI_inp'] = mi_inp['mi_msg_attr']
-        #   logs.aux['VI_inp'] = mi_inp['vi_msg_attr']
-        #    logs.aux['VInorm_inp'] = mi_inp['vi_norm_msg_attr']
-        #    logs.aux['IS_inp'] = mi_inp['is_msg_attr']
-        #    logs.aux['MI_cat'] = mi_cat['mi_msg_attr']
-        #    logs.aux['VI_cat'] = mi_cat['vi_msg_attr']
-        #    logs.aux['VInorm_cat'] = mi_cat['vi_norm_msg_attr']
-        #    logs.aux['IS_cat'] = mi_cat['is_msg_attr']
-
-        # compositionality
-        if self.image_input and aux_attributes is not None:
-            logs.aux['topsim'] = compute_top_sim(aux_attributes, messages)
-        elif not self.image_input:
-            logs.aux['topsim'] = compute_top_sim(logs.sender_input, messages)
-            logs.aux['topsim_cat'] = compute_top_sim(aux_attributes, messages)
-
-        # redundancy
-        logs.aux['max_rep'] = compute_max_rep(messages)
-        # logs.aux['redundancy'] = compute_redundancy(
-        #     messages, self.vocab_size,
-        #     channel=None, error_prob=0.0)
-        # logs.aux['redundancy_adj'] = compute_adjusted_redundancy(
-        #     messages, channel=None, error_prob=0.0,
-        #     symbols=torch.arange(self.vocab_size))
-        # logs.aux['redundancy_adj2'] = compute_adjusted_redundancy(
-        #     messages, channel=None, error_prob=0.0,
-        #    symbols=actual_vocab, erased_symbol=self.vocab_size)
-
-        # compositionality
-        if self.image_input and aux_attributes is not None:
-            logs.aux['topsim'] = compute_top_sim(aux_attributes, messages)
-        elif not self.image_input:
-            logs.aux['topsim'] = compute_top_sim(logs.sender_input, messages)
-            logs.aux['topsim_cat'] = compute_top_sim(aux_attributes, messages)
-
-        if self.image_input:
-            logs.aux['posdis'] = compute_posdis(aux_attributes, messages, self.vocab_size)
-            logs.aux['bosdis'] = compute_bosdis(
-                aux_attributes, messages, self.vocab_size)
+        self.error_prob = opts.error_prob
+        self.image_input = opts.image_input
 
     def on_epoch_end(self, loss: float, logs: Interaction, epoch: int):
-        messages = logs.message if logs.message.dim() == 2 \
-            else logs.message.argmax(-1)
+        self.compute(logs, training=True)
+
+    def on_validation_end(self, loss: float, logs: Interaction, epoch: int):
+        self.compute(logs, training=False)
+
+    def compute(self, logs: Interaction, training: bool):
+        messages = crop_messages(logs.message)
+        vocab_size = logs.probs.size(-1)  # includes additional symbols
 
         if logs.aux_input:
-            aux_attribute_keys = [
-                k for k in logs.aux_input if k.startswith('target')]
-            aux_attributes = torch.cat([
-                logs.aux_input[k] for k in aux_attribute_keys], dim=1)
+            attr_keys = [
+                k for k in logs.aux_input
+                if k.startswith('target')]
+            attr = torch.cat([logs.aux_input[k] for k in attr_keys], dim=1)
         else:
-            aux_attributes = None
+            attr = None
 
-        vocab_size = self.vocab_size + 1 \
-            if self.channel_type == 'erasure' and self.error_prob > 0. \
-            else self.vocab_size
+        logs.aux['lexicon_size'] = len(torch.unique(messages, dim=0))
+        logs.aux['actual_vocab_size'] = torch.unique(messages).numel()
 
-        lexicon_size = torch.unique(messages, dim=0).shape[0]
-        actual_vocab = torch.unique(torch.flatten(messages), dim=0)
-        actual_vocab_size = actual_vocab.size(0)
-        vocab_size = self.vocab_size + 1 \
-            if self.channel_type == 'erasure' and self.error_prob > 0. \
-            else self.vocab_size
-
-        # entropy, length_probs = message_entropy(logs.message, True)
-        # max_entropy = self.channel.compute_max_entropy(length_probs)
-        # logs.aux['entropy_v2'] = entropy
-        # logs.aux['redundancy_v2'] = 1 - entropy / max_entropy
-        logs.aux['redundancy_v2'] = 1 - logs.aux['entropy_msg'].mean() / logs.aux['max_entropy_msg'].mean()
-        #print("entropy:", entropy)
-        #print("max ent:", max_entropy)
-        logs.aux['lexicon_size'] = int(lexicon_size)
-        logs.aux['actual_vocab_size'] = int(actual_vocab_size)
-
-        # if self.image_input:
-        #    mi_attr = compute_mi(messages, aux_attributes, vocab_size)
-        #    logs.aux['H_msg'] = mi_attr['entropy_msg']
-        #    for i, key in enumerate(aux_attribute_keys):
-        #        k = key.replace('target_', '')
-        #        logs.aux[f'MI_{k}'] = mi_attr['mi_msg_attr_dim'][i]
-        #        logs.aux[f'VI_{k}'] = mi_attr['vi_msg_attr_dim'][i]
-        #        logs.aux[f'VInorm_{k}'] = mi_attr['vi_norm_msg_attr_dim'][i]
-        #        logs.aux[f'IS_{k}'] = mi_attr['is_msg_attr_dim'][i]
-        #else:
-        #    mi_cat = compute_mi(messages, aux_attributes, vocab_size)
-        #    logs.aux['H_msg'] = mi_cat['entropy_msg']
-        #    logs.aux['MI_inp'] = None
-        #    logs.aux['VI_inp'] = None
-        #    logs.aux['IS_inp'] = None
-        #    logs.aux['VInorm_inp'] = None
-        #    logs.aux['MI_cat'] = mi_cat['mi_msg_attr']
-        #    logs.aux['VI_cat'] = mi_cat['vi_msg_attr']
-        #    logs.aux['VInorm_cat'] = mi_cat['vi_norm_msg_attr']
-        #    logs.aux['IS_cat'] = mi_cat['is_msg_attr']
-
-        # redundancy
+        entropy, length_probs = message_entropy(logs.probs)
+        max_entropy = self.channel.max_message_entropy(length_probs, True)
+        # TODO which length probs are more accurate? remove the other
+        # length_probs = logs.aux['length_probs'].sum(0) / len(messages)
+        logs.aux['entropy_msg'] = entropy
+        logs.aux['entropy_max'] = max_entropy
         logs.aux['max_rep'] = compute_max_rep(messages)
-        # logs.aux['redundancy'] = compute_redundancy(
-        #     messages, vocab_size,
-        #     channel=None, error_prob=0.0)
-        # logs.aux['redundancy_adj'] = compute_adjusted_redundancy(
-        #     messages, channel=None, error_prob=0.0,
-        #     symbols=torch.arange(vocab_size), erased_symbol=self.vocab_size)
-        # logs.aux['redundancy_adj2'] = compute_adjusted_redundancy(
-        #     messages, channel=None, error_prob=0.0,
-        #     symbols=actual_vocab, erased_symbol=self.vocab_size)
+        logs.aux['redundancy'] = 1 - entropy / max_entropy
+        # logs.aux['length'] = (
+        #     torch.arange(logs.probs.size(1)) * length_probs).sum()
 
-        # compositinoality
-        logs.aux['topsim'] = None
         if self.image_input:
-            logs.aux['posdis'] = None
-            logs.aux['bosdis'] = None
+            logs.aux['topsim'] = None if training else \
+                compute_top_sim(attr, messages)
+            logs.aux['posdis'] = None if training else \
+                compute_posdis(attr, messages, vocab_size)
+            logs.aux['bosdis'] = None if training else \
+                compute_bosdis(attr, messages, vocab_size)
+
+            mi_attr = compute_mi(logs.probs, attr, entropy)
+            logs.aux['entropy_attr'] = mi_attr['entropy_attr']
+            for i, key in enumerate(attr_keys):
+                key = key.replace('target_', '')
+                logs.aux.update({
+                    k.replace('attr_dim', key): v[i]
+                    for k, v in mi_attr.items() if 'attr_dim' in k
+                })
         else:
-            logs.aux['topsim_cat'] = None
+            logs.aux['topsim'] = None if training else \
+                compute_top_sim(logs.sender_input, messages)
+            logs.aux['topsim_cat'] = None if training else \
+                compute_top_sim(attr, messages)
+
+            # assign a different number to every input vector
+            _, input_cat = torch.unique(
+                logs.sender_input, return_inverse=True, dim=0)
+            input_cat = input_cat.unsqueeze(-1).to(torch.float)
+            logs.aux.update({
+                k.replace('attr', 'input'): v for k, v
+                in compute_mi(logs.probs, input_cat, entropy).items()
+            })
+            logs.aux.update({
+                k.replace('attr', 'cat'): v for k, v
+                in compute_mi(logs.probs, attr, entropy).items()
+            })
+
+        # compute measure values for messages before noise is applied
+        if not isinstance(self.channel, NoChannel):
+            messages = crop_messages(logs.message_nn)
+            vocab_size = self.vocab_size  # does not include additional symbols
+
+            logs.aux['loss_nn'] = None
+            logs.aux['lexicon_size_nn'] = len(torch.unique(messages, dim=0))
+            logs.aux['actual_vocab_size_nn'] = torch.unique(messages).numel()
+            entropy, length_probs = message_entropy(logs.probs_nn)
+            max_entropy = self.channel.max_message_entropy(length_probs, False)
+            # length_probs = logs.aux['length_probs'].sum(0) / len(messages)
+            logs.aux['max_rep_nn'] = compute_max_rep(messages)
+            logs.aux['entropy_msg_nn'] = entropy
+            logs.aux['entropy_max_nn'] = max_entropy
+            logs.aux['redundancy_nn'] = 1 - entropy / max_entropy
+
+            if self.image_input:
+                for i, key in enumerate(attr_keys):
+                    key = key.replace('target_', '')
+                    logs.aux.update({
+                        k.replace('attr_dim', f'{key}_nn'): v[i] for k, v
+                        in compute_mi(logs.probs_nn, attr, entropy).items()
+                        if 'attr_dim' in k
+                    })
+
+                logs.aux['topsim_nn'] = None if training else \
+                    compute_top_sim(attr, messages)
+                logs.aux['posdis_nn'] = None if training else \
+                    compute_posdis(attr, messages, vocab_size)
+                logs.aux['bosdis_nn'] = None if training else \
+                    compute_bosdis(attr, messages, vocab_size)
+            else:
+                logs.aux.update({
+                    k.replace('attr', 'input_nn'): v for k, v in
+                    compute_mi(logs.probs_nn, input_cat, entropy).items()
+                    if k != 'entropy_msg'
+                })
+                logs.aux.update({
+                    k.replace('attr', 'cat_nn'): v
+                    for k, v in compute_mi(
+                        logs.probs_nn, attr, entropy).items()
+                    if k != 'entropy_msg'
+                })
+
+                logs.aux['topsim_nn'] = None if training else \
+                    compute_top_sim(logs.sender_input, messages)
+                logs.aux['topsim_cat_nn'] = None if training else \
+                    compute_top_sim(attr, messages)
