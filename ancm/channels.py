@@ -221,8 +221,8 @@ class ErasureChannel(Channel):
         if n_targets == 0:
             return messages, entropies
 
-        non_eos_positions = torch.arange(1, size[-1]).expand(size[0], -1)
-        target_symbols = non_eos_positions[target_mask]
+        non_eos_symbols = torch.arange(1, size[-1]).expand(size[0], -1)
+        target_symbols = non_eos_symbols[target_mask]
         target_rows = torch.arange(size[0]).unsqueeze(1)
         target_rows = target_rows.expand(-1, size[-1])[target_mask]
 
@@ -272,7 +272,7 @@ class SymmetricChannel(Channel):
         if not apply_noise:
             return messages, probs
 
-        elif self.training:
+        if self.training:
             # reshape & sample targets
             size = messages.size()
             messages = messages.clone().view(size[0] * size[1], size[-1])
@@ -294,9 +294,9 @@ class SymmetricChannel(Channel):
             target_messages = messages[target_rows, target_symbols]
 
             # find candidate symbols different from target symbols
-            non_eos_positions = non_eos_positions[0].expand(n_targets, -1)
-            candidate_mask = non_eos_positions != target_symbols.unsqueeze(-1)
-            candidate_symbols = non_eos_positions[candidate_mask]
+            non_eos_symbols = non_eos_symbols[0].expand(n_targets, -1)
+            candidate_mask = non_eos_symbols != target_symbols.unsqueeze(-1)
+            candidate_symbols = non_eos_symbols[candidate_mask]
             candidate_symbols = candidate_symbols.view(-1, size[-1] - 2)
 
             # sample replacement symbols
@@ -305,8 +305,7 @@ class SymmetricChannel(Channel):
                 high=messages.size(-1) - 2,
                 generator=self.generator,
                 device=self.device)
-            replacement_symbols = \
-                candidate_symbols[torch.arange(n_targets), replacement_ids]
+            replacement_symbols = candidate_symbols[torch.arange(n_targets), replacement_ids]
 
             # adjust message tensors
             adjustment = torch.zeros_like(messages)
