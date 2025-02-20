@@ -42,13 +42,13 @@ class CustomDataset(Dataset):
 
 
 # Entropy, Mutual information
-def binary_entropy(p: float):
-    if p == 0. or p == 1.:
-        return 0.
-    return -p * np.log2(p) - (1 - p) * np.log2(1 - p)
+# def binary_entropy(p: float):
+#     if p == 0. or p == 1.:
+#         return 0.
+#     return -p * np.log2(p) - (1 - p) * np.log2(1 - p)
 
 
-def message_entropy(probs, order=4, split_size=1000):
+def message_entropy(probs, max_entropy=None, order=4, split_size=1000):
     """
     work in progress...
     """
@@ -60,6 +60,7 @@ def message_entropy(probs, order=4, split_size=1000):
 
     symbol_entropies = torch.zeros_like(probs[0, :, 0])
     eos_probs = torch.ones_like(probs[0, :, 0])
+    not_eosed_before = 1.
 
     for symbol_i in range(probs.size(1) - 1):
         symbol_logits = logits[:, symbol_i, :]
@@ -68,32 +69,23 @@ def message_entropy(probs, order=4, split_size=1000):
             log_prob -= log_prob.logsumexp(0)  # normalize
             log2_prob = log_prob / np.log(2)  # switch to base 2
             # c_log2_prob = torch.clamp(c_logits / np.log(2), min=min_real)
-            prob = logits_to_probs(log_prob)
-            eos_probs[0] = prob[0]
-            symbol_entropies[0] = (-log2_prob * prob).sum()
+            _probs = log_prob.exp()  # logits_to_probs(log_prob)
+            eos_probs[0] = _probs[0]
+            symbol_entropies[0] = (-log2_prob * _probs).sum()
+            not_eosed_before *= 1 - _probs[0]
             continue
 
         if order is not None:
-            # prev_probs = non_eos_probs[:, max(0, symbol_i - order):symbol_i]
-            # prev_probs = probs[:, max(0, symbol_i - order):symbol_i]
-            # prev_logits = logits[:, max(0, symbol_i - order):symbol_i]
             prev_logits = logits[:, max(0, symbol_i - order):symbol_i, 1:]
         else:
-            # prev_probs = non_eos_probs[:, :symbol_i]
-            # prev_probs = probs[:, :symbol_i]
-            # prev_logits = logits[:, :symbol_i]
             prev_logits = logits[:, :symbol_i, 1:]
 
-        # oprint('prev pobs shape', prev_probs.shape)
-        # print("prev_logits shape", prev_logits.shape)
-        # print("symbol logits shape", symbol_logits.shape)
         prefix_indices = torch.cartesian_prod(
             *(torch.arange(prev_logits.size(-1))
               for i in range(prev_logits.size(1)))
         ).view(-1, prev_logits.size(1))
-        prefix_logits, conditional_entropy = [], []
-        eos_logits = []
 
+        prefix_logits, cond_entropy, cond_eos_prob = [], [], []
         for p_indices in torch.split(prefix_indices, split_size):
             # indices of all possible non-EOS prefixes
             idx = (
@@ -111,35 +103,27 @@ def message_entropy(probs, order=4, split_size=1000):
                 symbol_logits.unsqueeze(1) + p_logits.unsqueeze(-1), 0)
             c_logits -= c_logits.logsumexp(-1, keepdim=True)  # normalize
             c_log2_prob = c_logits / np.log(2)  # switch to base 2
-            c_prob = logits_to_probs(c_logits)
-            c_entropy = (-c_prob * c_log2_prob).sum(-1)
+            c_probs = c_logits.exp()
+            c_entropy = (-c_probs * c_log2_prob).sum(-1)
 
-            # print('c_logits', c_logits.shape)
+            assert torch.allclose(c_probs.sum(-1), torch.ones_like(c_probs[:, 0]))
+
             prefix_logits.append(p_logits.logsumexp(0))
-            eos_logits.append(c_logits[:, 0])
-            conditional_entropy.append(c_entropy)
+            cond_eos_prob.append(c_probs[:, 0])
+            cond_entropy.append(c_entropy)
 
-        prefix_probs = logits_to_probs(torch.cat(prefix_logits))
-        conditional_entropy = torch.cat(conditional_entropy)
-        conditional_eos_prob = torch.exp(torch.cat(eos_logits))
-        # print(
-        #     "cond eos pr",
-        #     conditional_eos_prob.shape,
-        #     conditional_eos_prob.sum() / conditional_eos_prob.size(0))
-        eos_probs[symbol_i] = torch.tensordot(
-            prefix_probs,
-            conditional_eos_prob,
-            dims=([0], [0]))
-        symbol_entropies[symbol_i] = torch.tensordot(
-            prefix_probs,
-            conditional_entropy,
-            dims=([0], [0]))
-        # print('conditional_entropy', conditional_entropy.shape, conditional_entropy[:5])
+        prefix_probs = logits_to_probs(torch.cat(prefix_logits)) * not_eosed_before
+        cond_entropy = torch.cat(cond_entropy)
+        cond_eos_prob = torch.cat(cond_eos_prob)
 
-    # print(symbol_entropies)
-    # print('eos_probs', eos_probs)
-    # alt_eos_probs = logits_to_probs(logits.logsumexp(0))[:, 0]
-    # print('alt_eos_probs', alt_eos_probs)
+        symbol_entropies[symbol_i] = torch.dot(prefix_probs, cond_entropy)
+        eos_prob = torch.dot(prefix_probs, cond_eos_prob) / not_eosed_before
+
+        assert torch.allclose(not_eosed_before, prefix_probs.sum())
+
+        eos_probs[symbol_i] = eos_prob
+        not_eosed_before *= 1 - eos_prob
+
     entropy = symbol_entropies.sum()
 
     not_eosed_before = 1.

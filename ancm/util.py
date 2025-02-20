@@ -12,7 +12,7 @@ from typing import Optional
 from egg.core.util import find_lengths, move_to, get_opts
 
 # from ancm.archs import tensor_binary_entropy
-from ancm.measures import (
+from ancm.eval import (
     message_entropy,
     compute_max_rep,
     compute_accuracy2,
@@ -193,12 +193,13 @@ def is_jsonable(x):
 
 
 def build_optimizer(game, opts):
-    if opts.optimizer.lower() == 'RMSprop'.lower():
+    if opts.optim.lower() == 'rmsprop':
         optimizer = torch.optim.RMSprop
-    elif opts.optimizer.lower() == 'Adam'.lower():
+    elif opts.optim.lower() == 'adam':
         optimizer = torch.optim.Adam
     else:
         raise ValueError('Optimizer must be either RMSprop or Adam')
+
     return optimizer([
         {"params": game.sender.parameters(), "lr": opts.sender_lr},
         {"params": game.receiver.parameters(), "lr": opts.receiver_lr},
@@ -291,8 +292,8 @@ class Dump:
             symbols = crop_messages(symbols, lengths)
             message = crop_messages(message, lengths)
 
-            symbols_nn = message_nn \
-                if message_nn.dim() == 2 else message_nn.argmax(-1)
+            symbols_nn = message_nn.int() if message_nn.dim() == 2 \
+                else message_nn.argmax(-1)
             lengths_nn = find_lengths(symbols_nn)
             symbols_nn = crop_messages(symbols_nn, lengths_nn)
             message_nn = crop_messages(message_nn, lengths_nn)
@@ -429,11 +430,11 @@ class Dump:
                 self.attribute_names
             )
 
-    def get_results_dict(self, game, opts, unique_dict):
+    def get_results_dict(self, game, opts, target_counts):
         results = {}
 
         keys = ('noise', 'no noise') if opts.channel != 'none' else ('baseline',)
-        for key in keys:  # ('noise', 'no noise'):
+        for key in keys:
             (sender_inputs, messages, probs, message_inputs, receiver_inputs,
              receiver_outputs, labels, t_attributes, d_attributes, attr_names) \
                 = self.get_tensors(key == 'noise')
@@ -442,17 +443,19 @@ class Dump:
             vocab_size = self.probs.size(-1) if key == 'noise' else opts.vocab_size
 
             entropy, length_probs = message_entropy(probs)
-            max_entropy = game.channel.compute_max_entropy(length_probs, key == 'noise')
+            max_entropy = game.channel.max_message_entropy(
+                length_probs, key == 'noise')
 
             results[key] = {
-                'samples': len(labels),
-                'samples_per_target_obj': len(labels) / len(unique_dict.keys()),
+                'samples': sum(target_counts.values()),
+                'samples_per_target_obj':
+                    sum(target_counts.values()) / len(target_counts),
+                'unique_messages': len(torch.unique(messages, dim=0)),
+                'unique_target_objects': len(target_counts),
+                'actual_vocab_size': torch.unique(messages).numel(),
                 'accuracy': (receiver_outputs == labels).float().mean(),
                 'accuracy2': compute_accuracy2(
                     message_inputs, receiver_inputs, labels, game.receiver, opts),
-                'unique_messages': len(torch.unique(messages, dim=0)),
-                'unique_target_objects': len(unique_dict.keys()),
-                'actual_vocab_size': torch.unique(messages).numel(),
                 'max_rep': compute_max_rep(messages).mean().item(),
                 'entropy_msg': entropy,
                 'entropy_max': max_entropy,
@@ -460,6 +463,11 @@ class Dump:
             }
 
             if opts.image_input:
+                results[key].update({
+                    'topsim': compute_top_sim(t_attributes, messages),
+                    'posdis': compute_posdis(t_attributes, messages),
+                    'bosdis': compute_bosdis(t_attributes, messages, vocab_size),
+                })
                 mi_attr = compute_mi(probs, t_attributes, entropy)
                 results[key]['entropy_attr'] = mi_attr['entropy_attr']
                 for i, name in enumerate(attr_names):
@@ -467,12 +475,12 @@ class Dump:
                         k.replace('attr_dim', name): v[i]
                         for k, v in mi_attr.items() if 'attr_dim' in k
                     })
-                results[key].update({
-                    'topsim': compute_top_sim(t_attributes, messages),
-                    'posdis': compute_posdis(t_attributes, messages),
-                    'bosdis': compute_bosdis(t_attributes, messages, vocab_size),
-                })
             else:
+                results[key].update({
+                    'topsim': compute_top_sim(sender_inputs, messages),
+                    'topsim_cat': compute_top_sim(t_attributes, messages),
+                })
+
                 # assign a different number to every input vector
                 _, input_cat = torch.unique(
                     sender_inputs, return_inverse=True, dim=0)
@@ -484,10 +492,6 @@ class Dump:
                 results[key].update({
                     k.replace('attr', 'category'): v
                     for k, v in compute_mi(probs, t_attributes, entropy).items()
-                })
-                results[key].update({
-                    'topsim': compute_top_sim(sender_inputs, messages),
-                    'topsim_cat': compute_top_sim(t_attributes, messages),
                 })
 
                 # TODO cross entropy / KLD between the training and test set?
@@ -501,39 +505,37 @@ class Dump:
         return results
 
 
-def print_training_results(output_dict):
-    def _format(value):
-        if value is None:
-            return np.nan
-        if isinstance(value, int):
-            return value
-        elif isinstance(value, float):
+def print_training_results(dump_dict):
+    def format_values(value):
+        # if value is None:
+        #     return np.nan
+        # if isinstance(value, int):
+        #     return value
+        if isinstance(value, float):
             return f'{value:.2f}'
-        elif isinstance(value, dict):
-            values = [f'{k}: {_format(v)}' for k, v in value.items()]
-            return '\n'.join(values)
+        # elif isinstance(value, dict):
+        #     values = [f'{k}: {_format(v)}' for k, v in value.items()]
+        #     return '\n'.join(values)
         else:
             return value
 
     flattened_dict = {
         ' '.join((key1, key2)) if key2 != 'baseline' else key1: values
-        for key1, dataset_dict in output_dict.items()
-        if 'results' in dataset_dict
-        for key2, values in dataset_dict['results'].items()
+        for key1, dataset_dict in dump_dict.items()
+        if key1 in ('train', 'test')
+        for key2, values in dataset_dict['evaluation'].items()
     }
 
     header = ['measure'] + list(flattened_dict.keys())
     measures = list(list(flattened_dict.values())[0].keys())
-    values = [measures] + [
-        [_format(v) for v in col.values()]
-        for col in flattened_dict.values()]
-    table_dict = {h: v for h, v in zip(header, values)}
+    values = [
+        [m] + [format_values(col[m]) for col in flattened_dict.values()]
+        for m in measures
+    ]
     print(tabulate(
-        table_dict,
-        headers='keys',
-        tablefmt='rst',
-        maxcolwidths=[24] * len(header),
-        # numalign='center',
-        # stralign='left',
-        # disable_numparse=True,
+        values,
+        header,
+        tablefmt='rounded_outline',
+        numalign='right',
+        stralign='left',
     ))

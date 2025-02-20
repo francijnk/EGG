@@ -24,17 +24,14 @@ class Channel(nn.Module, metaclass=ABCMeta):
         self.generator.manual_seed(seed)
         self.device = device
 
-        # compute maximum achievable entropies
-        self.max_message_entropy = {
+        # compute max. entropy for every message length (incl. additional EOS)
+        # each length is mapped to a tuple of values with and without noise
+        self._max_message_entropy = {
             i: (
-                i * self.max_symbol_entropy(
-                    vocab_size=self.vocab_size - 1,
-                    noise=True),
-                i * self.max_symbol_entropy(
-                    vocab_size=self.vocab_size - 1,
-                    noise=False)
+                i * self.max_non_eos_entropy(noise=True),
+                i * self.max_non_eos_entropy(noise=False),
             ) for i in range(self.max_len + 1)
-        }  # for every message length (incl. additional EOS)
+        }
 
     @abstractmethod
     def gs(
@@ -50,180 +47,55 @@ class Channel(nn.Module, metaclass=ABCMeta):
             apply_noise: bool, **kwargs):
         return
 
-    @staticmethod
-    def tensor_binary_entropy(p: torch.Tensor):
-        q = 1 - p
-        min_real = torch.finfo(p.dtype).min
-        log2_p = torch.clamp(torch.log2(p), min=min_real)
-        log2_q = torch.clamp(torch.log2(q), min=min_real)
-        return -p * log2_p - q * log2_q
+    # @staticmethod
+    # def tensor_binary_entropy(p: torch.Tensor):
+    #     q = 1 - p
+    #     min_real = torch.finfo(p.dtype).min
+    #     log2_p = torch.clamp(torch.log2(p), min=min_real)
+    #     log2_q = torch.clamp(torch.log2(q), min=min_real)
+    #     return -p * log2_p - q * log2_q
 
     @staticmethod
-    def binary_entropy(p: float):
+    def binary_entropy(p: float):  # TODO move to ErasureChannel?
         if p == 0. or p == 1.:
             return 0.
         return -p * np.log2(p) - (1 - p) * np.log2(1 - p)
 
-    @abstractmethod
-    def _max_symbol_entropy(self, vocab_size: int):
-        return
+    def max_non_eos_entropy(self, noise: bool):
+        """
+        Returns maximum achievable entropy of a single symbol passing through
+        the channel, assuming it is not EOS.
+        """
+        return np.log2(self.vocab_size - 1)
 
-    def max_symbol_entropy(self, noise: bool, vocab_size: Optional[int] = None):
-        vocab_size = vocab_size if vocab_size is not None else self.vocab_size
 
-        if noise:
-            return self._max_symbol_entropy(vocab_size)
-        else:
-            return np.log2(vocab_size)
-
-    # def max_message_entropy(self, length: int):
-    #     return self._max_symbol_entropy(self.vocab_size - 1) * length
-
-    # @abstractmethod
-    # def _message_entropy(self, eos_prob, max_suffix_entropy):
-    #     return
-
-    # def _max_message_entropy(self, max_len=None, max_iter=5000):
-    #     if max_len is None:
-    #         max_len = self.max_len
-
-    #    if max_len == 1:
-    #        entropy = lambda p: -self._message_entropy(p, 0)
-    #        optimal_eos_prob = minimize_scalar(
-    #            entropy,
-    #            method='bounded', bounds=(0., 1.),
-    #            options={'maxiter': max_iter})
-    #        return entropy(optimal_eos_prob.x)  # , [optimal_eos_prob.x]
-
-    #    max_suffix_entropy = self._max_message_entropy(max_len - 1)
-    #    entropy = lambda p: -self._message_entropy(p, max_suffix_entropy)
-    #    optimal_eos_prob = minimize_scalar(
-    #        entropy,
-    #        method='bounded', bounds=(0., 1.),
-    #        options={'maxiter': max_iter})
-    #    # eos_messages = [optimal_eos_prob.x] + eos_messages
-
-    #    return -entropy(optimal_eos_prob.x)  # , eos_messages
-
-    def compute_max_entropy(self, length_probs: torch.Tensor, noise: bool):
-        # size = probs.size()
-        # logits = probs_to_logits(
-        #     probs.view(size[0] * size[1], size[2])).view(size)
-        # eos_probs = logits_to_probs(logits.logsumexp(0))[:, 0]
-        # print(eos_probs)
-
-        # not_eosed_before = 1.
-        # length_probs = torch.zeros_like(eos_probs)
-        # for i in range(probs.size(1)):
-        #     length_probs[i] = not_eosed_before * eos_probs[i]
-        #     not_eosed_before *= 1 - eos_probs[i]
-
+    def max_message_entropy(self, length_probs: torch.Tensor, noise: bool):
+        """
+        Given a tensor L of length probabilities of a messages M, returns
+        maximum achievable message entropy, computed according to the formula
+        H_max(M) = H(L) + H_max(M | L)
+        """
         min_real = torch.finfo(length_probs.dtype).min
         length_log2_prob = torch.clamp(torch.log2(length_probs), min=min_real)
-        entropy_length = (-length_probs * length_log2_prob).sum()
 
-        # print(length_probs)
-        max_entropy = entropy_length#.clone()
+        max_entropy = (-length_probs * length_log2_prob).sum()  # H(L)
         for i in range(len(length_probs)):
-            if noise:
-                max_entropy_i = self.max_message_entropy[i][0]
-            else:
-                max_entropy_i = self.max_message_entropy[i][1]
+            idx = 1 - int(noise)  # 0/1 for max. entropy with/without noise
+            max_entropy_i = self._max_message_entropy[i][idx]
             max_entropy += length_probs[i] * max_entropy_i
-        # print(max_entropy)
+            # P(L = i) * H_max(M | L = i)
 
         return max_entropy
-
-    def update_values(self, output_dict):
-        # compute entropy of message length
-        length_probs = output_dict['length_probs']
-        # min_positive = torch.finfo(length_probs.dtype).tiny
-        min_real = torch.finfo(length_probs.dtype).min
-        length_log2_prob = torch.clamp(torch.log2(length_probs), min=min_real)
-        entropy_length = (-length_probs * length_log2_prob).sum(-1)
-
-        # adjust entropy values to cover message length variability
-        # TODO if we bring deletion ch. back, entopy length w/o needs to be adjusted
-        output_dict['entropy_msg'] += entropy_length
-        output_dict['entropy_msg_nn'] += entropy_length
-
-        # exclude appended EOS
-        output_dict['entropy_smb'] = output_dict['entropy_smb'][:, :-1]
-        output_dict['entropy_smb_nn'] = output_dict['entropy_smb_nn'][:, :-1]
-
-        # compute_redundancy
-        entropy_msg = output_dict['entropy_msg']
-        entropy_smb = output_dict['entropy_smb']
-        entropy_msg_nn = output_dict['entropy_msg_nn']
-        entropy_smb_nn = output_dict['entropy_smb_nn']
-        length_probs = output_dict['length_probs']
-
-        # output_dict['redund_msg'] = 1 - entropy_msg / self.max_message_entropy
-        output_dict['redundancy_smb'] = \
-            (1 - entropy_smb / self.max_symbol_entropy).mean(-1)
-        # output_dict['redund_msg_nn'] = 1 - entropy_msg_nn / self.max_message_entropy
-        output_dict['redundancy_smb_nn'] = \
-            (1 - entropy_smb_nn / self.max_symbol_entropy).mean(-1)
-        # max_symbol_entropy_nn should be adjusted TODO
-
-        # max_entropy_adj = torch.zeros_like(entropy_msg)
-        max_entropy_adj = entropy_length.clone()
-        for i in range(length_probs.size(1)):
-            length_prob_i = length_probs[:, i]
-            max_entropy_i = self.max_message_entropy[i]
-            max_entropy_adj += length_prob_i * max_entropy_i
-
-        # assume empty messages have redundancy 1
-        output_dict['max_entropy'] = max_entropy_adj
-        output_dict['redundancy_msg'] = torch.where(
-            max_entropy_adj > 0,
-            1 - entropy_msg / max_entropy_adj,
-            1)
-
-        # TODO redundancy w/o noise
-
-        # TODO remove this check later
-        # mask = output_dict['redundancy_msg'] < 0
-        # if torch.any(mask):
-        #    # print("msg", output_dict['message'][mask])
-        #    print("message entropy", entropy_msg[mask])
-        #    print("max entropy adj", max_entropy_adj[mask])
-        #    print("redund", output_dict['redundancy_msg'][mask])
-        #    print("length messages", length_probs[mask])
-        #    print("length messages", length_probs[mask].sum(-1))
-        #    max_entropies = torch.tensor(list(self.max_message_entropy.values()))
-        #    max_entropies = max_entropies.unsqueeze(0)
-        #    print(length_probs[mask] * max_entropies)
-        #    print((length_probs[mask] * max_entropies).sum(-1) + entropy_length[mask])
-        #    print("")
-
-        return output_dict
 
     def forward(self, messages, probs, **kwargs):
         # GS
         if messages.dim() == 3:
-            # symbol_entropies = kwargs['entropy']
-
             _messages, _probs = self.gs(messages, probs, True)
             _messages_nn, _probs_nn = self.gs(messages, probs, False)
 
             output_dict = {
                 'accumulated_eos_prob': torch.zeros_like(messages[:,  :, 0])
-                # 'message': _messages,
-                # 'message_nn': messages,
-                # 'entropy_msg': torch.zeros_like(msg[:, 0, 0]),
-                # 'entropy_msg_nn': torch.zeros_like(msg_nn[:, 0, 0]),
-                # 'entropy_smb': entropies.detach(),
-                # 'entropy_smb_nn': entropies_nn.detach(),
-                # 'length_probs': torch.zeros(
-                #     messages.size(0),
-                #     messages.size(1) + 1,
-                #     requires_grad=False).to(messages),
-                # 'length_probs_nn': torch.zeros(  # TODO if deletion comes back
-                #    messages.size(0),
-                #     messages.size(1) + 1,
-                #    requires_grad=False).to(messages),
-            }
+            }  # TODO remove if we dont bring deletion back
 
             return _messages, _messages_nn, _probs, _probs_nn, output_dict
 
@@ -233,35 +105,11 @@ class Channel(nn.Module, metaclass=ABCMeta):
 
 
 class NoChannel(Channel):
-    def _max_symbol_entropy(self, vocab_size):
-        return self.max_symbol_entropy(vocab_size, noise=False)
-
     def gs(self, messages, probs, apply_noise):
         return messages, probs
 
     def reinforce(self, messages, probs, apply_noise, **kwargs):
         return messages, probs
-
-    # def _entropy(self, eos_prob):
-    #    # uniform symbol distribution maximizes entropy of 1 symbol messages
-    #    return (
-    #        self.binary_entropy(eos_prob)
-    #        # + eos_prob * 0
-    #        + (1 - eos_prob) * (
-    #            np.log2(se
-    #        )
-    #    )
-    # np.log2(self.vocab_size)
-
-    # def _message_entropy(self, eos_prob, max_suffix_entropy):
-    #     return (
-    #         self.binary_entropy(eos_prob)
-    #         # + eos_prob * 0
-    #         + (1 - torch.tensor(eos_prob)) * (
-    #             torch.log2(torch.tensor(self.vocab_size) - 1)
-    #             + max_suffix_entropy
-    #         )
-    #     )
 
 
 class ErasureChannel(Channel):
@@ -269,57 +117,15 @@ class ErasureChannel(Channel):
     Erases a symbol from a message with a given probability
     """
 
-    def _max_symbol_entropy(self, vocab_size=None):
-        if vocab_size is None:
-            vocab_size = self.vocab_size - 1
-        return (
-            self.binary_entropy(self.p.item())
-            + (1 - self.p.item()) * np.log2(vocab_size)
-            # + self.p * 0
-        )
-
-    # def _max_msg_entropy(self, length):
-    #     max_entropy = 0
-    #     for i in range(length - 1):
-    #         max_entropy +=  (
-    #             self.binary_entropy(self.p.item())
-    #             + (1 - self.p.item()) * np.log2(self.vocab_size - 1)
-    #             # + self.p.item() * 0
-    #         )
-    #     # only the last symbol might be EOS
-    #     max_entropy += (
-    #         self.binary_entropy(self.p.item())
-    #         + (1 - self.p.item()) * np.log2(self.vocab_size)
-    #         # + self.p.item() * 0
-    #    )
-    #     return max_entropy
-    # def _entropy(self, eos_prob):
-    #     error_prob = self.p.item()
-    #     erased_prob = (1 - eos_prob) * error_prob
-    #     return (
-    #         - eos_prob * np.log2(eos_prob)
-    #         - erased_prob * np.log2(erased_prob)
-    #         - (1 - eos_prob) * (1 - erased_prob) * (
-    #             np.log2(1 - eos_prob)
-    #             + np.log2(1 - erased_prob)
-    #             - np.log2(self.vocab_size - 1)
-    #        )
-    #     )
-
-    # def _message_entropy(self, eos_prob, max_suffix_entropy):
-    #     error_prob = self.p.item()
-    #     return (
-    #         self.binary_entropy(eos_prob)
-    #         # + eos_prob * 0
-    #         + (1 - eos_prob) * (
-    #             self.binary_entropy(error_prob)
-    #             + error_prob * max_suffix_entropy
-    #             + (1 - error_prob) * (
-    #                 np.log2(self.vocab_size - 1)
-    #                 + max_suffix_entropy
-    #             )
-    #         )
-    #     )
+    def max_non_eos_entropy(self, noise: bool):
+        if noise:
+            return (
+                self.binary_entropy(self.p.item())
+                # + self.p * 0
+                + (1 - self.p.item()) * np.log2(self.vocab_size - 1)
+            )
+        else:
+            return np.log2(self.vocab_size - 1)
 
     def gs(self, messages, probs, apply_noise):
         if not apply_noise:
@@ -358,17 +164,6 @@ class ErasureChannel(Channel):
             assert torch.allclose(probs.sum(-1), torch.ones_like(probs.sum(-1)))
 
             return messages, probs
-            # h_eos = self.tensor_binary_entropy(p_eos)
-            # H_non_eos = (entropies - h_eos) / (1 - p_eos)
-            # entropies = (
-            #     h_eos  # + p_eos * 0
-            #     + (1 - p_eos) * (
-            #         self.tensor_binary_entropy(self.p)
-            #         + (1 - self.p) * H_non_eos
-            #     )
-            # )
-
-            # return messages, entropies
 
         else:
             # append a column for erased symbols
@@ -379,7 +174,7 @@ class ErasureChannel(Channel):
             # apply argmax, exclude EOS, sample batch rows to be replaced
             discrete_symbols = messages.argmax(-1)
             non_eos_mask = discrete_symbols != 0
-            non_eos_symbols = discrete_symbols[non_eos_mask]
+            # non_eos_symbols = discrete_symbols[non_eos_mask]
             target_mask = torch.rand(
                 non_eos_mask.sum(),
                 generator=self.generator,
@@ -409,15 +204,6 @@ class ErasureChannel(Channel):
 
             return messages, probs
 
-            # adjust entropy
-            # entropies = entropies.clone()
-            # entropies[non_eos_symbols] = (
-            #     self.tensor_binary_entropy(self.p)
-            #     + (1 - self.p) * entropies[non_eos_symbols]
-            # )
-
-            # return messages, entropies
-
     def reinforce(self, messages, entropies, apply_noise, **kwargs):
         if not apply_noise:
             return messages, entropies
@@ -445,14 +231,12 @@ class ErasureChannel(Channel):
 
 
 class DeletionChannel(Channel):
-    def _max_symbol_entropy(self, vocab_size=None):
-        pass
-
     def gs(self, messages, entropies, apply_noise):
         if not apply_noise:
             return messages, entropies
 
         elif self.training:
+            raise NotImplementedError
             # reshape & sample targets
             size = messages.size()
             messages = messages.clone()
@@ -484,11 +268,6 @@ class SymmetricChannel(Channel):
     The replacement symbol is randomly sampled from a uniform distribution.
     """
 
-    def _max_symbol_entropy(self, vocab_size=None):
-        if vocab_size is None:
-            vocab_size = self.vocab_size - 1
-        return np.log2(vocab_size)
-
     def gs(self, messages, probs, apply_noise):
         if not apply_noise:
             return messages, probs
@@ -505,7 +284,7 @@ class SymmetricChannel(Channel):
             n_targets = target_mask.sum()
 
             if n_targets == 0:
-                return messages.view(size), entropy
+                return messages.view(size), probs
 
             # get target positions & messages
             non_eos_symbols = torch.arange(1, size[-1]).expand(len(messages), -1)
@@ -536,24 +315,14 @@ class SymmetricChannel(Channel):
             messages = (messages + adjustment).view(size)
 
             # adjust symbol probabilities
-            p_eos = probs[:, :, 0]
+            probs = probs.clone()
+            p_replacement = (1 - probs[:, :, 1:] - probs[:, :, :1])
+            p_replacement *= self.p / (size[-1] - 2)
             probs[:, :, 1:] *= 1 - self.p
-            probs [:, :, 1:] += (1 - p_eos) * self.p / (size[-1] - 1)
+            probs[:, :, 1:] += p_replacement
             assert torch.allclose(probs.sum(-1), torch.ones_like(probs.sum(-1)))
 
             return messages, probs
-
-            # p_eos = messages[:, :, 0].detach()
-            # h_eos = self.tensor_binary_entropy(p_eos)
-            # H_non_eos = (entropy - h_eos) / (1 - p_eos)
-            # entropy = (
-            #     h_eos  # + p_eos * 0
-            #     + (1 - p_eos) * (
-            #         self.tensor_binary_entropy(self.p)
-            #         + self.p * torch.log2(torch.tensor(messages.size(-1) - 2))
-            #         + (1 - self.p) * H_non_eos
-            #     )
-            # )
 
         else:
             # reshape, apply argmax, exclude EOS, sample symbols to be replaced
@@ -569,7 +338,7 @@ class SymmetricChannel(Channel):
             n_targets = target_mask.sum()
 
             if n_targets == 0:
-                return messages.view(size), entropy
+                return messages.view(size), probs
 
             # get target positions & symbols
             target_rows = non_eos_ids[target_mask]
@@ -595,23 +364,17 @@ class SymmetricChannel(Channel):
             messages = messages.view(size)
 
             # adjust symbol probabilities
-            p_eos = probs[:, :, 0]
+            probs = probs.clone()
+            p_replacement = (1 - probs[:, :, 1:] - probs[:, :, :1])
+            p_replacement *= self.p / (size[-1] - 2)
             probs[:, :, 1:] *= 1 - self.p
-            probs[:, :, 1:] += (1 - p_eos) * self.p / (size[-1] - 1)
+            probs[:, :, 1:] += p_replacement
             assert torch.allclose(probs.sum(-1), torch.ones_like(probs.sum(-1)))
 
             return messages, probs
 
-            # adjust entropy for all non EOS symbols
-            # non_eos_mask = messages.argmax(-1) != 0
-            # entropy = entropy.clone()
-            # entropy[non_eos_mask] = (
-            #     self.tensor_binary_entropy(self.p)
-            #     + self.p * torch.log2(torch.tensor(messages.size(-1) - 2))
-            #     + (1 - self.p) * entropy[non_eos_mask]
-            # )
-
     def reinforce(self, messages, entropies, apply_noise, lengths=None):
+        raise NotImplementedError
         if not apply_noise:
             return messages, entropies
 
@@ -651,5 +414,4 @@ class SymmetricChannel(Channel):
         # replace
         messages[target_rows] = replacement_symbols
 
-        # TODO entropy
         return messages.view(size), entropies

@@ -10,14 +10,12 @@ import json
 import time
 import pathlib
 import argparse
-import operator
 from collections import defaultdict
 from datetime import timedelta
 
 import torch.utils.data
 
 import egg.core as core
-# from egg.core.util import move_to
 
 from ancm.trainers import Trainer
 from ancm.util import (
@@ -255,20 +253,8 @@ def main(params):
     def evaluate(dataloader):
         dump = Dump(game, dataloader, device)
 
-        # unique target objects
-        unique_targets = defaultdict(int)
-        # for i in range(len(dump)):
-        #     if opts.image_input:
-        #         target = [
-        #             dump.target_attributes[k][i]
-        #             for k in dump.target_attributes]
-        #     else:
-        #         target = dump.sender_inputs[i].nonzero().squeeze().tolist()
-        #    target_repr = ','.join([str(int(x)) for x in target.tolist()])
-        #     unique_targets[target_repr] += 1
-
         # dump messages
-        messages = []
+        messages, target_counts = [], defaultdict(int)
         for s_input, msg, msg_nn, r_input, r_output, r_output_nn, label, \
                 target_attr, distr_attr in dump:
 
@@ -315,24 +301,23 @@ def main(params):
                     'distractor_cats': [x['category'] for x in distr_attr],
                 })
 
-            unique_targets[target_vec] += 1
+            target_counts[target_vec] += 1
             messages.append(message_log)
 
         return {
-            'results': dump.get_results_dict(game, opts, unique_targets),
+            'evaluation': dump.get_results_dict(game, opts, target_counts),
             'messages': messages,
         }
 
     game.eval()
-    output_dict = {}
+    dump_dict = {}
 
-    # results on the eval subset of the training set (VISA)
+    # results on the eval subset of the training set (VISA only)
     if aux_train_data is not None:
-        # game.train()
-        output_dict['train'] = evaluate(aux_train_data)
+        dump_dict['train'] = evaluate(aux_train_data)
 
     # results on the test set
-    output_dict['test'] = evaluate(test_data)
+    dump_dict['test'] = evaluate(test_data)
 
     # save training time
     training_time = timedelta(seconds=t_end - t_start)
@@ -363,11 +348,8 @@ def main(params):
 
         return x
 
-    opts_dict = {k: make_jsonable(v.item()) if isinstance(v, torch.Tensor)
-                 else v for k, v in vars(opts).items() if is_jsonable(v) and k != 'optimizer'}
-    # opts_dict = {k: v for k, v in vars(opts) if is_jsonable(v) and k != 'optimizer'}
-    output_dict['opts'] = opts_dict
-    output_dict['training_time'] = {
+    dump_dict['opts'] = {k: v for k, v in vars(opts).items() if is_jsonable(v)}
+    dump_dict['training_time'] = {
         'training': training_time,
         'evaluation': evaluation_time,
         'training_per_epoch': training_time_per_epoch,
@@ -376,7 +358,7 @@ def main(params):
     if opts.results_folder:
         opts.results_folder.mkdir(exist_ok=True)
         with open(opts.results_folder / f'{opts.filename}-results.json', 'w') as f:
-            json.dump(make_jsonable(output_dict), f, indent=4)
+            json.dump(make_jsonable(dump_dict), f, indent=4)
 
         print(f"Results saved to {opts.results_folder / opts.filename}-results.json")
 
@@ -384,7 +366,7 @@ def main(params):
     print('Training time per epoch:', training_time_per_epoch)
     print('Evaluation time:', evaluation_time)
 
-    print_training_results(output_dict)
+    print_training_results(dump_dict)
 
 
 if __name__ == "__main__":

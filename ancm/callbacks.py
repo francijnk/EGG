@@ -16,9 +16,9 @@ from rich.progress import (
 from rich.table import Table
 from rich.text import Text
 
-from ancm.measures import (
-    compute_mi,
+from ancm.eval import (
     message_entropy,
+    compute_mi,
     compute_max_rep,
     compute_top_sim,
     compute_posdis,
@@ -152,7 +152,7 @@ class CustomProgressBarLogger(Callback):
         od.update(aux)
         return od
 
-    def format_metric_val(self, val):
+    def format_values(self, val):
         if (isinstance(val, tuple) and val[0] is None) \
                 or val is None or val != val:
             return '–'
@@ -189,9 +189,9 @@ class CustomProgressBarLogger(Callback):
                     or colname in ('epoch', 'phase', 'condition'):
                 continue
             if noise:
-                value = self.format_metric_val(od[colname])
+                value = self.format_values(od[colname])
             else:
-                value = self.format_metric_val(
+                value = self.format_values(
                     od[f'{colname}_nn'] if f'{colname}_nn' in od
                     else od[colname])
             row_values.append(value)
@@ -383,17 +383,23 @@ class TrainingEvaluationCallback(Callback):
         logs.aux['actual_vocab_size'] = torch.unique(messages).numel()
 
         entropy, len_probs = message_entropy(logs.probs)
-        max_entropy = self.channel.compute_max_entropy(len_probs, True)
-        logs.aux['max_rep'] = compute_max_rep(messages)
+        max_entropy = self.channel.max_message_entropy(len_probs, True)
         logs.aux['entropy_msg'] = entropy
         logs.aux['entropy_max'] = max_entropy
+        logs.aux['max_rep'] = compute_max_rep(messages)
         logs.aux['redundancy'] = 1 - entropy / max_entropy
 
-        logs.aux['exp_len'] = (
-            (torch.arange(logs.probs.size(1)) + 1) * len_probs
-        ).sum()
+        logs.aux['length'] = (
+            torch.arange(logs.probs.size(1)) * len_probs).sum()
 
         if self.image_input:
+            logs.aux['topsim'] = None if training else \
+                compute_top_sim(attr, messages)
+            logs.aux['posdis'] = None if training else \
+                compute_posdis(attr, messages, vocab_size)
+            logs.aux['bosdis'] = None if training else \
+                compute_bosdis(attr, messages, vocab_size)
+
             mi_attr = compute_mi(logs.probs, attr, entropy)
             logs.aux['entropy_attr'] = mi_attr['entropy_attr']
             for i, key in enumerate(attr_keys):
@@ -402,13 +408,12 @@ class TrainingEvaluationCallback(Callback):
                     k.replace('attr_dim', key): v[i]
                     for k, v in mi_attr.items() if 'attr_dim' in k
                 })
-            logs.aux['topsim'] = None if training else \
-                compute_top_sim(attr, messages)
-            logs.aux['posdis'] = None if training else \
-                compute_posdis(attr, messages, vocab_size)
-            logs.aux['bosdis'] = None if training else \
-                compute_bosdis(attr, messages, vocab_size)
         else:
+            logs.aux['topsim'] = None if training else \
+                compute_top_sim(logs.sender_input, messages)
+            logs.aux['topsim_cat'] = None if training else \
+                compute_top_sim(attr, messages)
+
             # assign a different number to every input vector
             _, input_cat = torch.unique(
                 logs.sender_input, return_inverse=True, dim=0)
@@ -422,11 +427,6 @@ class TrainingEvaluationCallback(Callback):
                 in compute_mi(logs.probs, attr, entropy).items()
             })
 
-            logs.aux['topsim'] = None if training else \
-                compute_top_sim(logs.sender_input, messages)
-            logs.aux['topsim_cat'] = None if training else \
-                compute_top_sim(attr, messages)
-
         # compute measure values for messages before noise is applied
         if not isinstance(self.channel, NoChannel):
             messages = crop_messages(logs.message_nn)
@@ -435,17 +435,15 @@ class TrainingEvaluationCallback(Callback):
             logs.aux['loss_nn'] = None
             logs.aux['lexicon_size_nn'] = len(torch.unique(messages, dim=0))
             logs.aux['actual_vocab_size_nn'] = torch.unique(messages).numel()
-
             entropy, len_probs = message_entropy(logs.probs_nn)
-            max_entropy = self.channel.compute_max_entropy(len_probs, False)
+            max_entropy = self.channel.max_message_entropy(len_probs, False)
             logs.aux['max_rep_nn'] = compute_max_rep(messages)
             logs.aux['entropy_msg_nn'] = entropy
             logs.aux['entropy_max_nn'] = max_entropy
             logs.aux['redundancy_nn'] = 1 - entropy / max_entropy
 
-            logs.aux['exp_len_nn'] = (
-                (torch.arange(logs.probs.size(1)) + 1) * len_probs
-            ).sum()
+            logs.aux['length_nn'] = (
+                torch.arange(logs.probs_nn.size(1)) * len_probs).sum()
 
             if self.image_input:
                 for i, key in enumerate(attr_keys):
