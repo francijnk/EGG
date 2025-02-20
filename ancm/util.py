@@ -479,7 +479,7 @@ class Dump:
             else:
                 results[key].update({
                     'topsim': compute_top_sim(sender_inputs, messages),
-                    'topsim_cat': compute_top_sim(t_attributes, messages),
+                    # 'topsim_cat': compute_top_sim(t_attributes, messages),
                 })
 
                 # assign a different number to every input vector

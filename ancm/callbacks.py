@@ -2,6 +2,7 @@ import torch
 import wandb
 import argparse
 import pandas as pd
+from torch.distributions.utils import logits_to_probs, probs_to_logits
 
 from collections import OrderedDict, defaultdict
 
@@ -26,9 +27,10 @@ from ancm.eval import (
 )
 from ancm.channels import Channel, NoChannel
 from ancm.util import crop_messages
+from ancm.interaction import Interaction
 
+from egg.core.util import find_lengths
 from egg.core.callbacks import Callback, CustomProgress
-from egg.core.interaction import Interaction
 
 from typing import Dict, Any
 
@@ -354,6 +356,46 @@ class CustomProgressBarLogger(Callback):
             print(f"Training history saved to {dump_path}")
 
 
+class ProcessInteractionCallback(Callback):
+    def __init__(self, mode):
+        self.gs = mode == 'gs'
+
+    def on_epoch_end(self, loss: float, logs: Interaction, epoch: int):
+        if self.gs:
+            logs.lengths = find_lengths(logs.message) 
+            logs.message = crop_messages(logs.message, logs.lengths)
+            length_logits = torch.logsumexp(
+                probs_to_logits(logs.aux["length_probs"]), dim=0)
+            length_logits -= length_logits.logsumexp(0)
+            logs.aux["length_probs"] = length_logits.exp()
+            assert logs.aux["length_probs"].sum(-1) == 1
+ 
+            logs.lengths_nn = find_lengths(logs.message_nn) 
+            logs.message_nn = crop_messages(logs.message_nn, logs.lengths_nn)
+            length_logits = torch.logsumexp(
+                probs_to_logits(logs.aux["length_probs_nn"]), dim=0)
+            length_logits -= length_logits.logsumexp(0)
+            logs.aux["length_probs_nn"] = length_logits.exp()
+            assert logs.aux["length_probs_nn"].sum(-1) == 1
+
+    def on_validation_end(self, loss: float, logs: Interaction, epoch: int):
+        if self.gs:
+            length_logits = torch.logsumexp(
+                probs_to_logits(logs.aux["length_probs"]), dim=0)
+            length_logits -= length_logits.logsumexp(0)
+            logs.aux["length_probs"] = length_logits.exp()
+            assert logs.aux["length_probs"].sum(-1) == 1
+
+            length_logits = torch.logsumexp(
+                probs_to_logits(logs.aux["length_probs_nn"]), dim=0)
+            length_logits -= length_logits.logsumexp(0)
+            logs.aux["length_probs_nn"] = length_logits.exp()
+            assert logs.aux["length_probs_nn"].sum(-1) == 1
+
+            assert find_lengths(logs.message) == find_lengths(crop_messages(logs.message))
+            assert find_lengths(logs.message_nn) == find_lengths(crop_messages(logs.message_nn))
+        
+
 class TrainingEvaluationCallback(Callback):
     def __init__(self, opts: argparse.Namespace, channel: Channel):
         self.vocab_size = opts.vocab_size
@@ -385,14 +427,10 @@ class TrainingEvaluationCallback(Callback):
 
         entropy, length_probs = message_entropy(logs.probs)
         max_entropy = self.channel.max_message_entropy(length_probs, True)
-        # TODO which length probs are more accurate? remove the other
-        # length_probs = logs.aux['length_probs'].sum(0) / len(messages)
         logs.aux['entropy_msg'] = entropy
         logs.aux['entropy_max'] = max_entropy
         logs.aux['max_rep'] = compute_max_rep(messages)
         logs.aux['redundancy'] = 1 - entropy / max_entropy
-        # logs.aux['length'] = (
-        #     torch.arange(logs.probs.size(1)) * length_probs).sum()
 
         if self.image_input:
             logs.aux['topsim'] = None if training else \
@@ -413,8 +451,8 @@ class TrainingEvaluationCallback(Callback):
         else:
             logs.aux['topsim'] = None if training else \
                 compute_top_sim(logs.sender_input, messages)
-            logs.aux['topsim_cat'] = None if training else \
-                compute_top_sim(attr, messages)
+            # logs.aux['topsim_cat'] = None if training else \
+            #     compute_top_sim(attr, messages)
 
             # assign a different number to every input vector
             _, input_cat = torch.unique(
@@ -432,14 +470,13 @@ class TrainingEvaluationCallback(Callback):
         # compute measure values for messages before noise is applied
         if not isinstance(self.channel, NoChannel):
             messages = crop_messages(logs.message_nn)
-            vocab_size = self.vocab_size  # does not include additional symbols
 
             logs.aux['loss_nn'] = None
             logs.aux['lexicon_size_nn'] = len(torch.unique(messages, dim=0))
             logs.aux['actual_vocab_size_nn'] = torch.unique(messages).numel()
+
             entropy, length_probs = message_entropy(logs.probs_nn)
             max_entropy = self.channel.max_message_entropy(length_probs, False)
-            # length_probs = logs.aux['length_probs'].sum(0) / len(messages)
             logs.aux['max_rep_nn'] = compute_max_rep(messages)
             logs.aux['entropy_msg_nn'] = entropy
             logs.aux['entropy_max_nn'] = max_entropy
@@ -457,9 +494,9 @@ class TrainingEvaluationCallback(Callback):
                 logs.aux['topsim_nn'] = None if training else \
                     compute_top_sim(attr, messages)
                 logs.aux['posdis_nn'] = None if training else \
-                    compute_posdis(attr, messages, vocab_size)
+                    compute_posdis(attr, messages, self.vocab_size)
                 logs.aux['bosdis_nn'] = None if training else \
-                    compute_bosdis(attr, messages, vocab_size)
+                    compute_bosdis(attr, messages, self.vocab_size)
             else:
                 logs.aux.update({
                     k.replace('attr', 'input_nn'): v for k, v in
@@ -475,5 +512,5 @@ class TrainingEvaluationCallback(Callback):
 
                 logs.aux['topsim_nn'] = None if training else \
                     compute_top_sim(logs.sender_input, messages)
-                logs.aux['topsim_cat_nn'] = None if training else \
-                    compute_top_sim(attr, messages)
+                # logs.aux['topsim_cat_nn'] = None if training else \
+                #     compute_top_sim(attr, messages)

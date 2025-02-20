@@ -49,51 +49,45 @@ class CustomDataset(Dataset):
 
 
 def message_entropy(probs, max_entropy=None, order=4, split_size=1000):
-    """
-    work in progress...
-    """
-    # min_real = torch.finfo(probs.dtype).min
+    min_real = torch.finfo(probs.dtype).min
 
     size = probs.size()
     logits = probs_to_logits(
-        probs.view(size[0] * size[1], size[2])).view(size)
+        probs.view(size[0] * size[1], size[2])
+    ).view(size)
 
     symbol_entropies = torch.zeros_like(probs[0, :, 0])
     eos_probs = torch.ones_like(probs[0, :, 0])
-    not_eosed_before = 1.
+    p_not_eosed = 1
 
     for symbol_i in range(probs.size(1) - 1):
         symbol_logits = logits[:, symbol_i, :]
+
         if symbol_i == 0:
-            log_prob = torch.logsumexp(symbol_logits, 0)
+            log_prob = symbol_logits.logsumexp(0)
             log_prob -= log_prob.logsumexp(0)  # normalize
-            log2_prob = log_prob / np.log(2)  # switch to base 2
-            # c_log2_prob = torch.clamp(c_logits / np.log(2), min=min_real)
-            _probs = log_prob.exp()  # logits_to_probs(log_prob)
-            eos_probs[0] = _probs[0]
-            symbol_entropies[0] = (-log2_prob * _probs).sum()
-            not_eosed_before *= 1 - _probs[0]
+            log2_prob = torch.clamp(log_prob / np.log(2), min=min_real)
+            prob = probs[:, symbol_i, :].sum(0) / probs.size(0)
+
+            symbol_entropies[0] = torch.dot(-prob, log2_prob)
+            eos_probs[0] = prob[0]
+            p_not_eosed *= 1 - prob[0]
             continue
 
-        if order is not None:
-            # TODO test or remove
-            prev_logits = logits[:, max(0, symbol_i - order):symbol_i, 1:]
-        else:
-            prev_logits = logits[:, :symbol_i, 1:]
+        first_symbol = 0 if order is None else max(0, symbol_i - order)
+        prev_logits = logits[:, first_symbol:symbol_i, 1:]
+        n_prev = prev_logits.size(1)
 
+        # indices of all possible non-EOS prefixes
         prefix_indices = torch.cartesian_prod(
-            *(torch.arange(prev_logits.size(-1))
-              for i in range(prev_logits.size(1)))
-        ).view(-1, prev_logits.size(1))
+            *(torch.arange(prev_logits.size(-1)) for i in range(n_prev))
+        ).view(-1, n_prev)
 
-        prefix_logits, cond_entropy, cond_eos_prob = [], [], []
+        prefix_logits, cond_entropy, cond_p_eos = [], [], []
         for p_indices in torch.split(prefix_indices, split_size):
-            # indices of all possible non-EOS prefixes
             idx = (
                 p_indices,
-                torch.arange(prev_logits.size(1))
-                .unsqueeze(0)
-                .expand(p_indices.size(0), -1),
+                torch.arange(n_prev).view(1, -1).expand(p_indices.size()),
             )
 
             # prefix log-probabilities
@@ -101,40 +95,31 @@ def message_entropy(probs, max_entropy=None, order=4, split_size=1000):
 
             # conditional entropy for each prefix
             c_logits = torch.logsumexp(
-                symbol_logits.unsqueeze(1) + p_logits.unsqueeze(-1), 0)
+                symbol_logits.unsqueeze(1) + p_logits.unsqueeze(-1), dim=0)
             c_logits -= c_logits.logsumexp(-1, keepdim=True)  # normalize
-            c_log2_prob = c_logits / np.log(2)  # switch to base 2
+            c_log2_prob = torch.clamp(c_logits / np.log(2), min=min_real)
             c_probs = c_logits.exp()
-            c_entropy = (-c_probs * c_log2_prob).sum(-1)
-
-            assert torch.allclose(c_probs.sum(-1), torch.ones_like(c_probs[:, 0]))
+            c_entropy = torch.linalg.vecdot(-c_probs, c_log2_prob)
 
             prefix_logits.append(p_logits.logsumexp(0))
-            cond_eos_prob.append(c_probs[:, 0])
             cond_entropy.append(c_entropy)
+            cond_p_eos.append(c_probs[:, 0])
 
-        prefix_probs = logits_to_probs(torch.cat(prefix_logits)) * not_eosed_before
+        prefix_probs = logits_to_probs(torch.cat(prefix_logits)) * p_not_eosed
         cond_entropy = torch.cat(cond_entropy)
-        cond_eos_prob = torch.cat(cond_eos_prob)
+        cond_p_eos = torch.cat(cond_p_eos)
 
         symbol_entropies[symbol_i] = torch.dot(prefix_probs, cond_entropy)
-        eos_prob = torch.dot(prefix_probs, cond_eos_prob) / not_eosed_before
-
-        assert torch.allclose(not_eosed_before, prefix_probs.sum())
-
-        eos_probs[symbol_i] = eos_prob
-        not_eosed_before *= 1 - eos_prob
+        p_eos = torch.dot(prefix_probs, cond_p_eos) / p_not_eosed
+        eos_probs[symbol_i] = p_eos
+        p_not_eosed *= 1 - p_eos
 
     entropy = symbol_entropies.sum()
-
-    not_eosed_before = 1.
-    length_probs = torch.zeros_like(eos_probs)
-    for i in range(probs.size(1)):
-        length_probs[i] = not_eosed_before * eos_probs[i]
-        not_eosed_before *= 1 - eos_probs[i]
-
+    length_probs = torch.cat([
+        eos_probs[:1],
+        eos_probs[1:] * torch.cumprod(1 - eos_probs[:-1], dim=0),
+    ])
     return entropy, length_probs
-
 
 
 # Redundancy
@@ -165,7 +150,7 @@ def compute_max_rep(messages: torch.Tensor) -> torch.Tensor:
     return output
 
 
-def joint_entropy(probs, y, split_size=512):
+def joint_entropy(probs, y, split_size=1000):
     """
     Given symbol probabilities representing realizations of a message M
     (M = M1, ..., Mn) and corresponding realizations of a non-compound RV Y,
@@ -312,7 +297,7 @@ def remove_n_dims(tensor, n=1):
     return result
 
 
-def compute_accuracy2(messages, receiver_inputs, labels, receiver: torch.nn.Module, opts):
+def compute_accuracy2(messages, receiver_inputs, labels, receiver, opts):
     messages, receiver_inputs, labels = truncate_messages(
         messages, receiver_inputs, labels, opts.mode)
 
@@ -324,8 +309,6 @@ def compute_accuracy2(messages, receiver_inputs, labels, receiver: torch.nn.Modu
         drop_last=False)
 
     predictions = []
-    messages = []
-    receiver_outputs = []
     for batched_messages, batched_inputs in dataloader:
         with torch.no_grad():
             outputs = receiver(batched_messages, batched_inputs)

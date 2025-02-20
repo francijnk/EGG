@@ -94,10 +94,16 @@ class Channel(nn.Module, metaclass=ABCMeta):
             _messages_nn, _probs_nn = self.gs(messages, probs, False)
 
             output_dict = {
-                'accumulated_eos_prob': torch.zeros_like(messages[:,  :, 0])
+                'accumulated_eos_prob': torch.zeros_like(messages[:, :, 0])
             }  # TODO remove if we dont bring deletion back
 
-            return _messages, _messages_nn, _probs, _probs_nn, output_dict
+            return (
+                _messages,
+                _messages_nn.detach(),
+                _probs,
+                _probs_nn,
+                output_dict
+            )
 
         # Reinforce
         else:

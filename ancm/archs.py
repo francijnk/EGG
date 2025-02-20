@@ -523,7 +523,7 @@ class CommunicationRnnReinforce(nn.Module):
 
             receiver_output, log_prob_r, entropy_r = \
                 (item[:len(message)] for item in receiver_output_joined)
-            receiver_output_nn = receiver_output_joined[0][len(message):]
+            # receiver_output_nn = receiver_output_joined[0][len(message):]
 
         loss, aux_info = loss_fn(
             sender_input, message, receiver_input,
@@ -794,12 +794,10 @@ class SenderReceiverRnnGS(nn.Module):
             receiver_output = receiver_output_joined[:len(message)]
             receiver_output_nn = receiver_output_joined[len(message):]
 
-        loss, z = 0.0, 0.0
-        length_probs = torch.zeros_like(message[:, :, 0])
-        not_eosed_before = torch.ones(
-            receiver_output.size(0),
-            device=receiver_output.device)
-        length_probs_nn = length_probs.clone()
+        loss, z, length, length_nn = 0, 0, 0, 0
+        # length_probs = torch.zeros_like(message[:, :, 0])
+        # length_probs_nn = length_probs.clone()
+        not_eosed_before = torch.ones(message.size(0)).to(message.device)
         not_eosed_before_nn = not_eosed_before.detach().clone()
         aux_info = {}
 
@@ -824,22 +822,22 @@ class SenderReceiverRnnGS(nn.Module):
             # if isinstance(self.channel, DeletionChannel):
             #     eos_mask = channel_aux + step < not_eosed_before.detach()
             # else:
-            eos_mask = message[:, step, 0]
-            eos_mask_nn = message_nn[:, step, 0]
-            add_mask = eos_mask * not_eosed_before
-            add_mask_nn = eos_mask_nn * not_eosed_before_nn
+            add_mask = message[:, step, 0] * not_eosed_before
+            add_mask_nn = message_nn[:, step, 0] * not_eosed_before_nn
 
             z += add_mask
             loss += step_loss * add_mask
-            loss += self.length_cost * (1.0 + step) * add_mask
+            loss += self.length_cost * (1 + step) * add_mask
+            length += add_mask.detach() * (1 + step)
+            length_nn += add_mask_nn * (1 + step)
 
             # aggregate aux info
             for name, value in step_aux.items():
-                aux_info[name] = value * add_mask + aux_info.get(name, 0.)
+                aux_info[name] = value * add_mask + aux_info.get(name, 0)
             aux_info['accuracy_nn'] = accuracy_nn * add_mask_nn \
-                + aux_info.get('accuracy_nn', 0.)
-            length_probs[:, step] = add_mask.detach()
-            length_probs_nn[:, step] = add_mask_nn.detach()
+                + aux_info.get('accuracy_nn', 0)
+            # length_probs[:, step] = add_mask.detach()
+            # length_probs_nn[:, step] = add_mask_nn.detach()
 
             # aggregate message entropy
             # if the probability that message has a given length is very low,
@@ -857,7 +855,7 @@ class SenderReceiverRnnGS(nn.Module):
             #     - self.channel.tensor_binary_entropy(eos_mask.detach())
             # ) / (1 - eos_mask.detach())  # no gradient
 
-            not_eosed_before = not_eosed_before * (1.0 - eos_mask)
+            not_eosed_before = not_eosed_before * (1 - message[:, step, 0])
 
             # TODO check the below works correctly & detaches
             # channel_dict['entropy_msg_nn'] = channel_dict['entropy_msg_nn'] \
@@ -870,15 +868,14 @@ class SenderReceiverRnnGS(nn.Module):
             #    - self.channel.tensor_binary_entropy(message_nn[:, step, 0])
             # ).detach() / (1 - eos_mask.detach())
 
-            not_eosed_before_nn = (
-                not_eosed_before_nn * (1.0 - eos_mask_nn)
-            ).detach()
+            not_eosed_before_nn *= 1 - message_nn[:, step, 0]
 
         # the remainder of the probability mass
-        loss += step_loss * not_eosed_before
-        loss += self.length_cost * (step + 1.0) * not_eosed_before
-
         z += not_eosed_before
+        loss += step_loss * not_eosed_before
+        loss += self.length_cost * (step + 1) * not_eosed_before
+        length += (step + 1) * not_eosed_before
+        length_nn += (step + 1) * not_eosed_before_nn
 
         assert z.allclose(
             torch.ones_like(z)
@@ -887,13 +884,28 @@ class SenderReceiverRnnGS(nn.Module):
         for name, value in step_aux.items():
             aux_info[name] = value * not_eosed_before + aux_info.get(name, 0.0)
 
-        expected_length = (torch.arange(step + 1) * length_probs).sum(-1) + 1
-        aux_info["length"] = expected_length
-        aux_info["length_probs"] = length_probs
+        aux_info["length"] = length
+        aux_info["length_nn"] = length_nn
+
+        # compute expected_length on probs
+        # TODO remove? this is more accurate but there's barely any difference
+        # length_probs = torch.cat([
+        #     probs[:, :1, 0],
+        #     probs[:, 1:, 0] * torch.cumprod(1 - probs[:, :-1, 0], dim=1),
+        # ], dim=1)
+        # length_probs_nn = torch.cat([
+        #     probs_nn[:, :1, 0],
+        #     probs_nn[:, 1:, 0] * torch.cumprod(1 - probs_nn[:, :-1, 0], dim=1),
+        # ], dim=1)
+        # exp_length = (torch.arange(step + 1) * length_probs).sum(-1) + 1
+        # exp_length_nn = (torch.arange(step + 1) * length_probs_nn).sum(-1) + 1
+        # aux_info["length_probs"] = length_probs
+        # aux_info["length_probs_nn"] = length_probs_nn
+        # aux_info["exp_length"] = exp_length
+        # aux_info["exp_length_nn"] = exp_length_nn
 
         logging_strategy = LoggingStrategy()
 
-        expected_length_nn = expected_length
         interaction = logging_strategy.filtered_interaction(
             sender_input=sender_input,
             receiver_input=receiver_input,
@@ -901,11 +913,11 @@ class SenderReceiverRnnGS(nn.Module):
             aux_input=aux_input,
             message=message.detach().argmax(-1),
             probs=probs.detach(),
-            message_length=expected_length.detach(),
+            message_length=length.detach(),
             receiver_output=receiver_output.detach(),
             message_nn=message_nn.detach().argmax(-1),
             probs_nn=probs_nn.detach(),
-            message_length_nn=expected_length_nn.detach(),
+            message_length_nn=length_nn.detach(),
             receiver_output_nn=receiver_output_nn.detach(),
             aux=aux_info)
 
