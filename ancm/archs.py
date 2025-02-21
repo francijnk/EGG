@@ -751,11 +751,10 @@ class SenderReceiverRnnGS(nn.Module):
             error_prob, sender.max_len, vocab_size, device, seed)
 
     def forward(self, sender_input, labels, receiver_input, aux_input):
-        _message, _probs = self.sender(sender_input, aux_input)
+        sender_output = self.sender(sender_input, aux_input)
 
         # pass messages and symbol probabilities through the channel
-        message, message_nn, probs, probs_nn, channel_aux = \
-            self.channel(_message, _probs)
+        (message, probs), (message_nn, probs_nn) = self.channel(*sender_output)
 
         # append EOS to each message
         eos = torch.zeros_like(message[:, :1, :])
@@ -911,11 +910,11 @@ class SenderReceiverRnnGS(nn.Module):
             receiver_input=receiver_input,
             labels=labels,
             aux_input=aux_input,
-            message=message.detach().argmax(-1),
+            message=message.detach(),
             probs=probs.detach(),
             message_length=length.detach(),
             receiver_output=receiver_output.detach(),
-            message_nn=message_nn.detach().argmax(-1),
+            message_nn=message_nn.detach(),
             probs_nn=probs_nn.detach(),
             message_length_nn=length_nn.detach(),
             receiver_output_nn=receiver_output_nn.detach(),

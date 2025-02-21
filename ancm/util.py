@@ -1,6 +1,7 @@
 import math
 import json
 import torch
+import argparse
 import numpy as np
 from tabulate import tabulate, SEPARATING_LINE
 from collections import defaultdict
@@ -8,8 +9,6 @@ from torch.utils.data import Dataset, DataLoader
 # from torch.distributions import OneHotCategorical
 
 from typing import Optional
-
-from egg.core.util import find_lengths, move_to, get_opts
 
 # from ancm.archs import tensor_binary_entropy
 from ancm.eval import (
@@ -23,6 +22,11 @@ from ancm.eval import (
     # binary_entropy,
 )
 from ancm.archs import NoChannel
+from ancm.interaction import Interaction
+
+from egg.core.util import find_lengths, get_opts
+from egg.core.batch import Batch
+
 
 common_opts = get_opts()
 
@@ -126,16 +130,15 @@ class DataHandler:
         test_dataset = ObjectDataset(*test, attribute_names)
 
         def _collate(batch):
-            obj_sets, target_ids, obj_attributes = zip(*batch)
-            bs = self.batch_size
+            obj_sets, target_ids, aux_attributes = zip(*batch)
 
             r_inputs, labels = np.vstack(np.expand_dims(obj_sets, 0)), np.array(target_ids)
-            targets = r_inputs[np.arange(bs), labels]
-            obj_attributes = np.vstack(obj_attributes)
+            targets = r_inputs[np.arange(labels.shape[0]), labels]
+            aux_attributes = np.vstack(aux_attributes)
 
             aux = {}
-            for attr_name in obj_attributes.dtype.names:
-                aux[attr_name] = torch.from_numpy(obj_attributes[attr_name]).float()
+            for attr_name in aux_attributes.dtype.names:
+                aux[attr_name] = torch.from_numpy(aux_attributes[attr_name]).float()
 
             return (
                 torch.from_numpy(targets).float(),
@@ -154,13 +157,13 @@ class DataHandler:
             val_dataset,
             batch_size=self.batch_size,
             collate_fn=_collate,
-            drop_last=True,
+            drop_last=False,
             shuffle=False)
         test_dataloader = DataLoader(
             test_dataset,
             batch_size=self.batch_size,
             collate_fn=_collate,
-            drop_last=True,
+            drop_last=False,
             shuffle=False)
 
         if "train_eval" in data:
@@ -176,7 +179,7 @@ class DataHandler:
                 train_eval_dataset,
                 batch_size=self.batch_size,
                 collate_fn=_collate,
-                drop_last=True,
+                drop_last=False,
                 shuffle=False)
         else:
             train_eval_dataloader = None
@@ -204,13 +207,6 @@ def build_optimizer(game, opts):
         {"params": game.sender.parameters(), "lr": opts.sender_lr},
         {"params": game.receiver.parameters(), "lr": opts.receiver_lr},
     ])
-
-
-# def get_one_hots(self, symbols, vocab_size):
-#     size = (*symbols.size(), vocab_size)
-#     one_hots = torch.zeros(size).to(symbols.device).view(-1, vocab_size)
-#     one_hots.scatter_(1, symbols.view(-1, 1), 1)
-#     return one_hots.view(size)
 
 
 def crop_messages(messages: torch.Tensor, lengths: Optional[torch.Tensor] = None):
@@ -244,136 +240,76 @@ class Dump:
             self,
             game: torch.nn.Module,
             dataset: torch.utils.data.DataLoader,
+            opts: argparse.Namespace,
             device: Optional[torch.device] = None):
 
         train_state = game.training
         game.eval()
         device = device if device is not None else common_opts.device
 
-        sender_inputs, receiver_inputs, labels = [], [], []
-        messages, messages_nn = [], []
-        message_inputs, message_inputs_nn = [], []
-        symbol_probs, symbol_probs_nn = [], []
-        receiver_outputs, receiver_outputs_nn = [], []
-        message_lengths, message_lengths_nn = [], []
-        attributes = defaultdict(list)
-        # attributes, channel_output = defaultdict(list), defaultdict(list)
-
+        logs = []
         for i, batch in enumerate(dataset):
-            sender_input = move_to(batch[0], device)
-            sender_inputs.extend(sender_input)
-            labels.extend(batch[1])
-            receiver_input = move_to(batch[2], device)
-            receiver_inputs.extend(receiver_input)
-            for key, val in batch[3].items():
-                attributes[key].append(val)
+            batch = Batch(*batch).to(device)
             with torch.no_grad():
-                sender_output = game.sender(sender_input)
-
-            _message = sender_output[0]
-            _probs = sender_output[-1]
-
-            # pass messages and symbol probabilities through the channel
-            message, message_nn, probs, probs_nn, channel_aux = \
-                game.channel(_message, _probs)
-
-            # append EOS to each message & symbol probability tensor
-            eos = torch.zeros_like(message[:, :1, :])
-            eos[:, 0, 0] = 1
-            probs = torch.cat([probs, eos], dim=1)
-            probs_nn = torch.cat([probs_nn, eos], dim=1)
-            eos = eos if message.dim() == 3 else torch.zeros_like(message[:, 0])
-            message = torch.cat([message, eos], dim=1)
-            message_nn = torch.cat([message_nn, eos], dim=1)
-
-            # remove symbols preceded by EOS
-            symbols = message if message.dim() == 2 else message.argmax(-1)
-            lengths = find_lengths(symbols)
-            symbols = crop_messages(symbols, lengths)
-            message = crop_messages(message, lengths)
-
-            symbols_nn = message_nn.int() if message_nn.dim() == 2 \
-                else message_nn.argmax(-1)
-            lengths_nn = find_lengths(symbols_nn)
-            symbols_nn = crop_messages(symbols_nn, lengths_nn)
-            message_nn = crop_messages(message_nn, lengths_nn)
-
-            messages.extend(symbols)  # always 2 dimensions
-            message_inputs.extend(message)  # 3 dimensions for GS
-            symbol_probs.extend(probs)
-            message_lengths.extend(lengths)
-
-            # save receiver outputs at first EOS
-            if not isinstance(game.channel, NoChannel):
-                messages_nn.extend(symbols_nn)
-                message_inputs_nn.extend(message_nn)
-                symbol_probs_nn.extend(probs_nn)
-                message_lengths_nn.extend(lengths_nn)
-
-                _message = torch.cat([message, message_nn], dim=0)
-                _receiver_input = torch.cat(
-                    [receiver_input, receiver_input], dim=0)
-                with torch.no_grad():
-                    r_output = game.receiver(_message, _receiver_input)
-                if r_output.numel() != len(r_output):
-                    r_output = r_output.argmax(-1)
-                idx = (torch.arange(0, len(message)), lengths - 1)
-                idx_nn = (idx[0] + len(message), lengths_nn - 1)
-                receiver_outputs.extend(r_output[idx])
-                receiver_outputs_nn.extend(r_output[idx_nn])
-            else:
-                with torch.no_grad():
-                    r_output = game.receiver(message, receiver_input)
-                if r_output.numel() != len(r_output):
-                    r_output = r_output.argmax(-1)
-                idx = (torch.arange(0, len(message)), lengths - 1)
-                receiver_outputs.extend(r_output[idx])  # output at 1st EOS
-
-        # channel_output = {
-        #     k: torch.cat(v, dim=0) if v[0] is not None
-        #     else [None for _ in range(len(v))]
-        #     for k, v in channel_output.items()
-        # }  # TODO remove if not used for DeletionChannel or max. entropy
+                _, interaction = game(*batch)
+                logs.append(interaction)
+        logs = Interaction.from_iterable(logs)
 
         game.train(mode=train_state)
 
-        self.sender_inputs = torch.stack(sender_inputs)
-        self.receiver_inputs = torch.stack(receiver_inputs)
-        self.labels = torch.stack(labels)
-        self.messages = torch.stack(messages)
-        self.probs = torch.stack(symbol_probs)
-        self.message_inputs = torch.stack(message_inputs)
-        self.lengths = torch.stack(message_lengths)
-        self.receiver_outputs = torch.stack(receiver_outputs)
-        # self.channel_output = channel_output
-        if messages_nn:
-            self.messages_nn = torch.stack(messages_nn)
-            self.probs_nn = torch.stack(symbol_probs_nn)
-            self.message_inputs_nn = torch.stack(message_inputs_nn)
-            self.lengths_nn = torch.stack(message_lengths_nn)
-            self.receiver_outputs_nn = torch.stack(receiver_outputs_nn)
-        else:  # no noise
-            self.messages_nn = self.messages
-            self.probs_nn = self.probs
-            self.message_inputs_nn = self.message_inputs
-            self.lengths_nn = self.lengths
-            self.receiver_outputs_nn = self.receiver_outputs
+        self.receiver = game.receiver
+        self.channel = game.channel
+        self.opts = opts
 
-        attributes = {k: torch.cat(v, dim=0) for k, v in attributes.items()}
+        self.sender_inputs = logs.sender_input
+        self.receiver_inputs = logs.receiver_input
+        self.labels = logs.labels
+
+        messages = logs.message.int() \
+            if opts.mode == 'rf' \
+            else logs.message.argmax(-1)
+        lengths = logs.message_length.long()  # always works on evaluation
+        self.messages = crop_messages(messages, lengths)  # 2 dimensional
+        self.message_inputs = crop_messages(logs.message, lengths)
+        self.probs = logs.probs
+        self.lengths = lengths
+
+        # select receiver output at 1st EOS
+        idx = (torch.arange(len(messages)), lengths - 1)
+        self.receiver_outputs = logs.receiver_output[idx] \
+            if opts.mode == 'rf' \
+            else logs.receiver_output.argmax(-1)[idx]
+
+        if opts.channel != 'none':
+            messages = logs.message_nn.int() \
+                if opts.mode == 'rf' \
+                else logs.message_nn.argmax(-1)
+            lengths = logs.message_length_nn.long()
+            self.messages_nn = crop_messages(messages, lengths)
+            self.message_inputs_nn = crop_messages(logs.message_nn, lengths)
+            self.probs_nn = logs.probs_nn
+            self.lengths_nn = lengths
+
+            idx = (torch.arange(len(messages)), lengths - 1)
+            self.receiver_outputs_nn = logs.receiver_output_nn[idx] \
+                if opts.mode == 'rf' \
+                else logs.receiver_output_nn.argmax(-1)[idx]
+
         distr_prefixes = {
-            k[:k.index('_')]: None for k in attributes.keys() if k.startswith('distr')
+            k[:k.index('_')]: None
+            for k in logs.aux_input if k.startswith('distr')
         }.keys()
 
         self.attribute_names = [
-            k.replace('target_', '') for k in attributes.keys()
+            k.replace('target_', '') for k in logs.aux_input.keys()
             if not k.startswith('distr')]
         self.target_attributes = torch.cat([
-            tensor for k, tensor in attributes.items()
+            tensor for k, tensor in logs.aux_input.items()
             if not k.startswith('distr')
         ], dim=-1)
         self.distractor_attributes = [
             torch.cat([
-                tensor for k, tensor in attributes.items()
+                tensor for k, tensor in logs.aux_input.items()
                 if k.startswith(prefix)
             ], dim=-1)
             for prefix in distr_prefixes
@@ -403,12 +339,6 @@ class Dump:
                     }
                     for attribute_tensor in self.distractor_attributes
                 ],
-                # {
-                #     k: self.channel_output[k][i].item()
-                #     if self.channel_output[k][i].numel() == 1
-                #     else self.channel_output[k][i]
-                #     for k in self.channel_output
-                # },
             )
 
     def get_tensors(self, noise=True):
@@ -430,33 +360,89 @@ class Dump:
                 self.attribute_names
             )
 
-    def get_results_dict(self, game, opts, target_counts):
-        results = {}
+    def get_message_logs(self):
+        message_logs = []
+        for s_input, msg, msg_nn, r_input, r_output, r_output_nn, label, \
+                target_attr, distr_attr in self:
 
+            if self.opts.image_input:
+                # For the Obverter dataset, we save object features rather than
+                # images (color, shape, position, rotation)
+                def attr_repr(attr_dict):
+                    attr_strings = [f'{k}: {v}' for k, v in attr_dict.items()]
+                    return ', '.join(attr_strings)
+
+                target_vec = attr_repr(target_attr)
+                distr_vex = [attr_repr(attr_dict) for attr_dict in distr_attr]
+            else:
+                # as VISA concepts are sparse binary tensors, we represent each
+                # object as indices of features that it does have
+                def input_repr(input_tensor):
+                    indices = input_tensor.nonzero().squeeze().tolist()
+                    return ','.join([str(x) for x in indices])
+
+                target_vec = input_repr(s_input)
+                distr_vex = [
+                    input_repr(candidate)
+                    for i, candidate in enumerate(r_input) if i != label
+                ]
+
+            message_log = {
+                'target_obj': target_vec,
+                'distractor_objs': distr_vex,
+                'label': label,
+                'message': ','.join([str(x) for x in msg.tolist()]),
+                'prediction': r_output,
+            }
+
+            if self.opts.channel != 'none':
+                message_nn = ','.join([str(x) for x in msg_nn.tolist()])
+                message_log.update({
+                    'message_no_noise': message_nn,
+                    'prediction_no_noise': r_output_nn,
+                })
+
+            if not self.opts.image_input:
+                message_log.update({
+                    'target_cat': target_attr['category'],
+                    'distractor_cats': [x['category'] for x in distr_attr],
+                })
+
+            message_logs.append(message_log)
+
+        return message_logs
+
+    def get_eval_dict(self):
+        opts = self.opts
+
+        results = {}
         keys = ('noise', 'no noise') if opts.channel != 'none' else ('baseline',)
         for key in keys:
-            (sender_inputs, messages, probs, message_inputs, receiver_inputs,
-             receiver_outputs, labels, t_attributes, d_attributes, attr_names) \
+            (s_inputs, messages, probs, m_inputs, r_inputs,
+             r_outputs, labels, t_attributes, d_attributes, attr_names) \
                 = self.get_tensors(key == 'noise')
 
             # whether to include additional symbols
-            vocab_size = self.probs.size(-1) if key == 'noise' else opts.vocab_size
+            vocab_size = self.probs.size(-1) if key == 'noise' \
+                else opts.vocab_size
 
             entropy, length_probs = message_entropy(probs)
-            max_entropy = game.channel.max_message_entropy(
+            max_entropy = self.channel.max_message_entropy(
                 length_probs, key == 'noise')
+            unique_targets = len(torch.unique(s_inputs, dim=0))
 
+            # TODO average length add 1?
             results[key] = {
-                'samples': sum(target_counts.values()),
-                'samples_per_target_obj':
-                    sum(target_counts.values()) / len(target_counts),
-                'unique_target_objects': len(target_counts),
+                'samples': len(messages),
+                'samples_per_target_obj': len(messages) / unique_targets,
+                'unique_target_objects': unique_targets,
                 'unique_messages': len(torch.unique(messages, dim=0)),
-                'average_length': (torch.arange(probs.size(1)) * length_probs).sum(),
+                'average_length': (
+                    torch.arange(probs.size(1)) * length_probs).sum(),
                 'actual_vocab_size': torch.unique(messages).numel(),
-                'accuracy': (receiver_outputs == labels).float().mean(),
+                'accuracy': (r_outputs == labels).float().mean(),
                 'accuracy2': compute_accuracy2(
-                    message_inputs, receiver_inputs, labels, game.receiver, opts),
+                    m_inputs, r_inputs, labels, self.receiver, opts),
                 'max_rep': compute_max_rep(messages).mean().item(),
                 'entropy_msg': entropy,
                 'entropy_max': max_entropy,
@@ -478,13 +464,12 @@ class Dump:
                     })
             else:
                 results[key].update({
-                    'topsim': compute_top_sim(sender_inputs, messages),
-                    # 'topsim_cat': compute_top_sim(t_attributes, messages),
+                    'topsim': compute_top_sim(s_inputs, messages),
                 })
 
                 # assign a different number to every input vector
                 _, input_cat = torch.unique(
-                    sender_inputs, return_inverse=True, dim=0)
+                    s_inputs, return_inverse=True, dim=0)
                 input_cat = input_cat.unsqueeze(-1).to(torch.float)
                 results[key].update({
                     k.replace('attr', 'input'): v for k, v
@@ -494,8 +479,6 @@ class Dump:
                     k.replace('attr', 'category'): v
                     for k, v in compute_mi(probs, t_attributes, entropy).items()
                 })
-
-                # TODO cross entropy / KLD between the training and test set?
 
             # convert tensors to numeric
             results[key] = {
@@ -523,7 +506,7 @@ def print_training_results(dump_dict):
         [m] + [format_values(col[m]) for col in flattened_dict.values()]
         for m in measures
     ]
-    sep_list = ['accuracy'] + [m for m in measures if 'entropy' in m]
+    sep_list = ['accuracy'] + [m for m in measures if 'entropy' in m][:1]
     while sep_list:
         m = sep_list.pop(-1)
         if m not in ('entropy_msg', 'entropy_max'):

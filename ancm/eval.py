@@ -48,7 +48,23 @@ class CustomDataset(Dataset):
 #     return -p * np.log2(p) - (1 - p) * np.log2(1 - p)
 
 
-def message_entropy(probs, max_entropy=None, order=4, split_size=1000):
+@torch.compile
+def get_prefix_indices(prev_symbols, split_size):
+    n_prev = prev_symbols.size(1)
+    prefix_indices = torch.cartesian_prod(
+        *(torch.arange(prev_symbols.size(-1)) for i in range(n_prev))
+    ).view(-1, n_prev)
+
+    for indices in torch.split(prefix_indices, split_size):
+        yield indices, torch.arange(n_prev).view(1, -1).expand(indices.size())
+
+
+@torch.compile
+def aggregate_prefix_logits(prev_symbols, idx):
+    return prev_symbols.transpose(0, -1)[idx].sum(1).t()
+
+
+def message_entropy(probs, order=4, split_size=1000):
     min_real = torch.finfo(probs.dtype).min
 
     size = probs.size()
@@ -60,38 +76,29 @@ def message_entropy(probs, max_entropy=None, order=4, split_size=1000):
     eos_probs = torch.ones_like(probs[0, :, 0])
     p_not_eosed = 1
 
-    for symbol_i in range(probs.size(1) - 1):
-        symbol_logits = logits[:, symbol_i, :]
+    # iterate over all symbols except for the appended EOS
+    for step in range(size[1] - 1):
+        symbol_logits = logits[:, step]
 
-        if symbol_i == 0:
+        if step == 0:
             log_prob = symbol_logits.logsumexp(0)
             log_prob -= log_prob.logsumexp(0)  # normalize
             log2_prob = torch.clamp(log_prob / np.log(2), min=min_real)
-            prob = probs[:, symbol_i, :].sum(0) / probs.size(0)
+            prob = probs[:, step].sum(0) / probs.size(0)
 
             symbol_entropies[0] = torch.dot(-prob, log2_prob)
             eos_probs[0] = prob[0]
             p_not_eosed *= 1 - prob[0]
             continue
 
-        first_symbol = 0 if order is None else max(0, symbol_i - order)
-        prev_logits = logits[:, first_symbol:symbol_i, 1:]
-        n_prev = prev_logits.size(1)
+        first_symbol = 0 if order is None else max(0, step - order)
+        prev_logits = logits[:, first_symbol:step, 1:]
 
-        # indices of all possible non-EOS prefixes
-        prefix_indices = torch.cartesian_prod(
-            *(torch.arange(prev_logits.size(-1)) for i in range(n_prev))
-        ).view(-1, n_prev)
-
+        # iterate over all possible non-EOS prefixes of the symbol
         prefix_logits, cond_entropy, cond_p_eos = [], [], []
-        for p_indices in torch.split(prefix_indices, split_size):
-            idx = (
-                p_indices,
-                torch.arange(n_prev).view(1, -1).expand(p_indices.size()),
-            )
-
-            # prefix log-probabilities
-            p_logits = prev_logits.transpose(0, -1)[idx].sum(1).t()
+        for idx in get_prefix_indices(prev_logits, split_size):
+            # log-probs of previous symbols being equal to a given prefix
+            p_logits = aggregate_prefix_logits(prev_logits, idx)
 
             # conditional entropy for each prefix
             c_logits = torch.logsumexp(
@@ -109,9 +116,9 @@ def message_entropy(probs, max_entropy=None, order=4, split_size=1000):
         cond_entropy = torch.cat(cond_entropy)
         cond_p_eos = torch.cat(cond_p_eos)
 
-        symbol_entropies[symbol_i] = torch.dot(prefix_probs, cond_entropy)
+        symbol_entropies[step] = torch.dot(prefix_probs, cond_entropy)
         p_eos = torch.dot(prefix_probs, cond_p_eos) / p_not_eosed
-        eos_probs[symbol_i] = p_eos
+        eos_probs[step] = p_eos
         p_not_eosed *= 1 - p_eos
 
     entropy = symbol_entropies.sum()
@@ -120,6 +127,80 @@ def message_entropy(probs, max_entropy=None, order=4, split_size=1000):
         eos_probs[1:] * torch.cumprod(1 - eos_probs[:-1], dim=0),
     ])
     return entropy, length_probs
+
+
+def relative_message_entropy(probs_p, probs_q, order=4, split_size=1000):
+    """
+    Computes conditional KLD: D( Mi | M1, ..., Mi-1 || M'i | M'1, ..., M'i-1)
+    """
+    # assert probs_p.size() == probs_q.size()
+    min_real = torch.finfo(probs_p.dtype).min
+
+    size_p, size_q = probs_p.size(), probs_q.size()
+    logits_p = probs_to_logits(
+        probs_p.view(size_p[0] * size_p[1], size_p[2])
+    ).view(size_p)
+    logits_q = probs_to_logits(
+        probs_q.view(size_q[0] * size_q[1], size_q[2])
+    ).view(size_q)
+
+    p_not_eosed = 1
+    symbol_kld = torch.zeros_like(probs_p[0, :, 0])
+
+    # iterate over all symbols except for the appended EOS
+    for step in range(size_p[1] - 1):
+        step_logits_p, step_logits_q = logits_p[:, step], logits_q[:, step]
+
+        if step == 0:
+            log_q = step_logits_q.logsumexp(0)
+            log_q -= log_q.logsumexp(0)  # normalize
+            log2_q = torch.clamp(log_q / np.log(2), min=min_real)
+            p = probs_p[:, step].sum(0) / size_p[0]
+
+            symbol_kld[0] = torch.dot(-p, log2_q)
+            p_not_eosed *= 1 - p[0]
+            continue
+
+        first_symbol = 0 if order is None else max(0, step - order)
+        prev_logits_p = logits_p[:, first_symbol:step, 1:]
+        prev_logits_q = logits_q[:, first_symbol:step, 1:]
+
+        # iterate over all possible non-EOS prefixes of the symbol
+        cond_kld, prefix_logits, cond_p_eos = [], [], []
+        for idx in get_prefix_indices(prev_logits_p, split_size):
+            # log-probs of previous symbols being equal to a given prefix
+            prefix_logits_p = aggregate_prefix_logits(prev_logits_p, idx)
+            prefix_logits_q = aggregate_prefix_logits(prev_logits_q, idx)
+
+            # conditional log-probs of each symbol at position i for each prefix
+            c_logits_p = torch.logsumexp(
+                step_logits_p.unsqueeze(1) + prefix_logits_p.unsqueeze(-1), dim=0)
+            c_logits_p -= c_logits_p.logsumexp(-1, keepdim=True)  # normalize
+            c_log2_p = c_logits_p / np.log(2)
+            c_probs_p = c_logits_p.exp()
+
+            c_logits_q = torch.logsumexp(
+                step_logits_q.unsqueeze(1) + prefix_logits_q.unsqueeze(-1), dim=0)
+            c_logits_q -= c_logits_q.logsumexp(-1, keepdim=True)  # normalize
+            c_log2_q = c_logits_q / np.log(2)
+
+            # conditional KLD: D( Mi | M1, ..., Mi-1 || M'i | M'1, ..., M'i-1)
+            c_log2_pq = torch.clamp(c_log2_p - c_log2_q, min=min_real)
+            c_kld = torch.linalg.vecdot(c_probs_p, c_log2_pq)
+
+            cond_kld.append(c_kld)
+            prefix_logits.append(prefix_logits_p.logsumexp(0))
+            cond_p_eos.append(c_probs_p[:, 0])
+
+        cond_kld = torch.cat(cond_kld)
+        prefix_probs = logits_to_probs(torch.cat(prefix_logits)) * p_not_eosed
+        cond_p_eos = torch.cat(cond_p_eos)
+
+        symbol_kld[step] = torch.dot(prefix_probs, cond_kld)
+        p_eos = torch.dot(prefix_probs, cond_p_eos) / p_not_eosed
+        p_not_eosed *= 1 - p_eos
+
+    return symbol_kld.sum()
 
 
 # Redundancy
@@ -384,12 +465,6 @@ def compute_posdis(
     non_constant_positions = 0.0
     for j in range(messages.size(1)):
         symbol_mi = []
-
-        # if receiver_vocab_size is not None:
-        #     alphabet_x = torch.arange(receiver_vocab_size) \
-        #         if j < messages.size(1) else torch.zeros(1, 1)
-        # else:  # bosdis
-        #     alphabet_x = torch.unique(messages)
 
         for i in range(sender_inputs.size(1)):
             x, y = messages[:, j], sender_inputs[:, i]

@@ -343,7 +343,8 @@ class CustomProgressBarLogger(Callback):
 
         if self.results_folder is not None:
             for history_dict in self.history.values():
-                del history_dict['loss_nn']
+                if 'loss_nn' in history_dict:
+                    del history_dict['loss_nn']
             df = pd.concat([
                 pd.DataFrame(history_dict)
                 for history_dict in self.history.values()
@@ -394,7 +395,7 @@ class ProcessInteractionCallback(Callback):
 
             assert find_lengths(logs.message) == find_lengths(crop_messages(logs.message))
             assert find_lengths(logs.message_nn) == find_lengths(crop_messages(logs.message_nn))
-        
+
 
 class TrainingEvaluationCallback(Callback):
     def __init__(self, opts: argparse.Namespace, channel: Channel):
@@ -411,7 +412,9 @@ class TrainingEvaluationCallback(Callback):
         self.compute(logs, training=False)
 
     def compute(self, logs: Interaction, training: bool):
-        messages = crop_messages(logs.message)
+        messages = crop_messages(logs.message) \
+            if logs.message.dim() == 2 \
+            else crop_messages(logs.message.argmax(-1))
         vocab_size = logs.probs.size(-1)  # includes additional symbols
 
         if logs.aux_input:
@@ -451,8 +454,6 @@ class TrainingEvaluationCallback(Callback):
         else:
             logs.aux['topsim'] = None if training else \
                 compute_top_sim(logs.sender_input, messages)
-            # logs.aux['topsim_cat'] = None if training else \
-            #     compute_top_sim(attr, messages)
 
             # assign a different number to every input vector
             _, input_cat = torch.unique(
@@ -469,7 +470,9 @@ class TrainingEvaluationCallback(Callback):
 
         # compute measure values for messages before noise is applied
         if not isinstance(self.channel, NoChannel):
-            messages = crop_messages(logs.message_nn)
+            messages = crop_messages(logs.message_nn) \
+                if logs.message_nn.dim() == 2 \
+                else crop_messages(logs.message_nn.argmax(-1))
 
             logs.aux['loss_nn'] = None
             logs.aux['lexicon_size_nn'] = len(torch.unique(messages, dim=0))
@@ -512,5 +515,3 @@ class TrainingEvaluationCallback(Callback):
 
                 logs.aux['topsim_nn'] = None if training else \
                     compute_top_sim(logs.sender_input, messages)
-                # logs.aux['topsim_cat_nn'] = None if training else \
-                #     compute_top_sim(attr, messages)

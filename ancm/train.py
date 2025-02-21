@@ -36,6 +36,7 @@ from ancm.callbacks import (
     CustomProgressBarLogger,
     TrainingEvaluationCallback,
 )
+from ancm.eval import relative_message_entropy
 
 
 def get_params(params):
@@ -154,7 +155,7 @@ def main(params):
     device = torch.device("cuda" if opts.cuda else "cpu")
 
     data_handler = DataHandler(opts)
-    train_data, validation_data, test_data, aux_train_data = \
+    train_data, validation_data, test_data, train_eval_data = \
         data_handler.load_data(opts)
 
     if opts.channel == 'erasure' and opts.error_prob != 0:
@@ -249,75 +250,34 @@ def main(params):
     t_start = time.monotonic()
     trainer.train(n_epochs=opts.n_epochs)
     t_end = time.monotonic()
-
-    def evaluate(dataloader):
-        dump = Dump(game, dataloader, device)
-
-        # dump messages
-        messages, target_counts = [], defaultdict(int)
-        for s_input, msg, msg_nn, r_input, r_output, r_output_nn, label, \
-                target_attr, distr_attr in dump:
-
-            if opts.image_input:
-                # For the Obverter dataset, we save object features rather than
-                # images (color, shape, position, rotation)
-                def attr_repr(attr_dict):
-                    attr_strings = [f'{k}: {v}' for k, v in attr_dict.items()]
-                    return ', '.join(attr_strings)
-
-                target_vec = attr_repr(target_attr)
-                distr_vex = [attr_repr(attr_dict) for attr_dict in distr_attr]
-            else:
-                # as VISA concepts are sparse binary tensors, we represent each
-                # object as indices of features that it does have
-                def input_repr(input_tensor):
-                    indices = input_tensor.nonzero().squeeze().tolist()
-                    return ','.join([str(x) for x in indices])
-
-                target_vec = input_repr(s_input)
-                distr_vex = [
-                    input_repr(candidate)
-                    for i, candidate in enumerate(r_input) if i != label
-                ]
-
-            message_log = {
-                'target_obj': target_vec,
-                'distractor_objs': distr_vex,
-                'label': label,
-                'message': ','.join([str(x) for x in msg.tolist()]),
-                'prediction': r_output,
-            }
-
-            if opts.channel != 'none':
-                message_nn = ','.join([str(x) for x in msg_nn.tolist()])
-                message_log.update({
-                    'message_no_noise': message_nn,
-                    'prediction_no_noise': r_output_nn,
-                })
-
-            if not opts.image_input:
-                message_log.update({
-                    'target_cat': target_attr['category'],
-                    'distractor_cats': [x['category'] for x in distr_attr],
-                })
-
-            target_counts[target_vec] += 1
-            messages.append(message_log)
-
-        return {
-            'evaluation': dump.get_results_dict(game, opts, target_counts),
-            'messages': messages,
-        }
-
-    game.eval()
     dump_dict = {}
 
     # results on the eval subset of the training set (VISA only)
-    if aux_train_data is not None:
-        dump_dict['train'] = evaluate(aux_train_data)
+    if train_eval_data is not None:
+        train_dump = Dump(game, train_eval_data, opts, device)
+        dump_dict['train'] = {
+            'evaluation': train_dump.get_eval_dict(),
+            'messages': train_dump.get_message_logs(),
+        }
 
-    # results on the test set
-    dump_dict['test'] = evaluate(test_data)
+    test_dump = Dump(game, test_data, opts, device)
+    dump_dict['test'] = {
+        'evaluation': test_dump.get_eval_dict(),
+        'messages': test_dump.get_message_logs(),
+    }
+
+    # if we evaluated on the train set, compute KLD between the protocols
+    if train_eval_data is not None:
+        for key in dump_dict['train']['evaluation']:
+            if key != 'no noise':
+                probs_p, probs_q = train_dump.probs, test_dump.probs
+            else:
+                print('im alive!')
+                probs_p, probs_q = train_dump.probs_nn, test_dump.probs_nn
+
+            kld = relative_message_entropy(probs_p, probs_q).item()
+            dump_dict['train']['evaluation'][key]['KLD_train_test'] = kld
+            dump_dict['test']['evaluation'][key]['KLD_train_test'] = kld
 
     # save training time
     training_time = timedelta(seconds=t_end - t_start)
@@ -330,24 +290,6 @@ def main(params):
     evaluation_time = str(evaluation_time).split('.', maxsplit=1)[0]
     training_time_per_epoch = f'{int(minutes):02}:{int(seconds):02}'
 
-    def make_jsonable(x, key=None):
-        # TODO remove
-        if isinstance(x, torch.Tensor):
-            print(key, 'processing tensor')
-            try:
-                return x.item()
-            except:
-                if x.numel() < 100:
-                    return x.tolist()
-                else:
-                    return 'none'
-        if isinstance(x, dict):
-            return {make_jsonable(k): make_jsonable(v, k) for k, v in x.items()}
-        if isinstance(x, list) or isinstance(x, tuple):
-            return [make_jsonable(item) for item in x]
-
-        return x
-
     dump_dict['opts'] = {k: v for k, v in vars(opts).items() if is_jsonable(v)}
     dump_dict['training_time'] = {
         'training': training_time,
@@ -358,7 +300,7 @@ def main(params):
     if opts.results_folder:
         opts.results_folder.mkdir(exist_ok=True)
         with open(opts.results_folder / f'{opts.filename}-results.json', 'w') as f:
-            json.dump(make_jsonable(dump_dict), f, indent=4)
+            json.dump(dump_dict, f, indent=4)
 
         print(f"Results saved to {opts.results_folder / opts.filename}-results.json")
 
