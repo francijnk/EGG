@@ -1,27 +1,23 @@
-import math
 import json
 import torch
 import argparse
 import numpy as np
 from tabulate import tabulate, SEPARATING_LINE
-from collections import defaultdict
 from torch.utils.data import Dataset, DataLoader
-# from torch.distributions import OneHotCategorical
+from egg.zoo.language_bottleneck import intervention
 
 from typing import Optional
 
-# from ancm.archs import tensor_binary_entropy
 from ancm.eval import (
     message_entropy,
+    min_message_entropy,
     compute_max_rep,
     compute_accuracy2,
     compute_top_sim,
     compute_mi,
     compute_posdis,
     compute_bosdis,
-    # binary_entropy,
 )
-from ancm.archs import NoChannel
 from ancm.interaction import Interaction
 
 from egg.core.util import find_lengths, get_opts
@@ -32,60 +28,70 @@ common_opts = get_opts()
 
 
 class ObjectDataset(Dataset):
-    def __init__(self, obj_sets, labels, attributes=None, attribute_names=None, n_permutations=None):
-        self.obj_sets = obj_sets
-        self.labels = labels
-        self.attributes = attributes
-        self.attribute_names = attribute_names
-
+    def __init__(
+            self, obj_sets, targets, attributes, n_additional_targets=2, seed=42):
         n_objects = obj_sets.shape[1]
-        self.n_distractors = n_objects - 1
-        if n_permutations is not None:
-            self.permutations = [
-                np.random.permutation(np.arange(n_objects))
-                for _ in range(len(obj_sets) * (n_permutations - 1))]
+        self.n_targets = 1 if n_additional_targets is None \
+            else 1 + n_additional_targets \
+
+        # save object sets
+        self.obj_sets = obj_sets
+
+        # get additional targets & save them as labels
+        if n_additional_targets is not None:
+            rng = np.random.default_rng(seed=seed)
+            candidates = np.tile(np.arange(n_objects), (len(obj_sets), 1))
+            candidates = candidates[candidates != targets.reshape(-1, 1)]
+            candidates = candidates.reshape(len(obj_sets), -1)
+            candidates = rng.permuted(candidates, axis=1)
+            additional_targets = candidates[:, :n_additional_targets]
+            target_pos = np.hstack([targets.reshape(-1, 1), additional_targets])
         else:
-            self.permutations = []
+            target_pos = targets.reshape(-1, 1)
+
+        # save additional labels
+        self.labels = target_pos.reshape(-1, order='F')
+
+        # save attributes
+        obj_set = np.tile(np.arange(len(obj_sets)), self.n_targets)
+        distr_pos = np.tile(
+            np.arange(n_objects),
+            (self.n_targets * len(obj_sets), 1))
+        distr_pos = distr_pos[distr_pos != target_pos.reshape(-1, 1)]
+        distr_pos = distr_pos.reshape(len(target_pos) * self.n_targets, -1)
+        col = np.hstack([target_pos.reshape(-1, 1), distr_pos])
+        row = np.tile(np.arange(len(col)), (col.shape[1], 1)).T
+        attr_array = np.hstack([
+            attributes[name][obj_set][row, col]
+            for name in attributes.dtype.names
+        ])
+        dtype = [
+            item
+            for name in attributes.dtype.names
+            for item in [(f'target_{name}', np.int64)]
+            + [(f'distr{i}_{name}', np.int64) for i in range(n_objects - 1)]
+        ]
+        self.attributes = np.array(list(map(tuple, attr_array)), dtype=dtype)
+
+        # idx = len(obj_sets)
+        # x, y = 0, 10
+        # print('ATTRIBUTES CHECK')
+        # print(self.attributes[x:y])
+        # print(self.attributes[idx + x:idx + y])
+        # print(self.attributes[2 * idx + x : 2 * idx + y])
+        # print('LABELS CHECK')
+        # print(self.labels[x:y])
+        # print(self.labels[idx + x:idx + y])
+        # print(self.labels[2 * idx + x : 2 * idx + y])
 
     def __len__(self):
-        return len(self.obj_sets) + len(self.permutations)
+        return len(self.obj_sets) * self.n_targets
 
     def __getitem__(self, idx):
-        if idx < len(self.obj_sets):
-            return self.obj_sets[idx], self.labels[idx], self.attributes[idx]
-        else:
-            _idx = idx % len(self.obj_sets)
-            permutation = self.permutations[_idx]
-            obj_set = self.obj_sets[_idx, permutation, ...]
-            label = permutation[self.labels[_idx]]
-
-            n_attributes = len(self.attribute_names) // (self.n_distractors + 1)
-            distr_attr_names = [
-                self.attribute_names[n_attributes * (permutation[i] - 1) + j]
-                for i in range(self.n_distractors + 1)
-                for j in range(n_attributes)]
-
-            attribute_tuple = tuple(
-                self.attributes[_idx][attr_name]
-                for attr_name in distr_attr_names)
-
-            dtype = [(item, np.int64) for item in distr_attr_names if item.startswith('target')]
-            num_attr_per_distractor = len(dtype)
-            for i, name in enumerate(distr_attr_names):
-                d_num = i // num_attr_per_distractor
-                if d_num == label:
-                    continue
-                if d_num < label:
-                    prefix = f'distr_{d_num}_'
-                else:
-                    prefix = f'distr_{d_num - 1}_'
-                suffix = name.split('_')[-1]
-                dtype.append((prefix + suffix, np.int64))
-
-            attributes = np.array([attribute_tuple], dtype=dtype)
-
-            assert not np.isnan(obj_set).any()
-            return obj_set, label, attributes
+        obj_set = self.obj_sets[idx % len(self.obj_sets)]
+        label = self.labels[idx]
+        attributes = self.attributes[idx]
+        return obj_set, label, attributes
 
 
 class DataHandler:
@@ -107,27 +113,30 @@ class DataHandler:
 
     def load_data(self, opts):
         data = np.load(self.data_path)
-        train = data["train"], data["train_labels"], data["train_attributes"]
-        val = data["valid"], data["valid_labels"], data["valid_attributes"]
-        test = data["test"], data["test_labels"], data["test_attributes"]
-        attribute_names = data["train_attributes"].dtype.names
+        train = data["train"], data["train_targets"], data["train_attributes"]
+        eval_train = data["eval_train"], \
+            data["eval_train_targets"], data["eval_train_attributes"]
+        eval_test = data["eval_test"], \
+            data["eval_test_targets"], data["eval_test_attributes"]
+
+        self.eval_train_mapping = data["eval_train_attribute_mapping"]
+        self.eval_test_mapping = data["eval_test_attribute_mapping"]
 
         self._n_features = train[0].shape[-1]
-        self.train_samples = train[0].shape[0]
-        self.validation_samples = val[0].shape[0]
-        self.test_samples = test[0].shape[0]
+        self.train_samples = len(train[0])
+        self.eval_train_samples = len(eval_train[0])
+        self.eval_test_samples = len(eval_test[0])
         self.n_distractors = train[0].shape[1] - 1
 
         opts.train_samples = self.train_samples
-        opts.validation_samples = self.validation_samples
-        opts.test_samples = self.test_samples
+        opts.eval_train_samples = self.eval_train_samples
+        opts.eval_test_samples = self.eval_test_samples
         opts.n_distractors = self.n_distractors
         opts.n_features = self.n_features
 
-        train_dataset = ObjectDataset(
-            *train, attribute_names, n_permutations=opts.n_permutations_train)
-        val_dataset = ObjectDataset(*val, attribute_names)
-        test_dataset = ObjectDataset(*test, attribute_names)
+        train_dataset = ObjectDataset(*train, opts.n_targets)
+        eval_train_dataset = ObjectDataset(*eval_train, opts.n_targets)
+        eval_test_dataset = ObjectDataset(*eval_test, opts.n_targets)
 
         def _collate(batch):
             obj_sets, target_ids, aux_attributes = zip(*batch)
@@ -153,38 +162,20 @@ class DataHandler:
             collate_fn=_collate,
             drop_last=True,
             shuffle=self.shuffle_train_data)
-        val_dataloader = DataLoader(
-            val_dataset,
+        eval_train_dataloader = DataLoader(
+            eval_train_dataset,
             batch_size=self.batch_size,
             collate_fn=_collate,
             drop_last=False,
             shuffle=False)
-        test_dataloader = DataLoader(
-            test_dataset,
+        eval_test_dataloader = DataLoader(
+            eval_test_dataset,
             batch_size=self.batch_size,
             collate_fn=_collate,
             drop_last=False,
             shuffle=False)
 
-        if "train_eval" in data:
-            if "train_eval_attributes" in data:
-                train_eval = (
-                    data["train_eval"],
-                    data["train_eval_labels"],
-                    data["train_eval_attributes"])
-            else:
-                train_eval = data["train_eval"], data["train_eval_labels"]
-            train_eval_dataset = ObjectDataset(*train_eval)
-            train_eval_dataloader = DataLoader(
-                train_eval_dataset,
-                batch_size=self.batch_size,
-                collate_fn=_collate,
-                drop_last=False,
-                shuffle=False)
-        else:
-            train_eval_dataloader = None
-
-        return train_dataloader, val_dataloader, test_dataloader, train_eval_dataloader
+        return train_dataloader, eval_train_dataloader, eval_test_dataloader
 
 
 def is_jsonable(x):
@@ -203,10 +194,22 @@ def build_optimizer(game, opts):
     else:
         raise ValueError('Optimizer must be either RMSprop or Adam')
 
-    return optimizer([
-        {"params": game.sender.parameters(), "lr": opts.sender_lr},
-        {"params": game.receiver.parameters(), "lr": opts.receiver_lr},
-    ])
+    if opts.mode != 'gs' or opts.temperature_lr is None:
+        return optimizer([
+            {"params": game.sender.parameters(), "lr": opts.sender_lr},
+            {"params": game.receiver.parameters(), "lr": opts.receiver_lr},
+        ])
+    else:
+        sender_params = [
+            param for param in game.sender.parameters()
+            if param is not game.sender.temperature
+        ]
+
+        return optimizer([
+            {"params": game.sender.temperature, "lr": opts.temperature_lr},
+            {"params": sender_params, "lr": opts.sender_lr},
+            {"params": game.receiver.parameters(), "lr": opts.receiver_lr},
+        ])
 
 
 def crop_messages(messages: torch.Tensor, lengths: Optional[torch.Tensor] = None):
@@ -360,17 +363,25 @@ class Dump:
                 self.attribute_names
             )
 
-    def get_message_logs(self):
+    def get_message_logs(self, mapping):
         message_logs = []
-        for s_input, msg, msg_nn, r_input, r_output, r_output_nn, label, \
-                target_attr, distr_attr in self:
+
+        def map(key, value):
+            mapped = mapping[key][value]
+            if isinstance(mapped, np.bytes_):
+                return np.str_(mapped.astype('U'))
+            return mapped
+
+        for s_input, msg, msg_nn, r_input, r_output, \
+                r_output_nn, label, target_attr, distr_attr in self:
 
             if self.opts.image_input:
                 # For the Obverter dataset, we save object features rather than
                 # images (color, shape, position, rotation)
                 def attr_repr(attr_dict):
-                    attr_strings = [f'{k}: {v}' for k, v in attr_dict.items()]
-                    return ', '.join(attr_strings)
+                    attr_mapped = {k: map(k, v) for k, v in attr_dict.items()}
+                    attr_str = [f'{k}: {v}' for k, v in attr_mapped.items()]
+                    return ', '.join(attr_str)
 
                 target_vec = attr_repr(target_attr)
                 distr_vex = [attr_repr(attr_dict) for attr_dict in distr_attr]
@@ -404,13 +415,24 @@ class Dump:
 
             if not self.opts.image_input:
                 message_log.update({
-                    'target_cat': target_attr['category'],
-                    'distractor_cats': [x['category'] for x in distr_attr],
+                    'target_cat': map('category', target_attr['category']),
+                    'distractor_cats':
+                        [map('category', x['category']) for x in distr_attr],
                 })
 
             message_logs.append(message_log)
 
         return message_logs
+
+    @staticmethod
+    def get_attribute(attribute_dict, key):
+        keys = [
+            k.replace('target_', '') for k in attribute_dict
+            if k.startswith('target_')]
+        n_distractors = len(attribute_dict) // len(keys) - 1
+        prefixes = ['target_'] + [f'distr{i}_' for i in range(n_distractors)]
+        values = [attribute_dict[prefix + key] for prefix in prefixes]
+        return torch.cat(values, dim=1)
 
     def get_eval_dict(self):
         opts = self.opts
@@ -429,31 +451,70 @@ class Dump:
             entropy, length_probs = message_entropy(probs)
             max_entropy = self.channel.max_message_entropy(
                 length_probs, key == 'noise')
-            unique_targets = len(torch.unique(s_inputs, dim=0))
 
-            # TODO average length add 1?
+            if opts.image_input:
+                idx = torch.tensor(
+                    [attr_names.index('shape'), attr_names.index('color')]
+                )
+                obj_repr = torch.stack(
+                    [t_attributes[:, idx]] + [a[:, idx] for a in d_attributes],
+                    dim=1,
+                )
+                print('repr', obj_repr.shape)
+                min_entropy, n_uniq_samples = min_message_entropy(
+                    r_inputs, labels, obj_repr)
+            else:
+                min_entropy, n_uniq_samples = \
+                    min_message_entropy(r_inputs, labels)
+
+            unique_messages, categorized_messages = \
+                torch.unique(messages, dim=0, return_inverse=True)
+            n_uniq_targets = len(torch.unique(s_inputs, dim=0))
+            n_uniq_messages = len(unique_messages)
+
             results[key] = {
                 'samples': len(messages),
-                'samples_per_target_obj': len(messages) / unique_targets,
-                'unique_target_objects': unique_targets,
-                'unique_messages': len(torch.unique(messages, dim=0)),
+                'unique_msg': n_uniq_messages,
+                'unique_samples': n_uniq_samples,
+                'unique_target_objs': n_uniq_targets,
+                'samples_per_target_obj': len(messages) / n_uniq_targets,
+                'unique_target_objs_per_msg': n_uniq_targets / n_uniq_messages,
+                'unique_samples_per_target_obj':
+                    n_uniq_samples / n_uniq_targets,
+                'unique_samples_cat': None,
+                'unique_cat': None,
+                'unique_samples_per_target_cat': None,
+                'unique_cats_per_msg': None,
+                'samples_per_cat': None,
                 'average_length': (
-                    torch.arange(probs.size(1)) * length_probs).sum(),
+                    torch.arange(probs.size(1)) * length_probs
+                ).sum(),  # does not include additional EOS
                 'actual_vocab_size': torch.unique(messages).numel(),
                 'accuracy': (r_outputs == labels).float().mean(),
-                'accuracy2': compute_accuracy2(
+                'accuracy_symbol_removal': compute_accuracy2(
                     m_inputs, r_inputs, labels, self.receiver, opts),
                 'max_rep': compute_max_rep(messages).mean().item(),
-                'entropy_msg': entropy,
-                'entropy_max': max_entropy,
                 'redundancy': 1 - entropy / max_entropy,
+                'topsim': None,
+                'posdis': None,
+                'bosdis': None,
+                'entropy_msg': entropy,
+                'entropy_msg_as_a_whole':
+                    intervention.entropy(categorized_messages),
+                'entropy_max': max_entropy,
+                'entropy_min': min_entropy,
             }
 
             if opts.image_input:
+                for k in results[key]:
+                    if 'cat' in k:
+                        del results[key]
+
                 results[key].update({
                     'topsim': compute_top_sim(t_attributes, messages),
                     'posdis': compute_posdis(t_attributes, messages),
-                    'bosdis': compute_bosdis(t_attributes, messages, vocab_size),
+                    'bosdis': compute_bosdis(
+                        t_attributes, messages, vocab_size),
                 })
                 mi_attr = compute_mi(probs, t_attributes, entropy)
                 results[key]['entropy_attr'] = mi_attr['entropy_attr']
@@ -463,17 +524,34 @@ class Dump:
                         for k, v in mi_attr.items() if 'attr_dim' in k
                     })
             else:
+                del results[key]['posdis'], results[key]['bosdis']
+                # print(t_attributes.shape)
+                # print(d_attributes[0].shape)
+                category = torch.cat([t_attributes] + d_attributes, dim=-1)
+                # category = torch.cat([
+                #     item['category'] for item in [t_attributes] + d_attributes
+                # ], dim=-1)
+                min_entropy_cat, n_uniq_samples_cat = min_message_entropy(
+                    r_inputs, labels, category)
+                n_uniq_cat = len(torch.unique(category))
                 results[key].update({
+                    'unique_samples_cat': n_uniq_samples_cat,
+                    'unique_cat': n_uniq_cat,
+                    'samples_per_cat': len(messages) / n_uniq_cat,
+                    'unique_cats_per_msg': n_uniq_cat / n_uniq_messages,
+                    'unique_samples_per_target_cat':
+                        n_uniq_samples_cat / n_uniq_cat,
+                    'entropy_min_cat': min_entropy_cat,
                     'topsim': compute_top_sim(s_inputs, messages),
                 })
 
                 # assign a different number to every input vector
-                _, input_cat = torch.unique(
+                _, inp = torch.unique(
                     s_inputs, return_inverse=True, dim=0)
-                input_cat = input_cat.unsqueeze(-1).to(torch.float)
+                inp = inp.unsqueeze(-1).to(torch.float)
                 results[key].update({
                     k.replace('attr', 'input'): v for k, v
-                    in compute_mi(probs, input_cat, entropy).items()
+                    in compute_mi(probs, inp, entropy).items()
                 })
                 results[key].update({
                     k.replace('attr', 'category'): v
@@ -509,7 +587,7 @@ def print_training_results(dump_dict):
     sep_list = ['accuracy'] + [m for m in measures if 'entropy' in m][:1]
     while sep_list:
         m = sep_list.pop(-1)
-        if m not in ('entropy_msg', 'entropy_max'):
+        if m not in ('entropy_msg', 'entropy_max', 'entropy_whole_msg'):
             values.insert(measures.index(m), SEPARATING_LINE)
     print(tabulate(
         values,

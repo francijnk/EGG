@@ -1,12 +1,13 @@
 import os
 import random
 import argparse
+import itertools
 import numpy as np
-import pandas as pd
 from collections import defaultdict
 from torchvision import transforms
 from PIL import Image
 from tqdm import tqdm
+from sklearn.model_selection import train_test_split
 
 from ancm.data.obverter.render import (
     colors,
@@ -23,10 +24,11 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--n_distractors', '-d', type=int, required=True)
-    parser.add_argument('--n_samples_train', type=int, default=300)
-    parser.add_argument('--n_samples_test', type=int, default=20)
-    parser.add_argument('--n_img', type=int, default=150)
-    parser.add_argument('--resolution', type=int, default=128)
+    parser.add_argument('--n_samples_train', type=int, default=100)
+    parser.add_argument('--n_samples_train_eval', type=int, default=10)
+    parser.add_argument('--n_samples_test', type=int, default=30)
+    parser.add_argument('--n_img', type=int, default=100)
+    parser.add_argument('--resolution', type=int, default=64)
     parser.add_argument('--mode', type=str, default='random')
     parser.add_argument('--seed', type=int, default=42)
     args = parser.parse_args()
@@ -94,116 +96,125 @@ def load_image(shape, color, x=None, y=None, rotation=None, idx=None, resolution
     return image, (obj_type, color, int(xpos), int(ypos), int(rotation))
 
 
-def pick_random_color(exclude=None):
+def pick_random_color(tuples, exclude=None):
     if exclude is None:
         exclude = []
     elif not isinstance(exclude, list):
         exclude = [exclude]
 
-    available_colors = [
-        item for item in colors.keys()
-        if item not in exclude]
-
+    available_colors = [item[1] for item in tuples if item not in exclude]
     return random.choice(available_colors)
 
 
-def pick_random_shape(exclude=None):
+def pick_random_shape(tuples, exclude=None):
     if exclude is None:
         exclude = []
     elif not isinstance(exclude, list):
         exclude = [exclude]
 
-    available_object_types = [
-        item for item in object_types
-        if item not in exclude]
-
-    return random.choice(available_object_types)
+    available_shapes = [item[0] for item in tuples if item not in exclude]
+    return random.choice(available_shapes)
 
 
-def select_random_distractor(shape, color, xpos, ypos, rotation, used_combinations):
-    exclude = [item[0] for item in used_combinations]
-    distr_shape = pick_random_shape(exclude=exclude)
-    exclude = [
-        item[1] for item in used_combinations
-        if item[0] == distr_shape]
-    distr_color = pick_random_color(exclude=exclude)
-    distr_xpos = None
-    distr_ypos = None
-    distr_rotation = None
-    combination = (distr_shape, distr_color, distr_xpos, distr_ypos, distr_rotation)
-    used_combinations.append(combination)
-    return combination, used_combinations
+def select_random_distractor(attributes, used_combos, object_tuples):
+    # assert len(attributes) == 5
+    # shape, color, xpos, ypos, rotation = attributes
+
+    exclude = [item[0] for item in used_combos]
+    d_shape = pick_random_shape(object_tuples, exclude=exclude)
+    exclude = [item[1] for item in used_combos if item[0] == d_shape]
+    d_color = pick_random_color(object_tuples, exclude=exclude)
+
+    d_xpos, d_ypos, d_rotation = None, None, None
+
+    combination = (d_shape, d_color, d_xpos, d_ypos, d_rotation)
+    used_combos.append(combination)
+    return combination, used_combos
 
 
-def export_input_data(n_distractors, n_samples, n_img, resolution, select_distractor_fn):
-    sample_sets, labels, attributes = [], [], defaultdict(list)
+def export_input_data(object_tuples, args, select_fn, n_samples):
+    n_distractors = args.n_distractors
+    size = (len(object_tuples) * n_samples, n_distractors + 1)
+    positions = np.arange(n_distractors + 1)
+    _colors = list(colors)
+    keys = ('shape', 'color', 'xpos', 'ypos', 'rotation')
+
+    target_positions = np.empty(size[0], dtype=np.int64)
+    target_positions[:] = -1
+    attributes = defaultdict(lambda: np.empty(size, dtype=np.int64))
+    sample_features = []
+
+    def map_shape_color(attr, key):
+        if key == 'shape':
+            return object_types.index(attr)
+        elif key == 'color':
+            return _colors.index(attr)
+        else:
+            return attr
 
     # n_same_shape = int(0.1 * n_samples)
     # n_same_color = int(0.1 * n_samples)
     # n_same_location = int(0.2 * n_samples)
 
-    for shape in tqdm(object_types):
-        for color in colors:
-            for i in range(n_samples):
-                image_idx = i % n_img
-                target_image, (shape, color, xpos, ypos, rotation) = \
-                    load_image(shape, color, idx=image_idx, resolution=resolution)
+    for tuple_i, (shape, color) in tqdm(enumerate(object_tuples), total=len(object_tuples)):
+        for sample_j in range(n_samples):
+            idx = tuple_i * n_samples + sample_j
+            image_idx = sample_j % args.n_img
 
-                target_pos = np.random.randint(0, n_distractors + 1)
-                distractor_pos = [i for i in range(n_distractors + 1) if i != target_pos]
+            target_image, target_attributes = load_image(
+                shape, color, idx=image_idx, resolution=args.resolution)
 
-                sample_set = np.zeros(
-                    (1, n_distractors + 1, *target_image.shape), dtype=np.int64)
-                sample_set[0, target_pos] = target_image
+            target_pos = np.random.randint(0, n_distractors + 1)
+            distractor_pos = positions[positions != target_pos]
 
-                labels.append(target_pos)
-                attributes['target_color'].append(color)
-                attributes['target_shape'].append(shape)
-                attributes['target_xpos'].append(xpos)
-                attributes['target_ypos'].append(ypos)
-                attributes['target_rotation'].append(rotation)
+            sample = np.empty((size[1], *target_image.shape), dtype=np.int64)
+            sample[target_pos] = target_image
 
-                used_combinations = [(shape, color, xpos, ypos, rotation)]
-                for j in range(n_distractors):
-                    (distr_shape, distr_color, distr_xpos, distr_ypos, distr_rot), \
-                        used_combinations = select_distractor_fn(
-                            shape, color, xpos, ypos, rotation, used_combinations)
-                    distr_image, (_, _, distr_xpos, distr_ypos, distr_rot) = \
-                        load_image(
-                            distr_shape, distr_color, distr_xpos, distr_ypos,
-                            distr_rot, resolution=resolution)
-                    sample_set[0, distractor_pos[j]] = distr_image
+            target_positions[idx] = target_pos
+            for k, key in enumerate(keys):
+                attributes[key][idx, target_pos] = \
+                    map_shape_color(target_attributes[k], key)
 
-                    attributes[f'distr{j}_color'].append(distr_color)
-                    attributes[f'distr{j}_shape'].append(distr_shape)
-                    attributes[f'distr{j}_xpos'].append(distr_xpos)
-                    attributes[f'distr{j}_ypos'].append(distr_ypos)
-                    attributes[f'distr{j}_rotation'].append(distr_rot)
+            used_combos = [target_attributes]
+            for distr_k in range(n_distractors):
+                d_attributes, used_combos = \
+                    select_fn(target_attributes, used_combos, object_tuples)
+                d_image, d_attributes = \
+                    load_image(*d_attributes, resolution=args.resolution)
+                d_pos = distractor_pos[distr_k]
 
-                sample_sets.append(sample_set)
+                sample[d_pos] = d_image
+                for key_k, key in enumerate(keys):
+                    attributes[key][idx, d_pos] = \
+                        map_shape_color(d_attributes[key_k], key)
 
-    input_data = np.vstack(sample_sets)
-    labels = np.array(labels, dtype=np.int64)
+            sample_features.append(sample.reshape(1, *sample.shape))
 
-    # create a DataFrame & code each category as integers
-    attribute_df = pd.DataFrame(attributes)
-    for col in attribute_df.columns:
-        attribute_df[col] = attribute_df[col].astype('category')
-        attribute_df[col] = attribute_df[col].cat.set_categories(
-            new_categories=attribute_df[col].unique(),
-            ordered=True)
-        attribute_df[col] = attribute_df[col].cat.codes
+    input_data = np.vstack(sample_features)
 
-    attributes = np.array(attribute_df, dtype=np.int64)
     attributes = np.array(
-        list(map(tuple, attributes)),
-        dtype=np.dtype([
-            (attribute, np.int64)
-            for attribute in attribute_df.columns
-        ])
+        tuple(array for array in attributes.values()),
+        dtype=[(key, np.int64, size) for key in keys],
     )
 
-    return input_data, labels, attributes
+    # map remaining attributes and save mappings
+    mappings = [
+        np.char.array(object_types, unicode=False),
+        np.char.array(_colors, unicode=False),
+    ]
+    for key in keys[2:]:
+        mapping, mapped = np.unique(attributes[key], return_inverse=True)
+        mappings.append(mapping)
+        attributes[key] = mapped.reshape(attributes[key].shape)
+    mapping = np.array(
+        tuple(mappings),
+        dtype=[
+            (key, mapping.dtype, mapping.shape)
+            for key, mapping in zip(keys, mappings)
+        ],
+    )
+
+    return input_data, attributes, target_positions, mapping
 
 
 if __name__ == '__main__':
@@ -219,23 +230,40 @@ if __name__ == '__main__':
     else:
         raise NotImplementedError
 
-    train, train_labels, train_attributes = export_input_data(
-        args.n_distractors, args.n_samples_train, args.n_img, args.resolution, select_fn)
-    test, test_labels, test_attributes = export_input_data(
-        args.n_distractors, args.n_samples_test, args.n_img, args.resolution, select_fn)
+    all_objects = list(itertools.product(object_types, colors))
+    train_objects, test_objects = train_test_split(all_objects, test_size=0.25)
 
-    print(train.shape)
+    train, train_attr, train_targets, train_mapping = \
+        export_input_data(train_objects, args, select_fn, args.n_samples_train)
+    eval_train, eval_train_attr, eval_train_targets, eval_train_mapping = \
+        export_input_data(train_objects, args, select_fn, args.n_samples_train_eval)
+    eval_test, eval_test_attr, eval_test_targets, eval_test_mapping = \
+        export_input_data(test_objects, args, select_fn, args.n_samples_test)
+
     print('Number of shapes:', len(object_types))
     print('Number of colors:', len(colors.keys()))
-    print('Train samples:', len(train_labels))
-    print('Test/Eval samples:', len(test_labels))
+    print('Unique tuples in the train set:', len(train_objects))
+    print('Unique tuples in the test set:', len(test_objects))
+    print('Train samples:', len(train))
+    print('Eval samples (train):', len(eval_train))
+    print('Eval samples (test):', len(eval_test))
 
     npz_fpath = os.path.join(
         current_dir, '..', 'input_data', fname)
 
     np.savez_compressed(
         npz_fpath,
-        train=train, train_labels=train_labels, train_attributes=train_attributes,
-        valid=test, valid_labels=test_labels, valid_attributes=test_attributes,
-        test=test, test_labels=test_labels, test_attributes=test_attributes,
-        n_distractors=args.n_distractors)
+        train=train,
+        train_targets=train_targets,
+        train_attributes=train_attr,
+        train_attribute_mapping=train_mapping,
+        eval_train=eval_train,
+        eval_train_targets=eval_train_targets,
+        eval_train_attributes=eval_train_attr,
+        eval_train_attribute_mapping=eval_train_mapping,
+        eval_test=eval_test,
+        eval_test_targets=eval_test_targets,
+        eval_test_attributes=eval_test_attr,
+        eval_test_attribute_mapping=eval_test_mapping,
+        allow_pickle=False,
+    )

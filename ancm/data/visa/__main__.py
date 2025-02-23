@@ -86,13 +86,59 @@ def extract_visa(args):
         print('')
 
 
-def sample(data_concepts, n_distractors, n_samples):
+def sample(data, n_distractors, n_samples):
+    n_features = data.shape[1] - 1
+
+    concepts = np.array(data.iloc[:, 1:].values, dtype=np.int64)
+    categories, category_ids = np.unique(data.iloc[:, 0], return_inverse=True)
+    positions = np.arange(n_distractors + 1)
+
+    sample_features = np.zeros(
+        (len(data) * n_samples, n_distractors + 1, n_features),
+        dtype=np.int64)
+    sample_categories = np.empty_like(sample_features[..., 0])
+    target_positions = np.empty_like(sample_features[:, 0, 0])
+
+    for concept_i in range(len(data)):
+        candidate_ids = np.delete(np.arange(len(data)), concept_i, axis=0)
+        assert concept_i not in candidate_ids
+
+        for sample_j in range(n_samples):
+            idx = concept_i * n_samples + sample_j
+            sample = np.empty_like(sample_features[0])
+
+            sampled_ids = np.random.choice(
+                candidate_ids,
+                size=n_distractors,
+                replace=False)
+            concept_pos = np.random.randint(0, n_distractors + 1)
+            sampled_pos = positions[positions != concept_pos]
+            sample[concept_pos] = concepts[concept_i]
+            sample[sampled_pos] = concepts[sampled_ids]
+
+            sample_features[idx] = sample
+            target_positions[idx] = concept_pos
+            sample_categories[idx, concept_pos] = category_ids[concept_i]
+            sample_categories[idx, sampled_pos] = category_ids[sampled_ids]
+
+    sample_categories = np.array(
+        (sample_categories,),
+        dtype=[('category', np.int64, sample_categories.shape)],
+    )
+
+    categories = np.char.array(categories, unicode=False)
+    mapping = np.array(
+        (categories,),
+        dtype=[('category', categories.dtype, categories.shape)],
+    )
+
+    return sample_features, sample_categories, target_positions, mapping
+
+
+def _sample(data_concepts, n_distractors, n_samples):
     n_features = data_concepts.shape[1] - 1  # exclude the category column
 
     data_categories = data_concepts.iloc[:, 0]  # .astype('category')
-    # data_categories = data_categories.cat.set_categories(
-    #     new_categories=data_categories.unique(),
-    #     ordered=True)
     # data_categories = data_categories.cat.codes
     data_concepts = np.array(data_concepts.iloc[:, 1:].values, dtype='int')
 
@@ -170,27 +216,50 @@ def export_visa(args):
     print('Train concepts:', len(train_features))
     print('Test concepts:', len(test_features))
 
-    train, train_labels, train_categories = sample(
-        train_features, args.n_distractors, args.n_samples_train)
-    train_eval, train_eval_labels, train_eval_categories = sample(
-        train_features, args.n_distractors, args.n_samples_train_eval)
-    test, test_labels, test_categories = sample(
-        test_features, args.n_distractors, args.n_samples_test)
+    # train, train_labels, train_categories = sample(
+    #     train_features, args.n_distractors, args.n_samples_train)
+    # train_eval, train_eval_labels, train_eval_categories = sample(
+    #     train_features, args.n_distractors, args.n_samples_train_eval)
+    # test, test_labels, test_categories = sample(
+    #     test_features, args.n_distractors, args.n_samples_test)
+    train, train_cat, train_targets, train_mapping = \
+        sample(train_features, args.n_distractors, args.n_samples_train)
+    eval_train, eval_train_cat, eval_train_targets, eval_train_mapping = \
+        sample(train_features, args.n_distractors, args.n_samples_train_eval)
+    eval_test, eval_test_cat, eval_test_targets, eval_test_mapping = \
+        sample(test_features, args.n_distractors, args.n_samples_test)
 
-    print('Training samples:', len(train_labels))
-    print('Evaluation samples (train):', len(train_eval_labels))
-    print('Evaluation samples (test):', len(test_labels))
+    print('Training samples:', len(train))
+    print('Evaluation samples (train):', len(eval_train))
+    print('Evaluation samples (test):', len(eval_test))
 
-    npz_fname = f"visa-{args.n_distractors}-{args.n_samples_train}.npz"
+    npz_fname = f"visa-{args.n_distractors + 1}-{args.n_samples_train}.npz"
     npz_fpath = os.path.join(current_dir, '..', 'input_data', npz_fname)
+
     np.savez_compressed(
         npz_fpath,
-        train=train, train_labels=train_labels, train_attributes=train_categories,
-        valid=test, valid_labels=test_labels, valid_attributes=test_categories,
-        test=test, test_labels=test_labels, test_attributes=test_categories,
-        train_eval=train_eval, train_eval_labels=train_eval_labels,
-        train_eval_attributes=train_eval_categories,
-        n_distractors=args.n_distractors)
+        train=train,
+        train_targets=train_targets,
+        train_attributes=train_cat,
+        train_attribute_mapping=train_mapping,
+        eval_train=eval_train,
+        eval_train_targets=eval_train_targets,
+        eval_train_attributes=eval_train_cat,
+        eval_train_attribute_mapping=eval_train_mapping,
+        eval_test=eval_test,
+        eval_test_targets=eval_test_targets,
+        eval_test_attributes=eval_test_cat,
+        eval_test_attribute_mapping=eval_test_mapping,
+        allow_pickle=False,
+    )
+    # np.savez_compressed(
+    #     npz_fpath,
+    #     train=train, train_labels=train_labels, train_attributes=train_categories,
+    #     valid=test, valid_labels=test_labels, valid_attributes=test_categories,
+    #     test=test, test_labels=test_labels, test_attributes=test_categories,
+    #     train_eval=train_eval, train_eval_labels=train_eval_labels,
+    #     train_eval_attributes=train_eval_categories,
+    #     n_distractors=args.n_distractors)
 
 
 if __name__ == '__main__':

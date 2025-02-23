@@ -10,7 +10,6 @@ import json
 import time
 import pathlib
 import argparse
-from collections import defaultdict
 from datetime import timedelta
 
 import torch.utils.data
@@ -74,13 +73,13 @@ def get_params(params):
         "--mode", type=str, default="gs",
         help="Selects whether Reinforce or GumbelSoftmax relaxation is used for training (default: gs)")
     parser.add_argument(
-        "--n_permutations_train", type=int, default=None,
-        help="Number of order permutations of the objects in the train set")
-    parser.add_argument(
         "--image_input", action="store_true", default=False,
         help="Run the image data variant of the game")
     parser.add_argument(
         "--optim", type=str, default="rmsprop", help="Optimizer to use [adam, rmsprop] (default: rmsprop)")
+    parser.add_argument(
+        "--n_targets", type=int, default=None,
+        help="Number of additional_targets targets in each sample (default: None)")
     parser.add_argument(
         "--no_shuffle", action="store_false", default=True,
         help="Do not shuffle train data before every epoch (default: False)")
@@ -97,7 +96,8 @@ def get_params(params):
     parser.add_argument(
         "--temperature", type=float, default=1.0, help="GS temperature for the sender (default: 1.0)")
     parser.add_argument(
-        "--trainable_temperature", action="store_true", default=False, help="Enable trainable temperature")
+        "--temperature_lr", type=float, default=None,
+        help="Temperature LR. Unless a value is specified, temperature is not a trainable parameter")
     parser.add_argument(
         "--temperature_decay", default=None, type=float,
         help="Factor, by which the temperature is decreased every epoch.")
@@ -128,19 +128,12 @@ def check_args(args):
         or args.channel in ("erasure", "symmetric", "deletion")
     ), 'The only channels implemented are "erasure", "symmetric", "deletion"'
 
-    args.mode = args.mode.lower()
-    assert args.mode in ("rf", "gs")
-
     if args.channel is None or args.error_prob == 0:
         args.error_prob = 0.0
         args.channel = 'none'
 
-    decay = args.temperature_decay
-    minimum = args.temperature_minimum
-    assert (
-        (decay is None and minimum is None)
-        or (decay is not None and minimum is not None)
-    )
+    args.mode = args.mode.lower()
+    assert args.mode in ("rf", "gs")
 
     if args.results_folder is not None:
         os.makedirs(os.path.dirname(args.results_folder), exist_ok=True)
@@ -155,13 +148,10 @@ def main(params):
     device = torch.device("cuda" if opts.cuda else "cpu")
 
     data_handler = DataHandler(opts)
-    train_data, validation_data, test_data, train_eval_data = \
-        data_handler.load_data(opts)
+    train_data, eval_train_data, eval_test_data = data_handler.load_data(opts)
 
-    if opts.channel == 'erasure' and opts.error_prob != 0:
-        vocab_size = opts.vocab_size + 1
-    else:
-        vocab_size = opts.vocab_size
+    vocab_size = opts.vocab_size + 1 \
+        if opts.channel == 'erasure' else opts.vocab_size
 
     _sender = Sender(
         n_features=data_handler.n_features,
@@ -205,7 +195,7 @@ def main(params):
             opts.max_len,
             opts.temperature,
             opts.sender_cell,
-            opts.trainable_temperature)
+            opts.temperature_lr)
         receiver = core.RnnReceiverGS(
             _receiver,
             vocab_size,
@@ -229,10 +219,10 @@ def main(params):
         CustomProgressBarLogger(
             opts,
             train_data_len=len(train_data),
-            test_data_len=len(validation_data)),
+            test_data_len=len(eval_test_data)),
     ]
 
-    if opts.mode == "gs" and not opts.trainable_temperature \
+    if opts.mode == "gs" and not opts.temperature_lr \
             and opts.temperature_decay is not None:
         callbacks.append(core.TemperatureUpdater(
             agent=sender,
@@ -244,7 +234,7 @@ def main(params):
         optimizer=optimizer,
         optimizer_scheduler=None,
         train_data=train_data,
-        validation_data=validation_data,
+        validation_data=eval_test_data,
         callbacks=callbacks)
 
     t_start = time.monotonic()
@@ -252,32 +242,32 @@ def main(params):
     t_end = time.monotonic()
     dump_dict = {}
 
-    # results on the eval subset of the training set (VISA only)
-    if train_eval_data is not None:
-        train_dump = Dump(game, train_eval_data, opts, device)
-        dump_dict['train'] = {
-            'evaluation': train_dump.get_eval_dict(),
-            'messages': train_dump.get_message_logs(),
-        }
+    # results on the eval subset of the training set
+    train_dump = Dump(game, eval_train_data, opts, device)
+    train_mapping = data_handler.eval_train_mapping
+    dump_dict['train'] = {
+        'evaluation': train_dump.get_eval_dict(),
+        'messages': train_dump.get_message_logs(train_mapping),
+    }
 
-    test_dump = Dump(game, test_data, opts, device)
+    test_dump = Dump(game, eval_test_data, opts, device)
+    test_mapping = data_handler.eval_train_mapping
     dump_dict['test'] = {
         'evaluation': test_dump.get_eval_dict(),
-        'messages': test_dump.get_message_logs(),
+        'messages': test_dump.get_message_logs(test_mapping),
     }
 
     # if we evaluated on the train set, compute KLD between the protocols
-    if train_eval_data is not None:
-        for key in dump_dict['train']['evaluation']:
-            if key != 'no noise':
-                probs_p, probs_q = train_dump.probs, test_dump.probs
-            else:
-                print('im alive!')
-                probs_p, probs_q = train_dump.probs_nn, test_dump.probs_nn
+    for key in dump_dict['train']['evaluation']:
+        probs_p, probs_q = (train_dump.probs_nn, test_dump.probs_nn) \
+            if key == 'no noise' else (train_dump.probs, test_dump.probs)
 
-            kld = relative_message_entropy(probs_p, probs_q).item()
-            dump_dict['train']['evaluation'][key]['KLD_train_test'] = kld
-            dump_dict['test']['evaluation'][key]['KLD_train_test'] = kld
+        kld_train = relative_message_entropy(probs_p, probs_q).item()
+        kld_test = relative_message_entropy(probs_q, probs_p).item()
+        dump_dict['train']['evaluation'][key]['KLD_train_test'] = kld_train
+        dump_dict['test']['evaluation'][key]['KLD_train_test'] = kld_train
+        dump_dict['train']['evaluation'][key]['KLD_test_train'] = kld_test
+        dump_dict['test']['evaluation'][key]['KLD_test_train'] = kld_test
 
     # save training time
     training_time = timedelta(seconds=t_end - t_start)
@@ -298,11 +288,10 @@ def main(params):
     }
 
     if opts.results_folder:
-        opts.results_folder.mkdir(exist_ok=True)
-        with open(opts.results_folder / f'{opts.filename}-results.json', 'w') as f:
+        filepath = opts.results_folder / f'{opts.filename}-results.json'
+        with open(filepath, 'w') as f:
             json.dump(dump_dict, f, indent=4)
-
-        print(f"Results saved to {opts.results_folder / opts.filename}-results.json")
+        print(f"Results saved to {filepath}")
 
     print('Training time:', training_time)
     print('Training time per epoch:', training_time_per_epoch)

@@ -7,19 +7,15 @@ from egg.core.util import find_lengths
 # from scipy.optimize import minimize_scalar
 from sklearn.metrics.pairwise import cosine_similarity
 from Levenshtein import distance  # , ratio
-from scipy.stats import pearsonr, spearmanr
-from collections import defaultdict
+from scipy.stats import spearmanr  # pearsonr
 from torch.utils.data import Dataset
 from itertools import combinations
-import pyitlib.discrete_random_variable as it
+# import pyitlib.discrete_random_variable as it
 # from pyitlib.discrete_random_variable import entropy, entropy_joint
-from nltk.lm import MLE#, NgramModel, LidstoneProbDist
-from nltk.probability import LidstoneProbDist
-from nltk.lm.models import Lidstone
-from egg.zoo.language_bottleneck.intervention import entropy, mutual_info
-from torch.distributions.utils import logits_to_probs, probs_to_logits, clamp_probs
+from egg.zoo.language_bottleneck import intervention
+from torch.distributions.utils import logits_to_probs, probs_to_logits
 
-from typing import Optional, Iterable, Tuple
+from typing import Optional
 
 
 class CustomDataset(Dataset):
@@ -48,7 +44,7 @@ class CustomDataset(Dataset):
 #     return -p * np.log2(p) - (1 - p) * np.log2(1 - p)
 
 
-@torch.compile
+# @torch.compile
 def get_prefix_indices(prev_symbols, split_size):
     n_prev = prev_symbols.size(1)
     prefix_indices = torch.cartesian_prod(
@@ -59,9 +55,49 @@ def get_prefix_indices(prev_symbols, split_size):
         yield indices, torch.arange(n_prev).view(1, -1).expand(indices.size())
 
 
-@torch.compile
+# @torch.compile
 def aggregate_prefix_logits(prev_symbols, idx):
     return prev_symbols.transpose(0, -1)[idx].sum(1).t()
+
+
+def min_message_entropy(receiver_inputs, labels, attributes=None):
+    size = receiver_inputs.size()
+
+    if attributes is None:
+        # categorize VISA features and get target objects for each sample
+        r_inputs = receiver_inputs.view(size[0] * size[1], size[2])
+        _, r_inputs_cat = torch.unique(r_inputs, dim=0, return_inverse=True)
+        targets = r_inputs_cat[labels]
+
+        # sort objects in each sample, so that their order doesn't matter
+        # and categorize object samples
+        samples, _ = r_inputs_cat.view(size[:-1]).sort()
+
+    else:  # instead of receiver_inputs, use the attribute provided
+        # if more than one attribute per object is provided, categorize
+        if attributes.dim() == 3:  # (n_messages, n_distractors, n_attributes)
+            _, attributes = torch.unique(
+                attributes.view(size[0] * size[1], -1),
+                return_inverse=True,
+                dim=0,
+            )  # 40k x 5 x 2 -> 40k x 5
+            attributes = attributes.view(size[:2])
+
+        targets = attributes[:, 0]  # target attributes always come first
+        samples, _ = attributes.sort()
+
+    _, samples = torch.unique(samples, dim=0, return_inverse=True)
+    unique_samples = torch.unique(samples)
+
+    # H(label | receiver_inputs)
+    entropy_min = 0
+    for sample in unique_samples:
+        targets_i = targets[samples == sample]
+        p_i = len(targets_i) / len(targets)
+        entropy_i = intervention.entropy(targets_i)
+        entropy_min += p_i * entropy_i
+
+    return entropy_min, len(unique_samples)
 
 
 def message_entropy(probs, order=4, split_size=1000):
@@ -241,7 +277,7 @@ def joint_entropy(probs, y, split_size=1000):
     assert len(y) == y.numel()
     _, indices = torch.unique(y, dim=0, return_inverse=True)
 
-    H_msg_y = entropy(indices)  # H(Y)
+    H_msg_y = intervention.entropy(indices)  # H(Y)
     for cat in range(indices.max() + 1):
         cat_mask = indices == cat
         prob_cat = (indices == cat).float().mean()
@@ -251,13 +287,13 @@ def joint_entropy(probs, y, split_size=1000):
     return H_msg_y
 
 
-def compute_mi(probs, attributes, entropy_message=None):
+def compute_mi(probs, attributes, entropy_message=None, split_size=1000):
     if entropy_message is None:
         entropy_message, _ = message_entropy(probs)
 
     if attributes.size(1) == 1:
-        entropy_attr = entropy(attributes)
-        entropy_msg_attr = joint_entropy(probs, attributes)
+        entropy_attr = intervention.entropy(attributes)
+        entropy_msg_attr = joint_entropy(probs, attributes, split_size)
         mi_msg_attr = entropy_message + entropy_attr - entropy_msg_attr
         vi_msg_attr = 2 * entropy_msg_attr - entropy_message - entropy_attr
         is_norm_msg_attr = mi_msg_attr / entropy_msg_attr
@@ -272,12 +308,12 @@ def compute_mi(probs, attributes, entropy_message=None):
 
     else:  # return values per attribute dimension instead
         _, categorical = torch.unique(attributes, dim=0, return_inverse=True)
-        entropy_attr = entropy(categorical)
+        entropy_attr = intervention.entropy(categorical)
         entropy_attr_dim = [
-            entropy(attributes[:, i])
+            intervention.entropy(attributes[:, i])
             for i in range(attributes.size(-1))]
         entropy_msg_attr_dim = [
-            joint_entropy(probs, attributes[:, i])
+            joint_entropy(probs, attributes[:, i], split_size)
             for i in range(attributes.size(1))]
         mi_msg_attr_dim = [
             entropy_message + H_y - H_xy
@@ -469,8 +505,8 @@ def compute_posdis(
         for i in range(sender_inputs.size(1)):
             x, y = messages[:, j], sender_inputs[:, i]
             y = sender_inputs[:, i]
-            H_j = entropy(y)
-            info = mutual_info(x, y)
+            H_j = intervention.entropy(y)
+            info = intervention.mutual_info(x, y)
             symbol_mi.append(info)
 
         symbol_mi.sort(reverse=True)

@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import numpy as np
 from torch.distributions.utils import logits_to_probs, probs_to_logits
 from torch.distributions import RelaxedOneHotCategorical, Categorical, OneHotCategorical
 
@@ -588,9 +589,23 @@ class CommunicationRnnReinforce(nn.Module):
 
 # Gumbel-Softmax
 def loss_gs(_sender_input, _message, _receiver_input, receiver_output, _labels, _aux_input):
-    accuracy = (receiver_output.argmax(dim=-1) == _labels).detach().float()
     cross_entropy = F.cross_entropy(receiver_output, _labels, reduction="none")
-    return cross_entropy, {"accuracy": accuracy * 100}
+    accuracy = (receiver_output.detach().argmax(dim=-1) == _labels).float()
+
+    return cross_entropy, {'accuracy': accuracy * 100}
+
+    min_real = torch.finfo(receiver_output.dtype).min
+    r_output = receiver_output.detach()
+    r_probs = logits_to_probs(r_output)
+    r_log2_prob = torch.clamp(r_output / np.log(2), min=min_real)
+    r_entropy = torch.linalg.vecdot(-r_probs, r_log2_prob)
+
+    aux_info = {
+        'accuracy': accuracy * 100,
+        'entropy_receiver': r_entropy,
+    }
+
+    return cross_entropy, aux_info
 
 
 class RnnSenderGS(nn.Module):
@@ -623,8 +638,8 @@ class RnnSenderGS(nn.Module):
             max_len,
             temperature,
             cell="rnn",
-            trainable_temperature=False,
-            straight_through=False,):
+            temperature_lr=None,
+            straight_through=False):
 
         super(RnnSenderGS, self).__init__()
         self.agent = agent
@@ -637,12 +652,13 @@ class RnnSenderGS(nn.Module):
         self.embed_dim = embed_dim
         self.vocab_size = vocab_size
 
-        if not trainable_temperature:
+        if temperature_lr is None:
             self.temperature = temperature
         else:
             self.temperature = torch.nn.Parameter(
                 torch.tensor([temperature]),
-                requires_grad=True)
+                requires_grad=True,
+            )
 
         self.straight_through = straight_through
         self.cell = None
@@ -800,6 +816,14 @@ class SenderReceiverRnnGS(nn.Module):
         not_eosed_before_nn = not_eosed_before.detach().clone()
         aux_info = {}
 
+        # compute aux info values without noise
+        accuracy_nn = (receiver_output_nn.argmax(-1) == labels.unsqueeze(-1)).float() * 100
+        # min_real = torch.finfo(receiver_output.dtype).min
+        # r_probs = logits_to_probs(receiver_output_nn)
+        # r_log2_prob = torch.clamp(receiver_output_nn / np.log(2), min=min_real)
+        # assert torch.allclose(r_probs.sum(-1), torch.ones_like(receiver_output_nn[..., 0]))
+        # r_entropy_nn = torch.linalg.vecdot(-r_probs, r_log2_prob)
+
         for step in range(receiver_output.size(1)):
             step_loss, step_aux = self.loss(
                 sender_input,
@@ -809,18 +833,6 @@ class SenderReceiverRnnGS(nn.Module):
                 labels,
                 aux_input)
 
-            accuracy_nn = 100 * (
-                receiver_output_nn[:, step, ...].argmax(dim=-1) == labels
-            ).detach().float()
-
-            #  additional accumulated EOS prob
-            # if isinstance(self.channel, DeletionChannel) and self.training:
-            #     eos_mask = message[:, step, 0] + channel_aux.sum(-1).detach()
-            #     # not_eosed_before -= channel_aux[:, step]
-            # elif isinstance(self.channel, DeletionChannel) and not self.training:
-            # if isinstance(self.channel, DeletionChannel):
-            #     eos_mask = channel_aux + step < not_eosed_before.detach()
-            # else:
             add_mask = message[:, step, 0] * not_eosed_before
             add_mask_nn = message_nn[:, step, 0] * not_eosed_before_nn
 
@@ -833,40 +845,13 @@ class SenderReceiverRnnGS(nn.Module):
             # aggregate aux info
             for name, value in step_aux.items():
                 aux_info[name] = value * add_mask + aux_info.get(name, 0)
-            aux_info['accuracy_nn'] = accuracy_nn * add_mask_nn \
+            aux_info['accuracy_nn'] = accuracy_nn[:, step] * add_mask_nn \
                 + aux_info.get('accuracy_nn', 0)
-            # length_probs[:, step] = add_mask.detach()
-            # length_probs_nn[:, step] = add_mask_nn.detach()
-
-            # aggregate message entropy
-            # if the probability that message has a given length is very low,
-            # do not aggregate (due to numerical errors)
-            # channel_dict['entropy_msg'] = channel_dict['entropy_msg'] \
-            #    + torch.where(
-            #        add_mask > 1e-5,
-            #        add_mask.detach() * prefix_entropy,
-            #        0)
-
-            # entropy of the symbol, assuming it is not eos
-            # (the furmula exploits decomposability of entropy)
-            # prefix_entropy += (
-            #     channel_dict['entropy_smb'][:, step]
-            #     - self.channel.tensor_binary_entropy(eos_mask.detach())
-            # ) / (1 - eos_mask.detach())  # no gradient
+            # aux_info['entropy_receiver_nn'] = \
+            #     r_entropy_nn[:, step] * add_mask_nn \
+            #     + aux_info.get('entropy_receiver_nn', 0)
 
             not_eosed_before = not_eosed_before * (1 - message[:, step, 0])
-
-            # TODO check the below works correctly & detaches
-            # channel_dict['entropy_msg_nn'] = channel_dict['entropy_msg_nn'] \
-            #     + torch.where(
-            #        add_mask_nn > 1e-5,
-            #        add_mask_nn.detach() * prefix_entropy_nn,
-            #        0)
-            # prefix_entropy_nn += (
-            #    channel_dict['entropy_smb_nn'][:, step]
-            #    - self.channel.tensor_binary_entropy(message_nn[:, step, 0])
-            # ).detach() / (1 - eos_mask.detach())
-
             not_eosed_before_nn *= 1 - message_nn[:, step, 0]
 
         # the remainder of the probability mass
@@ -883,8 +868,11 @@ class SenderReceiverRnnGS(nn.Module):
         for name, value in step_aux.items():
             aux_info[name] = value * not_eosed_before + aux_info.get(name, 0.0)
 
-        aux_info["length"] = length
-        aux_info["length_nn"] = length_nn
+        aux_info["length"] = length - 1
+        aux_info["length_nn"] = length_nn - 1
+        if isinstance(self.sender.temperature, torch.nn.Parameter):
+            aux_info["temperature"] = \
+                self.sender.temperature.detach().clone()
 
         # compute expected_length on probs
         # TODO remove? this is more accurate but there's barely any difference

@@ -177,7 +177,7 @@ def render_scenes(args):
 
                     filename = get_object_fname(color, object_type, idx=idx) 
                     if filename is not None:
-                        tqdm.write("%s.png exists, skipping" % filename)
+                        # tqdm.write("%s.png exists, skipping" % filename)
                         pbar.update(1)
                         continue
                     else:
