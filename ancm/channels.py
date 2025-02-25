@@ -320,24 +320,6 @@ class SymmetricChannel(Channel):
     """
 
     def gs(self, messages, probs, apply_noise):
-        def get_target_ids(target_mask):
-            rows = torch.arange(len(target_mask)).unsqueeze(1)
-            symbols = torch.arange(1, messages.size(-1))
-            target_rows = rows.expand(-1, messages.size(-1) - 1)[target_mask]
-            target_symbols = symbols.expand(target_mask.size())[target_mask]
-            return target_rows, target_symbols
-
-        def get_candidate_symbols(target_symbols):
-            n_targets = target_symbols.numel()
-            symbols = torch.arange(1, messages.size(-1)).expand(n_targets, -1)
-            candidate_mask = symbols != target_symbols.unsqueeze(-1)
-            candidate_symbols = symbols[candidate_mask]
-            return candidate_symbols.view(-1, messages.size(-1) - 2)
-
-        if messages.is_cuda:
-            get_target_ids = torch.compile(get_target_ids)
-            get_candidate_symbols = torch.compile(get_candidate_symbols)
-
         if not apply_noise:
             return messages, probs
 
@@ -352,26 +334,18 @@ class SymmetricChannel(Channel):
                 return messages.view(size), probs
 
             # get target positions & messages
-            target_rows, target_symbols = get_target_ids(target_mask)
+            rows = torch.arange(len(target_mask)).unsqueeze(1)
+            target_rows = rows.expand(-1, messages.size(-1) - 1)[target_mask]
+            targets = messages[target_rows]
 
-            # find candidate symbols different from target symbols
-            candidate_symbols = get_candidate_symbols(target_symbols)
+            # prob of replacing another non-EOS symbol for each non-EOS symbol
+            replacements = (1 - targets[:, 1:] - targets[:, :1])
+            replacements = replacements / (size[-1] - 2)
 
-            # sample replacement symbols
-            replacement_ids = torch.randint(
-                size=(n_targets,),
-                high=messages.size(-1) - 2,
-                generator=self.generator,
-                device=self.device)
-            idx = (torch.arange(n_targets), replacement_ids)
-            replacement_symbols = candidate_symbols[idx]
-
-            # adjust message tensors
-            target_messages = messages[target_rows, target_symbols]
-            adjustment = torch.zeros_like(messages)
-            adjustment[target_rows, target_symbols] -= target_messages
-            adjustment[target_rows, replacement_symbols] += target_messages
-            messages = (messages + adjustment).view(size)
+            # replace
+            messages[target_rows, 1:] = replacements
+            messages = messages.view(size)
+            assert torch.allclose(messages.sum(-1), torch.ones_like(messages.sum(-1)))
 
             # adjust symbol probabilities
             probs = probs.clone()
@@ -400,13 +374,10 @@ class SymmetricChannel(Channel):
             target_symbols = discrete_symbols[target_rows]
 
             # find candidate symbols different from target symbols
-            candidate_symbols2 = get_candidate_symbols(target_symbols)
-            candidate_symbols = \
-                torch.arange(1, size[-1]).unsqueeze(0).expand(n_targets, -1)
-            candidate_mask = candidate_symbols != target_symbols.unsqueeze(-1)
-            candidate_symbols = candidate_symbols[candidate_mask]
-            candidate_symbols = candidate_symbols.view(-1, size[-1] - 2)
-            assert torch.all(candidate_symbols == candidate_symbols2)
+            n_targets = target_symbols.numel()
+            symbols = torch.arange(1, messages.size(-1)).expand(n_targets, -1)
+            candidate_mask = symbols != target_symbols.unsqueeze(-1)
+            candidate_symbols = symbols[candidate_mask].view(-1, size[-1] - 2)
 
             # sample replacement symbols
             replacement_ids = torch.randint(
@@ -428,7 +399,6 @@ class SymmetricChannel(Channel):
             p_replacement *= self.p / (size[-1] - 2)
             probs[:, :, 1:] *= 1 - self.p
             probs[:, :, 1:] += p_replacement
-            # assert torch.allclose(probs.sum(-1), torch.ones_like(probs[..., 0]))
 
             return messages, probs
 
