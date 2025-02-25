@@ -136,18 +136,20 @@ def get_object_fname(color, shape, x=None, y=None, rotation=None, idx=None):
 
     if x is None and y is None and idx is None:
         prefix = f'{color}_{shape}_'
-        _filter = lambda x: x.startswith(prefix)
+        _filter = lambda x: x.startswith(prefix) and 'pov-state' not in x
     elif x is None and y is None and rotation is None:
         prefix = f'{color}_{shape}_{idx}_'
-        _filter = lambda x: x.startswith(prefix)
+        _filter = lambda x: x.startswith(prefix) and 'pov-state' not in x
     else:
         def _filter(fname):
             _color, _shape, _, _x, _y, _rotation = fname.split('.')[0].split('_')
+            if fname.endswith('pov-state'):
+                return False
             if color != _color or shape != shape:
                 return False
-            if x is not None and int(x) != _x:
+            if x is not None and int(x) != int(_x):
                 return False
-            if y is not None and int(y) != _y:
+            if y is not None and int(y) != int(_y):
                 return False
             if rotation is not None and int(rotation) !=  _rotation:
                 return False

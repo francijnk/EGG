@@ -12,7 +12,7 @@ from ancm.eval import (
     message_entropy,
     min_message_entropy,
     compute_max_rep,
-    compute_accuracy2,
+    compute_symbol_removal_accuracy,
     compute_top_sim,
     compute_mi,
     compute_posdis,
@@ -29,7 +29,13 @@ common_opts = get_opts()
 
 class ObjectDataset(Dataset):
     def __init__(
-            self, obj_sets, targets, attributes, n_additional_targets=2, seed=42):
+        self,
+        obj_sets: np.ndarray,
+        targets: np.ndarray,
+        attributes: np.ndarray,
+        n_additional_targets: Optional[int] = 2,
+        seed: int = 42
+    ):
         n_objects = obj_sets.shape[1]
         self.n_targets = 1 if n_additional_targets is None \
             else 1 + n_additional_targets \
@@ -141,13 +147,16 @@ class DataHandler:
         def _collate(batch):
             obj_sets, target_ids, aux_attributes = zip(*batch)
 
-            r_inputs, labels = np.vstack(np.expand_dims(obj_sets, 0)), np.array(target_ids)
+            r_inputs = np.vstack(np.expand_dims(obj_sets, 0))
+            labels = np.array(target_ids)
             targets = r_inputs[np.arange(labels.shape[0]), labels]
             aux_attributes = np.vstack(aux_attributes)
 
             aux = {}
             for attr_name in aux_attributes.dtype.names:
-                aux[attr_name] = torch.from_numpy(aux_attributes[attr_name]).float()
+                aux[attr_name] = torch.from_numpy(
+                    aux_attributes[attr_name]
+                ).float()
 
             return (
                 torch.from_numpy(targets).float(),
@@ -161,19 +170,22 @@ class DataHandler:
             batch_size=self.batch_size,
             collate_fn=_collate,
             drop_last=True,
-            shuffle=self.shuffle_train_data)
+            shuffle=self.shuffle_train_data,
+        )
         eval_train_dataloader = DataLoader(
             eval_train_dataset,
             batch_size=self.batch_size,
             collate_fn=_collate,
             drop_last=False,
-            shuffle=False)
+            shuffle=False,
+        )
         eval_test_dataloader = DataLoader(
             eval_test_dataset,
             batch_size=self.batch_size,
             collate_fn=_collate,
             drop_last=False,
-            shuffle=False)
+            shuffle=False,
+        )
 
         return train_dataloader, eval_train_dataloader, eval_test_dataloader
 
@@ -194,25 +206,38 @@ def build_optimizer(game, opts):
     else:
         raise ValueError('Optimizer must be either RMSprop or Adam')
 
-    if opts.mode != 'gs' or opts.temperature_lr is None:
+    if opts.mode == 'rf':
         return optimizer([
             {"params": game.sender.parameters(), "lr": opts.sender_lr},
             {"params": game.receiver.parameters(), "lr": opts.receiver_lr},
         ])
     else:
         sender_params = [
-            param for param in game.sender.parameters()
-            if param is not game.sender.temperature
+            param for name, param in game.sender.named_parameters()
+            if 'temperature' not in name
+        ]
+        temperature_params = [
+            param for name, param in game.sender.named_parameters()
+            if 'temperature' in name
         ]
 
+        # temperature_params = game.sender.hidden_to_inv_temperature.parameters()
+        # sender_params = [
+        #     p for p in game.sender.parameters()
+        #     if p is not temperature_params
+        # ]
+
         return optimizer([
-            {"params": game.sender.temperature, "lr": opts.temperature_lr},
+            {"params": temperature_params, "lr": opts.temperature_lr},
             {"params": sender_params, "lr": opts.sender_lr},
             {"params": game.receiver.parameters(), "lr": opts.receiver_lr},
         ])
 
 
-def crop_messages(messages: torch.Tensor, lengths: Optional[torch.Tensor] = None):
+def crop_messages(
+        messages: torch.Tensor,
+        lengths: Optional[torch.Tensor] = None
+) -> torch.Tensor:
     """
     Given an Interaction object, removes non EOS symbols after the first EOS.
     Used to trim EOSed symbols on validation.
@@ -240,11 +265,12 @@ def crop_messages(messages: torch.Tensor, lengths: Optional[torch.Tensor] = None
 
 class Dump:
     def __init__(
-            self,
-            game: torch.nn.Module,
-            dataset: torch.utils.data.DataLoader,
-            opts: argparse.Namespace,
-            device: Optional[torch.device] = None):
+        self,
+        game: torch.nn.Module,
+        dataset: torch.utils.data.DataLoader,
+        opts: argparse.Namespace,
+        device: Optional[torch.device] = None
+    ):
 
         train_state = game.training
         game.eval()
@@ -297,6 +323,11 @@ class Dump:
             self.receiver_outputs_nn = logs.receiver_output_nn[idx] \
                 if opts.mode == 'rf' \
                 else logs.receiver_output_nn.argmax(-1)[idx]
+        else:
+            self.messages_nn = self.messages
+            self.probs_nn = self.probs
+            self.lengths_nn = self.lengths
+            self.receiver_outputs_nn = self.receiver_outputs
 
         distr_prefixes = {
             k[:k.index('_')]: None
@@ -344,8 +375,8 @@ class Dump:
                 ],
             )
 
-    def get_tensors(self, noise=True):
-        if noise:
+    def get_tensors(self, noise: bool):
+        if noise or self.opts.channel == 'none':
             return (
                 self.sender_inputs, self.messages, self.probs,
                 self.message_inputs, self.receiver_inputs,
@@ -442,7 +473,7 @@ class Dump:
         for key in keys:
             (s_inputs, messages, probs, m_inputs, r_inputs,
              r_outputs, labels, t_attributes, d_attributes, attr_names) \
-                = self.get_tensors(key == 'noise')
+                = self.get_tensors(key != 'no noise')
 
             # whether to include additional symbols
             vocab_size = self.probs.size(-1) if key == 'noise' \
@@ -450,7 +481,7 @@ class Dump:
 
             entropy, length_probs = message_entropy(probs)
             max_entropy = self.channel.max_message_entropy(
-                length_probs, key == 'noise')
+                length_probs, key != 'no noise')
 
             if opts.image_input:
                 idx = torch.tensor(
@@ -474,10 +505,11 @@ class Dump:
 
             results[key] = {
                 'samples': len(messages),
+                'samples_per_target_obj': len(messages) / n_uniq_targets,
+                'samples_per_cat': None,
                 'unique_msg': n_uniq_messages,
                 'unique_samples': n_uniq_samples,
                 'unique_target_objs': n_uniq_targets,
-                'samples_per_target_obj': len(messages) / n_uniq_targets,
                 'unique_target_objs_per_msg': n_uniq_targets / n_uniq_messages,
                 'unique_samples_per_target_obj':
                     n_uniq_samples / n_uniq_targets,
@@ -485,13 +517,12 @@ class Dump:
                 'unique_cat': None,
                 'unique_samples_per_target_cat': None,
                 'unique_cats_per_msg': None,
-                'samples_per_cat': None,
                 'average_length': (
                     torch.arange(probs.size(1)) * length_probs
                 ).sum(),  # does not include additional EOS
                 'actual_vocab_size': torch.unique(messages).numel(),
                 'accuracy': (r_outputs == labels).float().mean(),
-                'accuracy_symbol_removal': compute_accuracy2(
+                'accuracy_symbol_removal': compute_symbol_removal_accuracy(
                     m_inputs, r_inputs, labels, self.receiver, opts),
                 'max_rep': compute_max_rep(messages).mean().item(),
                 'redundancy': 1 - entropy / max_entropy,
@@ -506,9 +537,9 @@ class Dump:
             }
 
             if opts.image_input:
-                for k in results[key]:
+                for k in list(results[key]):
                     if 'cat' in k:
-                        del results[key]
+                        del results[key][k]
 
                 results[key].update({
                     'topsim': compute_top_sim(t_attributes, messages),
@@ -567,7 +598,7 @@ class Dump:
         return results
 
 
-def print_training_results(dump_dict):
+def print_training_results(dump_dict: dict):
     def format_values(value):
         return round(value, 2) if isinstance(value, float) else value
 

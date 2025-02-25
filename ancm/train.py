@@ -41,48 +41,80 @@ from ancm.eval import relative_message_entropy
 def get_params(params):
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("--data_path", type=str, default=None, help="Path to .npz inpur data file")
-    parser.add_argument("--results_folder", type=str, default='runs', help="Output folder")
-    parser.add_argument("--filename", type=str, default=None, help="Output file name (no extension)")
+    parser.add_argument(
+        "--data_path", type=str, default=None, help="Path to .npz input file"
+    )
+    parser.add_argument(
+        "--results_folder", type=str, default='runs', help="Output folder"
+    )
+    parser.add_argument(
+        "--filename", type=str, default=None, help="Output file name (no extension)"
+    )
 
     parser.add_argument(
         "--channel", type=str, default=None,
-        help="Communication channel type {erasure, symmetric, deletion} (default: None)")
+        help="Communication channel type {erasure, symmetric, deletion} "
+        "(default: None)"
+    )
     parser.add_argument(
-        "--error_prob", type=float, default=None, help="Probability of error per symbol (default: 0.0)")
+        "--error_prob", type=float, default=None, help="Probability of error "
+        "per symbol (default: 0.0)"
+    )
     parser.add_argument(
-        "--sender_hidden", type=int, default=64, help="Size of the hidden layer of Sender (default: 64)")
+        "--sender_hidden", type=int, default=64, help="Size of the hidden "
+        "layer of Sender (default: 64)"
+    )
     parser.add_argument(
-        "--receiver_hidden", type=int, default=64, help="Size of the hidden layer of Receiver (default: 64)")
+        "--receiver_hidden", type=int, default=64,
+        help="Size of the hidden layer of Receiver (default: 64)"
+    )
     parser.add_argument(
         "--embedding", type=int, default=12,
-        help="Dimensionality of the embedding hidden layer for the agents (default: 12)")
+        help="Dimensionality of the embedding hidden layer for the agents "
+        "(default: 12)"
+    )
     parser.add_argument(
         "--sender_cell", type=str, default="lstm",
-        help="Type of the cell used for Sender {rnn, gru, lstm} (default: lstm)")
+        help="Type of the cell used for Sender {rnn, gru, lstm} "
+        "(default: lstm)"
+    )
     parser.add_argument(
         "--receiver_cell", type=str, default="lstm",
-        help="Type of the cell used for Receiver {rnn, gru, lstm} (default: lstm)")
+        help="Type of the cell used for Receiver {rnn, gru, lstm} "
+        "(default: lstm)"
+    )
     parser.add_argument(
-        "--sender_lr", type=float, default=1e-1, help="Learning rate for Sender's parameters (default: 1e-1)")
+        "--sender_lr", type=float, default=1e-1,
+        help="Learning rate for Sender's parameters (default: 1e-1)"
+    )
     parser.add_argument(
-        "--receiver_lr", type=float, default=1e-1, help="Learning rate for Receiver's parameters (default: 1e-1)")
+        "--receiver_lr", type=float, default=1e-1,
+        help="Learning rate for Receiver's parameters (default: 1e-1)"
+    )
     parser.add_argument(
-        "--length_cost", type=float, default=1e-2, help="Message length cost")
+        "--length_cost", type=float, default=1e-2, help="Message length cost"
+    )
     parser.add_argument(
         "--mode", type=str, default="gs",
-        help="Selects whether Reinforce or GumbelSoftmax relaxation is used for training (default: gs)")
+        help="Selects whether Reinforce or GumbelSoftmax relaxation is used "
+        "for training (default: gs)"
+    )
     parser.add_argument(
         "--image_input", action="store_true", default=False,
-        help="Run the image data variant of the game")
+        help="Run the image data variant of the game"
+    )
     parser.add_argument(
-        "--optim", type=str, default="rmsprop", help="Optimizer to use [adam, rmsprop] (default: rmsprop)")
+        "--optim", type=str, default="rmsprop",
+        help="Optimizer to use {adam, rmsprop} (default: rmsprop)"
+    )
     parser.add_argument(
         "--n_targets", type=int, default=None,
-        help="Number of additional_targets targets in each sample (default: None)")
+        help="Number of additional targets in each sample (default: None)"
+    )
     parser.add_argument(
         "--no_shuffle", action="store_false", default=True,
-        help="Do not shuffle train data before every epoch (default: False)")
+        help="Do not shuffle train data before every epoch (default: False)"
+    )
 
     # RF-specific
     parser.add_argument(
@@ -90,29 +122,44 @@ def get_params(params):
         help="RF sender entropy coefficient (default: 0.01)")
     parser.add_argument(
         "--receiver_entropy_coeff", type=float, default=0.001,
-        help="RF receiver entropy coefficient (default: 0.001)")
+        help="RF receiver entropy coefficient (default: 0.001)"
+    )
 
     # GS-specific
     parser.add_argument(
-        "--temperature", type=float, default=1.0, help="GS temperature for the sender (default: 1.0)")
+        "--temperature", type=float, default=1.0,
+        help="GS temperature for the sender; if temperature_lr is specified, "
+        "the value is used as the maximum temperature (default: 1.0)")
     parser.add_argument(
         "--temperature_lr", type=float, default=None,
-        help="Temperature LR. Unless a value is specified, temperature is not a trainable parameter")
+        help="Temperature LR. Unless a value is specified, temperature is not"
+        " a trainable parameter (default: None)")
+    parser.add_argument(
+        "--temperature_cost", type=float, default=0.0,
+        help="Temperature cost used if temperature_lr is specified "
+        "(default: 0.0)"
+    )
     parser.add_argument(
         "--temperature_decay", default=None, type=float,
         help="Factor, by which the temperature is decreased every epoch.")
     parser.add_argument(
-        "--temperature_minimum", default=None, type=float, help="Minimum temperature value.")
+        "--temperature_minimum", default=None, type=float,
+        help="Minimum temperature value."
+    )
 
     # W&B
     parser.add_argument(
-        "--wandb_entity", type=str, default=None, help="WandB entity name")
+        "--wandb_entity", type=str, default=None, help="WandB entity name"
+    )
     parser.add_argument(
-        "--wandb_project", type=str, default=None, help="WandB project name")
+        "--wandb_project", type=str, default=None, help="WandB project name"
+    )
     parser.add_argument(
-        "--wandb_run_id", type=str, default=None, help="WandB run id")
+        "--wandb_run_id", type=str, default=None, help="WandB run id"
+    )
     parser.add_argument(
-        "--wandb_group", type=str, default=None, help="WandB group name")
+        "--wandb_group", type=str, default=None, help="WandB group name"
+    )
 
     args = core.init(parser, params)
     check_args(args)
@@ -194,14 +241,17 @@ def main(params):
             opts.sender_hidden,
             opts.max_len,
             opts.temperature,
+            opts.temperature_minimum,
+            opts.temperature_lr,
             opts.sender_cell,
-            opts.temperature_lr)
+        )
         receiver = core.RnnReceiverGS(
             _receiver,
             vocab_size,
             opts.embedding,
             opts.receiver_hidden,
-            opts.receiver_cell)
+            opts.receiver_cell,
+        )
         game = SenderReceiverRnnGS(
             sender, receiver,
             loss=loss_gs,
@@ -209,8 +259,10 @@ def main(params):
             channel_type=opts.channel,
             error_prob=opts.error_prob,
             length_cost=opts.length_cost,
+            temperature_cost=opts.temperature_cost,
             device=device,
-            seed=opts.random_seed)
+            seed=opts.random_seed,
+        )
 
     optimizer = build_optimizer(game, opts)
 

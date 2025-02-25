@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-# import math
 import torch
+import argparse
 import numpy as np
 from egg.core.util import find_lengths
 # from scipy.optimize import minimize_scalar
@@ -15,26 +15,7 @@ from itertools import combinations
 from egg.zoo.language_bottleneck import intervention
 from torch.distributions.utils import logits_to_probs, probs_to_logits
 
-from typing import Optional
-
-
-class CustomDataset(Dataset):
-    def __init__(self, messages, receiver_inputs):
-        """
-        Args:
-            messages (torch.Tensor): Tensor of shape (N, 5), where N is the number of samples.
-            receiver_inputs (torch.Tensor): Tensor of shape (N, 5, 8).
-        """
-        assert len(messages) == len(receiver_inputs), \
-            "Messages and receiver_inputs must have the same number of samples."
-        self.messages = messages
-        self.receiver_inputs = receiver_inputs
-
-    def __len__(self):
-        return len(self.messages)
-
-    def __getitem__(self, idx):
-        return self.messages[idx], self.receiver_inputs[idx]
+from typing import Optional, List, Tuple
 
 
 # Entropy, Mutual information
@@ -45,7 +26,9 @@ class CustomDataset(Dataset):
 
 
 # @torch.compile
-def get_prefix_indices(prev_symbols, split_size):
+def get_prefix_indices(
+    prev_symbols: torch.Tensor, split_size: int = 1000
+) -> torch.Tensor:
     n_prev = prev_symbols.size(1)
     prefix_indices = torch.cartesian_prod(
         *(torch.arange(prev_symbols.size(-1)) for i in range(n_prev))
@@ -56,11 +39,17 @@ def get_prefix_indices(prev_symbols, split_size):
 
 
 # @torch.compile
-def aggregate_prefix_logits(prev_symbols, idx):
+def aggregate_prefix_logits(
+        prev_symbols: torch.Tensor, idx: Tuple[torch.Tensor, torch.Tensor]
+) -> torch.Tensor:
     return prev_symbols.transpose(0, -1)[idx].sum(1).t()
 
 
-def min_message_entropy(receiver_inputs, labels, attributes=None):
+def min_message_entropy(
+    receiver_inputs: torch.Tensor,
+    labels: torch.Tensor,
+    attributes: Optional[torch.Tensor] = None
+) -> Tuple[float, int]:
     size = receiver_inputs.size()
 
     if attributes is None:
@@ -100,7 +89,9 @@ def min_message_entropy(receiver_inputs, labels, attributes=None):
     return entropy_min, len(unique_samples)
 
 
-def message_entropy(probs, order=4, split_size=1000):
+def message_entropy(
+    probs: torch.Tensor, order: int = 4, split_size: int = 1000
+) -> Tuple[torch.Tensor, torch.Tensor]:
     min_real = torch.finfo(probs.dtype).min
 
     size = probs.size()
@@ -135,6 +126,8 @@ def message_entropy(probs, order=4, split_size=1000):
         for idx in get_prefix_indices(prev_logits, split_size):
             # log-probs of previous symbols being equal to a given prefix
             p_logits = aggregate_prefix_logits(prev_logits, idx)
+            if torch.any(torch.isnan(p_logits)):
+                print('P_LOGITS', p_logits.shape, probs.shape)
 
             # conditional entropy for each prefix
             c_logits = torch.logsumexp(
@@ -165,7 +158,12 @@ def message_entropy(probs, order=4, split_size=1000):
     return entropy, length_probs
 
 
-def relative_message_entropy(probs_p, probs_q, order=4, split_size=1000):
+def relative_message_entropy(
+    probs_p: torch.Tensor,
+    probs_q: torch.Tensor,
+    order: int = 4,
+    split_size: int = 1000,
+) -> torch.Tensor:
     """
     Computes conditional KLD: D( Mi | M1, ..., Mi-1 || M'i | M'1, ..., M'i-1)
     """
@@ -267,7 +265,11 @@ def compute_max_rep(messages: torch.Tensor) -> torch.Tensor:
     return output
 
 
-def joint_entropy(probs, y, split_size=1000):
+def joint_entropy(
+    probs: torch.Tensor,
+    y: torch.Tensor,
+    split_size: int = 1000,
+) -> torch.Tensor:
     """
     Given symbol probabilities representing realizations of a message M
     (M = M1, ..., Mn) and corresponding realizations of a non-compound RV Y,
@@ -277,17 +279,26 @@ def joint_entropy(probs, y, split_size=1000):
     assert len(y) == y.numel()
     _, indices = torch.unique(y, dim=0, return_inverse=True)
 
-    H_msg_y = intervention.entropy(indices)  # H(Y)
+    # exclude lowest values to improve numerical stability
+    probs = torch.where(probs > 1e-8, probs, 0)
+    probs = probs / probs.sum(-1, keepdim=True)
+
+    entropy_msg_y = intervention.entropy(indices)  # H(Y)
     for cat in range(indices.max() + 1):
         cat_mask = indices == cat
-        prob_cat = (indices == cat).float().mean()
+        prob_cat = (cat_mask).float().mean()
         entropy_cat, _ = message_entropy(probs[cat_mask], split_size)
-        H_msg_y += prob_cat * entropy_cat  # P(Y = y) * H(M | Y = y)
+        entropy_msg_y += prob_cat * entropy_cat  # P(Y = y) * H(M | Y = y)
 
-    return H_msg_y
+    return entropy_msg_y
 
 
-def compute_mi(probs, attributes, entropy_message=None, split_size=1000):
+def compute_mi(
+    probs: torch.Tensor,
+    attributes: torch.Tensor,
+    entropy_message: Optional[torch.Tensor] = None,
+    split_size: int = 1000,
+) -> Dict[str, float]:
     if entropy_message is None:
         entropy_message, _ = message_entropy(probs)
 
@@ -296,14 +307,16 @@ def compute_mi(probs, attributes, entropy_message=None, split_size=1000):
         entropy_msg_attr = joint_entropy(probs, attributes, split_size)
         mi_msg_attr = entropy_message + entropy_attr - entropy_msg_attr
         vi_msg_attr = 2 * entropy_msg_attr - entropy_message - entropy_attr
-        is_norm_msg_attr = mi_msg_attr / entropy_msg_attr
+        proficiency_msg_attr = mi_msg_attr / entropy_attr
+        redundancy_msg_attr = mi_msg_attr / (entropy_message + entropy_attr)
 
         output = {
             'entropy_msg': entropy_message,
             'entropy_attr': entropy_attr,
-            'MI_msg_attr': mi_msg_attr,
-            'VI_msg_attr': vi_msg_attr,
-            'IS_msg_attr': is_norm_msg_attr,
+            'mutual_info_msg_attr': mi_msg_attr,
+            'variation_of_info_msg_attr': vi_msg_attr,
+            'proficiency_msg_attr': proficiency_msg_attr,
+            'redundancy_msg_attr': redundancy_msg_attr,
         }
 
     else:  # return values per attribute dimension instead
@@ -316,31 +329,42 @@ def compute_mi(probs, attributes, entropy_message=None, split_size=1000):
             joint_entropy(probs, attributes[:, i], split_size)
             for i in range(attributes.size(1))]
         mi_msg_attr_dim = [
-            entropy_message + H_y - H_xy
-            for H_y, H_xy in zip(entropy_attr_dim, entropy_msg_attr_dim)
+            entropy_message + entropy_attr - entropy_msg_attr
+            for entropy_attr, entropy_msg_attr
+            in zip(entropy_attr_dim, entropy_msg_attr_dim)
         ]
         vi_msg_attr_dim = [
             2 * entropy_msg_attr - entropy_message - entropy_attr
             for entropy_attr, entropy_msg_attr
             in zip(entropy_attr_dim, entropy_msg_attr_dim)]
-        is_msg_attr_dim = [
-            mi_msg_attr / entropy_msg_attr
-            for mi_msg_attr, entropy_msg_attr
-            in zip(mi_msg_attr_dim, entropy_msg_attr_dim)]
+        redundancy_msg_attr_dim = [
+            mi_msg_attr / (entropy_message + entropy_attr)
+            for mi_msg_attr, entropy_attr
+            in zip(mi_msg_attr_dim, entropy_attr_dim)]
+        proficiency_msg_attr_dim = [
+            mi_msg_attr / entropy_attr
+            for mi_msg_attr, entropy_attr
+            in zip(mi_msg_attr_dim, entropy_attr_dim)]
 
         output = {
             'entropy_msg': entropy_message,
             'entropy_attr': entropy_attr,
             'entropy_attr_dim': entropy_attr_dim,
-            'MI_msg_attr_dim': mi_msg_attr_dim,
-            'VI_msg_attr_dim': vi_msg_attr_dim,
-            'IS_msg_attr_dim': is_msg_attr_dim,
+            'mutual_info_msg_attr_dim': mi_msg_attr_dim,
+            'variation_of_info_msg_attr_dim': vi_msg_attr_dim,
+            'proficiency_msg_attr_dim': proficiency_msg_attr_dim,
+            'redundancy_msg_attr_dim': redundancy_msg_attr_dim,
         }
 
     return output
 
 
-def truncate_messages(messages, receiver_input, labels, mode):
+def truncate_messages(
+    messages: torch.Tensor,
+    receiver_input: torch.Tensor,
+    labels: torch.Tensor,
+    mode: str,
+) -> Tuple[List[torch.Tensor], List[torch.Tensor], List[torch.Tensor]]:
     new_messages = []
     new_r_input = []
     new_labels = []
@@ -356,7 +380,7 @@ def truncate_messages(messages, receiver_input, labels, mode):
     return new_messages, new_r_input, new_labels
 
 
-def remove_n_items(tensor, n=1):
+def remove_n_items(tensor: torch.Tensor, n: int = 1) -> List[torch.Tensor]:
     """
     Removes all possible combinations of `n` items from the tensor,
     symbol 0 is never removed.
@@ -387,7 +411,7 @@ def remove_n_items(tensor, n=1):
     return result
 
 
-def remove_n_dims(tensor, n=1):
+def remove_n_dims(tensor: torch.Tensor, n: int = 1) -> List[torch.Tensor]:
     # Get the number of rows (N)
     num_rows = tensor.shape[0]
 
@@ -414,11 +438,36 @@ def remove_n_dims(tensor, n=1):
     return result
 
 
-def compute_accuracy2(messages, receiver_inputs, labels, receiver, opts):
+class MessageDataset(Dataset):
+    def __init__(self, messages: torch.Tensor, receiver_inputs: torch.Tensor):
+        """
+        Args:
+            messages (torch.Tensor): Tensor of shape (N, 5), where N is the number of samples.
+            receiver_inputs (torch.Tensor): Tensor of shape (N, 5, 8).
+        """
+        assert len(messages) == len(receiver_inputs), \
+            "Messages and receiver_inputs must have the same number of samples."
+        self.messages = messages
+        self.receiver_inputs = receiver_inputs
+
+    def __len__(self):
+        return len(self.messages)
+
+    def __getitem__(self, idx):
+        return self.messages[idx], self.receiver_inputs[idx]
+
+
+def compute_symbol_removal_accuracy(
+    messages: torch.Tensor,
+    receiver_inputs: torch.Tensor,
+    labels: torch.Tensor,
+    receiver: torch.nn.Module,
+    opts: argparse.Namespace,
+) -> float:
     messages, receiver_inputs, labels = truncate_messages(
         messages, receiver_inputs, labels, opts.mode)
 
-    dataset = CustomDataset(messages, receiver_inputs)
+    dataset = MessageDataset(messages, receiver_inputs)
     dataloader = torch.utils.data.DataLoader(
         dataset,
         batch_size=opts.batch_size,
@@ -490,9 +539,10 @@ def compute_top_sim(attributes: torch.Tensor, messages: torch.Tensor) -> float:
 
 
 def compute_posdis(
-        sender_inputs: torch.Tensor,
-        messages: torch.Tensor,
-        receiver_vocab_size: Optional[int] = None) -> float:
+    sender_inputs: torch.Tensor,
+    messages: torch.Tensor,
+    receiver_vocab_size: Optional[int] = None,
+) -> float:
     """
     Computes PosDis.
     """
@@ -525,22 +575,25 @@ def histogram(messages: torch.Tensor, vocab_size: int) -> torch.Tensor:
     if vocab_size in messages:
         vocab_size += 1
 
-    # Create a histogram with size [batch_size, vocab_size] initialized with zeros
+    # Create a histogram with size [batch_size, vocab_size] initialized with 0s
     histogram = torch.zeros(messages.size(0), vocab_size)
 
     if messages.dim() > 2:
         messages = messages.view(messages.size(0), -1)
 
     # Count occurrences of each value in strings and store them in histogram
-    histogram.scatter_add_(1, messages.long(), torch.ones_like(messages, dtype=torch.float))
+    histogram.scatter_add_(
+        1, messages.long(), torch.ones_like(messages, dtype=torch.float)
+    )
 
     return histogram
 
 
 def compute_bosdis(
-        sender_inputs: torch.Tensor,
-        messages: torch.Tensor,
-        vocab_size: int):
+    sender_inputs: torch.Tensor,
+    messages: torch.Tensor,
+    vocab_size: int,
+) -> float:
     """
     Computes BosDis.
     """

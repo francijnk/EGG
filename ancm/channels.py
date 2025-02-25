@@ -84,7 +84,7 @@ class Channel(nn.Module, metaclass=ABCMeta):
 
         return max_entropy
 
-    def forward(self, messages, probs, **kwargs):
+    def forward(self, messages, probs, *args, **kwargs):
         if messages.dim() == 3:  # GS
             return (
                 self.gs(messages, probs, apply_noise=True),

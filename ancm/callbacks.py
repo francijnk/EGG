@@ -18,7 +18,6 @@ from rich.text import Text
 
 from ancm.eval import (
     message_entropy,
-    min_message_entropy,
     relative_message_entropy,
     compute_mi,
     compute_max_rep,
@@ -60,7 +59,9 @@ class EpochProgress(Progress):
 
 class CustomProgressBarLogger(Callback):
     """
-    Displays a progress bar with information about the current epoch and the epoch progression.
+    Displays a progress bar with information about the current epoch and the
+    epoch progression. Based on the progress bar logger from
+    egg/core/callbacks.py.
     """
 
     def __init__(
@@ -73,7 +74,6 @@ class CustomProgressBarLogger(Callback):
         :param n_epochs: total number of epochs
         :param train_data_len: length of the dataset generation for training
         :param test_data_len: length of the dataset generation for testing
-        :param use_info_table: true to add an information table on top of the progress bar
         """
 
         self.n_epochs = opts.n_epochs
@@ -104,14 +104,16 @@ class CustomProgressBarLogger(Callback):
 
         self.history = defaultdict(lambda: defaultdict(list))
         self.hide_cols = [
-            'receiver_entropy', 'sender_entropy', 'VI', 'MI',
-            'length_probs', 'entropy_inp', 'entropy_cat', 'entropy_shape',
-            'entropy_color', 'entropy_xpos', 'entropy_ypos', 'entropy_rotation'
+            'receiver_entropy', 'sender_entropy',  # 'length_probs',
+            'entropy_inp', 'entropy_cat', 'entropy_shape', 'entropy_color',
+            'entropy_xpos', 'entropy_ypos', 'entropy_rotation', 'entropy_attr',
+            'redundancy_', 'mutual_info', 'variation', 'proficiency_rotation',
         ]
 
         self.progress = CustomProgress(
             TextColumn(
-                "[bold]{task.fields[cur_epoch]}/{task.fields[n_epochs]} | [blue]{task.fields[mode]}",
+                "[bold]{task.fields[cur_epoch]}/{task.fields[n_epochs]} "
+                "| [blue]{task.fields[mode]}",
                 justify="right"),
             BarColumn(bar_width=None),
             "[progress.percentage]{task.percentage:>3.1f}%", "•",
@@ -203,8 +205,9 @@ class CustomProgressBarLogger(Callback):
             print_name = (
                 colname
                 .replace('entropy', 'H')
-                .replace('msg_as_a_whole', 'whole_msg')
                 .replace('redundancy', 'R')
+                .replace('proficiency', 'C')
+                .replace('msg_as_a_whole', 'whole_msg')
                 .replace('actual_', '')
                 .replace('_msg_', '_'))
             row.add_column(
@@ -242,7 +245,13 @@ class CustomProgressBarLogger(Callback):
         self.progress.start_task(self.train_p)
         self.progress.update(self.train_p, visible=True)
 
-    def on_batch_end(self, logs: Interaction, loss: float, batch_id: int, is_training: bool = True):
+    def on_batch_end(
+        self,
+        logs: Interaction,
+        loss: float,
+        batch_id: int,
+        is_training: bool = True
+    ):
         if is_training:
             self.current_step += 1
             self.progress.update(self.train_p, refresh=True, advance=1)
@@ -525,8 +534,8 @@ class TrainingEvaluationCallback(Callback):
                 for i, key in enumerate(attr_keys):
                     key = key.replace('target_', '')
                     logs.aux.update({
-                        k.replace('attr_dim', f'{key}_nn'): v[i] for k, v in
-                        compute_mi(
+                        k.replace('attr_dim', f'{key}_nn'): v[i]
+                        for k, v in compute_mi(
                             trim(logs.probs_nn),
                             trim(attr),
                             entropy, split_size
