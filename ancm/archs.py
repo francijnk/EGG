@@ -647,7 +647,7 @@ class RnnSenderGS(nn.Module):
 
     def hidden_to_temperature(self, hidden: torch.Tensor):
         if self.hidden_to_inv_temperature is None:
-            return self.temperature  # temperature is not trainable
+            return torch.tensor([self.temperature])
 
         # predict inverse temperature and scale it
         tau_min = self.temperature_minimum
@@ -717,7 +717,7 @@ class RnnSenderGS(nn.Module):
 
         sequence = torch.stack(sequence, dim=1)
         probs = torch.stack(probs, dim=1)
-        temperature = torch.cat(temperature, dim=1)
+        temperature = torch.cat(temperature, dim=-1)
 
         return sequence, probs, temperature
 
@@ -797,8 +797,6 @@ class SenderReceiverRnnGS(nn.Module):
             receiver_output_nn = receiver_output_joined[len(message):]
 
         loss, z, length, length_nn = 0, 0, 0, 0
-        # length_probs = torch.zeros_like(message[:, :, 0])
-        # length_probs_nn = length_probs.clone()
         not_eosed_before = torch.ones(message.size(0)).to(message.device)
         not_eosed_before_nn = not_eosed_before.detach().clone()
         aux_info = {}
@@ -807,12 +805,6 @@ class SenderReceiverRnnGS(nn.Module):
         accuracy_nn = (
             receiver_output_nn.argmax(-1) == labels.unsqueeze(-1)
         ).float() * 100
-
-        # min_real = torch.finfo(receiver_output.dtype).min
-        # r_output = receiver_output.detach()
-        # r_probs = logits_to_probs(r_output)
-        # r_log2_prob = torch.clamp(r_output / np.log(2), min=min_real)
-        # entropy_receiver = torch.linalg.vecdot(-r_probs, r_log2_prob)
 
         for step in range(receiver_output.size(1)):
             step_loss, step_aux = self.loss(
@@ -825,28 +817,27 @@ class SenderReceiverRnnGS(nn.Module):
 
             add_mask = message[:, step, 0] * not_eosed_before
             add_mask_nn = message_nn[:, step, 0] * not_eosed_before_nn
-            tau = temperatures[:, step] \
-                if step < temperatures.size(1) else temperatures[:, -1]
 
             z += add_mask
             loss += step_loss * add_mask
             loss += self.length_cost * (1 + step) * add_mask
-            loss += self.temperature_cost * tau * not_eosed_before
             length += add_mask.detach() * (1 + step)
             length_nn += add_mask_nn * (1 + step)
 
             # aggregate aux info
             for name, value in step_aux.items():
                 aux_info[name] = value * add_mask + aux_info.get(name, 0)
-            aux_info['temperature'] = tau * add_mask \
-                + aux_info.get('temperature', 0)
-            aux_info['temperature_nn'] = tau * add_mask_nn \
-                + aux_info.get('temperature_nn', 0)
             aux_info['accuracy_nn'] = accuracy_nn[:, step] * add_mask_nn \
                 + aux_info.get('accuracy_nn', 0)
-            # aux_info['entropy_receiver_nn'] = \
-            #     r_entropy_nn[:, step] * add_mask_nn \
-            #     + aux_info.get('entropy_receiver_nn', 0)
+
+            if temperatures.dim() == 2:  # trainable temperature
+                tau = temperatures[:, step] \
+                    if step < temperatures.size(1) else temperatures[:, -1]
+                loss += self.temperature_cost * tau * not_eosed_before
+                aux_info['temperature'] = tau * add_mask \
+                    + aux_info.get('temperature', 0)
+                aux_info['temperature_nn'] = tau * add_mask_nn \
+                    + aux_info.get('temperature_nn', 0)
 
             not_eosed_before = not_eosed_before * (1 - message[:, step, 0])
             not_eosed_before_nn *= 1 - message_nn[:, step, 0]
@@ -855,8 +846,6 @@ class SenderReceiverRnnGS(nn.Module):
         z += not_eosed_before
         loss += step_loss * not_eosed_before
         loss += self.length_cost * (step + 1) * not_eosed_before
-        loss += self.temperature_cost * tau * not_eosed_before
-        # loss += self.temperature_cost * torch.log(1 + self.sender.temperature)
         length += (step + 1) * not_eosed_before
         length_nn += (step + 1) * not_eosed_before_nn
 
@@ -866,14 +855,15 @@ class SenderReceiverRnnGS(nn.Module):
 
         for name, value in step_aux.items():
             aux_info[name] = value * not_eosed_before + aux_info.get(name, 0.0)
-        aux_info["temperature"] += tau * not_eosed_before
-        aux_info["temperature_nn"] += tau * not_eosed_before_nn
+        if temperatures.dim() == 2:
+            loss += self.temperature_cost * tau * not_eosed_before
+            aux_info["temperature"] += tau * not_eosed_before
+            aux_info["temperature_nn"] += tau * not_eosed_before_nn
+        else:
+            aux_info["temperature"] = temperatures[:1]
 
         aux_info["length"] = length - 1
         aux_info["length_nn"] = length_nn - 1
-        #if isinstance(self.sender.temperature, nn.Parameter):
-        #    aux_info["temperature"] = \
-        #        self.sender.temperature.detach().clone()
 
         # compute expected_length on probs
         # TODO remove? this is more accurate but there's barely any difference
@@ -892,9 +882,7 @@ class SenderReceiverRnnGS(nn.Module):
         # aux_info["exp_length"] = exp_length
         # aux_info["exp_length_nn"] = exp_length_nn
 
-        logging_strategy = LoggingStrategy()
-
-        interaction = logging_strategy.filtered_interaction(
+        interaction = LoggingStrategy().filtered_interaction(
             sender_input=sender_input,
             receiver_input=receiver_input,
             labels=labels,
@@ -907,6 +895,7 @@ class SenderReceiverRnnGS(nn.Module):
             probs_nn=probs_nn.detach(),
             message_length_nn=length_nn.detach(),
             receiver_output_nn=receiver_output_nn.detach(),
-            aux=aux_info)
+            aux=aux_info,
+        )
 
         return loss.mean(), interaction
