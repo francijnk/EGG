@@ -17,8 +17,6 @@ from ancm.channels import (
     SymmetricChannel,
 )
 
-# import egg.core as core
-# from egg.core.reinforce_wrappers import RnnEncoder
 from egg.core.baselines import Baseline  # NoBaseline, MeanBaseline, BuiltInBaseline
 from ancm.interaction import LoggingStrategy
 from egg.core.util import find_lengths
@@ -556,12 +554,6 @@ def loss_gs(_sender_input, _message, _receiver_input, receiver_output, _labels, 
 
     return cross_entropy, {'accuracy': accuracy * 100}
 
-    aux_info = {
-        'accuracy': accuracy * 100,
-    }
-
-    return cross_entropy, aux_info
-
 
 class RnnSenderGS(nn.Module):
     """
@@ -620,10 +612,6 @@ class RnnSenderGS(nn.Module):
                 nn.Linear(hidden_size, 1),
                 nn.Softplus(1),
             )
-        # self.temperature = nn.Parameter(
-        #     torch.tensor([temperature]),
-        #     requires_grad=True,
-        # )
 
         cells = {
             'rnn': nn.RNNCell,
@@ -779,7 +767,6 @@ class SenderReceiverRnnGS(nn.Module):
         channel_type: Optional[str],
         error_prob: float = 0.0,
         length_cost: float = 0.0,
-        temperature_cost: float = 0.0,
         device: torch.device = torch.device("cpu"),
         seed: int = 42,
     ):
@@ -795,7 +782,6 @@ class SenderReceiverRnnGS(nn.Module):
         self.receiver = receiver
         self.loss = loss
         self.length_cost = length_cost
-        self.temperature_cost = temperature_cost
         self.channel = channel_types[channel_type](
             error_prob, sender.max_len, vocab_size, device, seed)
 
@@ -880,7 +866,6 @@ class SenderReceiverRnnGS(nn.Module):
             if temperatures.dim() == 2:  # trainable temperature
                 tau = temperatures[:, step] \
                     if step < temperatures.size(1) else temperatures[:, -1]
-                loss += self.temperature_cost * tau * not_eosed_before
                 aux_info['temperature'] = tau * add_mask \
                     + aux_info.get('temperature', 0)
                 aux_info['temperature_nn'] = tau * add_mask_nn \
@@ -902,8 +887,8 @@ class SenderReceiverRnnGS(nn.Module):
 
         for name, value in step_aux.items():
             aux_info[name] = value * not_eosed_before + aux_info.get(name, 0.0)
+
         if temperatures.dim() == 2:
-            loss += self.temperature_cost * tau * not_eosed_before
             aux_info["temperature"] += tau * not_eosed_before
             aux_info["temperature_nn"] += tau * not_eosed_before_nn
         else:
@@ -911,23 +896,6 @@ class SenderReceiverRnnGS(nn.Module):
 
         aux_info["length"] = length - 1
         aux_info["length_nn"] = length_nn - 1
-
-        # compute expected_length on probs
-        # TODO remove? this is more accurate but there's barely any difference
-        # length_probs = torch.cat([
-        #     probs[:, :1, 0],
-        #     probs[:, 1:, 0] * torch.cumprod(1 - probs[:, :-1, 0], dim=1),
-        # ], dim=1)
-        # length_probs_nn = torch.cat([
-        #     probs_nn[:, :1, 0],
-        #     probs_nn[:, 1:, 0] * torch.cumprod(1 - probs_nn[:, :-1, 0], dim=1),
-        # ], dim=1)
-        # exp_length = (torch.arange(step + 1) * length_probs).sum(-1) + 1
-        # exp_length_nn = (torch.arange(step + 1) * length_probs_nn).sum(-1) + 1
-        # aux_info["length_probs"] = length_probs
-        # aux_info["length_probs_nn"] = length_probs_nn
-        # aux_info["exp_length"] = exp_length
-        # aux_info["exp_length_nn"] = exp_length_nn
 
         interaction = LoggingStrategy().filtered_interaction(
             sender_input=sender_input,

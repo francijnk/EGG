@@ -1,3 +1,118 @@
+            # conditional_probs = torch.tensordot(prefix_probs, symbol_probs, dims=([1], [0]))
+            # print('conditional probs', conditional_probs.shape, conditional_probs[:5])
+            # prefix_probs = prev_probs.transpose(0, -1)[idx].prod(1).t()
+            # prev_logits = probs_to_logits(prev_probs)
+            # prefix_probs = logits_to_probs(
+            #     prev_logits.transpose(0, -1)[idx].sum(1)#.t()
+            # )#.unsqueeze(-1)
+            # print("prefix probs shapw", prefix_probs.shape)
+            # avg_prefix_logits = prefix_logits.logsumexp(0)
+            # avg_prefix_probs = logits_to_probs(prefix_logits.logsumexp(0))
+            # print('avg prefix probs', avg_prefix_probs.shape, avg_prefix_probs[:5])
+            # print('avg prefix logits', avg_prefix_logits.shape, avg_prefix_logits[:5])
+            # avg_prefix_probs = prefix_probs.sum(-1) / prefix_probs.sum()
+            # print('avg_prefix_probs', avg_prefix_probs.shape, avg_prefix_probs[:5])
+            # print('symbol probs', symbol_probs.shape)
+            # prefix_logits = prefix_logits.unsqueeze(1)
+            # symbol_logits = symbol_logits.unsqueeze(-1)
+
+        # avg_eos_probs[symbol_i] = symbol_probs[:, 0].sum() / symbol_probs.sum()
+        # avg_prefix_probs = logits_to_probs(prefix_logits.logsumexp(0))
+            # avg_eos_probs[0] = symbol_probs[:, 0].sum() / symbol_probs.size(0)
+            # prob = symbol_probs[:, 1:].sum(0)  # non-EOS only
+            # prob = symbol_probs.sum(0) / symbol_probs.sum() # prob = prob / prob.sum(0, keepdim=True)
+            # log2_prob = torch.clamp(torch.log2(prob), min=min_real)
+
+
+            # conditional_log2_prob = torch.clamp(torch.log2(conditional_probs), min=min_real)
+            # print('conditional_log2_prob', conditional_log2_prob.shape)
+    # print('eos probs', avg_eos_probs)
+    # print('smb entropies', symbol_entropies)
+    # print('total entropy', symbol_entropies.sum())
+    # return symbol_entropies.sum()
+    # conditional_probs = symbol_probs.unsqueeze(1).expand(*prefix_probs.shape[:-1], -1)
+    # print('conditional_entropy', symbol_i, conditional_entropy[:5])
+    # print(prefix_probs.size(), prefix_probs[0])
+    # indices = torch.arange(prev_probs.size(-1)) 
+    # prefix_indices = torch.unique(
+    #     indices[:, :min(order, symbol_i)],
+    #     dim=0
+    #).t()#.view(-1, preceding_probs.size(-2))
+    # if prev_probs.size(1) == 1:
+    #     prefix_indices = prefix_indices.squeeze()
+    # print(symbol_i, prefix_indices.shape, prev_probs.shape)
+    # prefix_probs = torch.gathejjr(prev_probs, 1, prefix_indices)
+    # print(prefix_probs)
+    #print(prev_probs[:, prefix_indices].shape)
+    #idx = [torch.arange(len(probs))] \        #+ []
+    #prefix_probs = prev_probs[:, prefix_indices, torch.arange(prev_probs.size(-1))]
+    #print(prefix_probs)
+    #print(prefix_probs.shape)
+    # prefix_probs = torch.gather(
+    #    if symbol_i < order:
+    #        prefix_indices = indices[indices[0] < symbol_i]
+    #    else:
+    #        prefix_indices = indices.clone()
+    #        prefix_indices[0] += indices[0].max() - (order - 1)
+    #    print(prefix_indices)
+    #    for idx in prefix_indices:
+    #        prefix_probs = messages[torch.arange(len(messages)), idx]
+    #        print(prefix_probs)
+    # print("step", symbol_i)
+    # prefix_probs = messages[:, symbol_i - 1, :] if symbol_i != 0 \
+    #     else torch.ones_like(messages[:, symbol_i, :])
+    #    print("prefix_probs", prefix_probs.shape)
+    #    print("symbol_probs", symbol_probs.shape)
+    #    probs = (prefix_probs * symbol_probs).sum(0)
+    #    probs = probs / probs.sum(0, keepdim=True)
+    #    print("probs shape", probs.shape)
+    #    eos_probs[symbol_i] = probs[0]
+    #    probs = probs[1:] / probs[1:].sum()  # exclude EOS prob
+    #    log2_prob = torch.clamp(torch.log2(probs), min=min_real)
+    #    symbol_entropies[symbol_i] = (-log2_prob * probs).sum()
+    # prefix_probs[:, step_i  = prefix_probs * symbol_probs
+    # shape = [probs.size(0)] + [1 for _ in range(prefix_probs.dim())]
+    # prefix_probs = prefix_probs.unsqueeze(0).expand(probs.size(0), *prefix_probs.shape)
+    # print(prefix_probs.shape, shape)
+    # prefix_probs = prefix_probs * probs.view(shape)
+    # prefix_probs = torch.ones_like(messages[:, 0, :])
+    # prefix_probs = torch.ones_like(messages[0, 0, 0])
+    # prefix_probs = torch.cat([
+    #     torch.ones_like(messages[0, :1, 1:]),
+    #     messages[0, 1:, 1:],
+    # ], dim=1)
+    #indices = torch.empty([messages.size(-1) - 1] * order, device=messages.device).long()
+    # print("smb entrs:", symbol_entropies)
+    # print("eos probs:", eos_probs)
+    # entropy = 0.
+    # for i in range(len(symbol_entropies) - 1):  # last symbol is always EOS
+    #     symbol_entropy = symbol_entropies[i].item()
+    #    # print(symbol_entropy, 'smb entropy', i)
+    #    eos_prob = eos_probs[i].item()
+    #    entropy += (
+    #        binary_entropy(eos_prob)
+    #        # + eos_prob * 0
+    #        + (1 - eos_prob) * symbol_entropy
+    #    )
+
+    # not_eosed_before = 1.
+    # length_probs = torch.zeros_like(avg_eos_probs)
+    # for i in range(probs.size(1)):
+    #     length_probs[i] = not_eosed_before * avg_eos_probs[i]
+    #     not_eosed_before *= 1 - avg_eos_probs[i]
+
+    # print('LEN PROBS', length_probs)
+    # print('EOS PROBS', eos_probs)
+
+    # length_log2_prob = torch.clamp(torch.log2(length_probs), min=min_real)
+    # entropy += (-length_probs * length_log2_prob).sum(-1).item()
+
+    if return_length_probs:
+        return entropy, length_probs
+    else:
+        return entropy
+
+
 ###################
 # ancm/metrics.py #
 ###################
@@ -706,3 +821,143 @@ def compute_bigram_entropy(train_messages, test_messages, key1='message', key2='
 
 
     pass
+
+
+########
+# dump #
+########
+            # symbols_nn = crop_messages(message_nn.argmax(-1))
+            # message_nn = torch.zeros_like(message).view(size[0] * size[1], size[2])
+            # message_nn.scatter_(1, symbols_nn.view(size[0] * size[1], size[2]), 1)
+            # message_nn = message_nn.view(size)
+            # symbols = message.argmax(-1)
+            # lengths = find_lengths(symbols)
+            #    symbols_nn = message_nn.argmax(-1)
+            #    lengths_nn = find_lengths(symbols_nn)
+
+             
+            # indexes = sample.argmax(dim=-1)
+            # one_hot = torch.zeros_like(logits).view(-1, logits.size(-1))
+            # one_hot.scatter_(1, indexes.view(-1, 1), 1)
+            # one_hot = one_hot.view(*logits.size())
+
+            # message_nn = torch.zeros_like(message_nn)
+            
+            # if True:  # TODO unindent? game.training:
+            #     lengths = torch.zeros_like(message[:, 0, 0])
+            #     eosed_mask = torch.zeros_like(message[:, 0, 0]).bool()
+            #     lengths_nn = lengths.clone()
+            #     eosed_mask_nn = eosed_mask.clone()
+
+            #     symbols, symbols_nn = [], []
+            #     for step in range(message.size(1)):
+            #         # TODO add_mask_nn etc: remove if we dont bring back Deletion
+            #         eos_mask = message[:, step, 0] == 1
+            #        eos_mask_nn = message_nn[:, step, 0] == 1
+            #        add_mask = torch.logical_and(
+            #            eos_mask, torch.logical_not(eosed_mask))
+            #        add_mask_nn = torch.logical_and(
+            #            eos_mask_nn, torch.logical_not(eosed_mask_nn))
+
+            #        lengths[add_mask] = step
+            #        lengths_nn[add_mask_nn] = step
+
+            #        step_symbols = message[:, step]
+            #        step_symbols[eosed_mask, 1:] = 0
+            #        step_symbols[eosed_mask, 0] = 1
+
+            #        step_symbols_nn = message_nn[:, step]
+            #        step_symbols_nn[eosed_mask_nn, 1:] = 0
+            #        step_symbols_nn[eosed_mask_nn, 0] = 1
+
+            #        symbols.append(step_symbols)
+            #        symbols_nn.append(step_symbols_nn)
+
+            #        eosed_mask = torch.logical_or(eosed_mask, eos_mask)
+            #        eosed_mask_nn = torch.logical_or(eosed_mask_nn, eos_mask_nn)
+            #        # not_eosed_before = torch.logical_and(not_eosed_before, torch.logical_not(eos_mask))
+            #        # not_eosed_before = torch.logical_and(not_eosed_before_nn, torch.logical_not(eos_mask_nn))
+
+            #        # symbols = symbol_probs.argmax(-1)
+            #        # TODO we might want to take argmax here for during training
+            #        # distr = OneHotCategorical(probs=symbol_probs)  # 32x10 = 1 smb
+            #        # symbols.append(distr.sample())
+
+            #        # channel_dict['length_probs'][:, step] = add_mask.detach()
+            #        # aggregate message entropy
+            #        # channel_dict['entropy_msg'] = channel_dict['entropy_msg'] \
+            #        #     + torch.where(
+                    #         add_mask > 1e-5,
+                    #         add_mask.detach() * prefix_entropy,
+                    #         0)
+                    # entropy of the symbol, assuming it is not eos
+                    # (the furmula exploits decomposability of entropy)
+                    # prefix_entropy += (
+                    #     channel_dict['entropy_smb'][:, step]
+                    #     - game.channel.tensor_binary_entropy(eos_mask.detach())
+                    # ) / (1 - eos_mask.detach())
+                    # not_eosed_before = not_eosed_before * (1.0 - eos_mask)
+                    # prefix_entropy_nn += (
+                    #     channel_dict['entropy_smb_nn'][:, step]
+                    #     - game.channel.tensor_binary_entropy(message_nn[:, step, 0])
+                    # ).detach() / (1 - eos_mask.detach())
+                    # not_eosed_before_nn = (
+                    #     not_eosed_before_nn * (1.0 - message_nn[:, step, 0])
+                    # ).detach()
+
+                # adjust message entropy to cover message length variability
+                # exclude appended EOS from symbol entropy and compute redundancy
+                # game.channel.update_values(channel_dict)
+                # for k in (
+                #     'entropy_msg',
+                #     'entropy_msg_nn',
+                #     'entropy_smb',
+                #     'entropy_smb_nn',
+                #     'redundancy_msg',
+                #     'redundancy_smb',
+                #     'max_entropy',
+                # ):
+                #     channel_output[k].append(channel_dict[k])
+                #message = torch.stack(symbols, dim=1)
+
+            # else:
+            #     for k in (
+            #        'entropy_msg',
+            #        'entropy_msg_nn',
+            #        'entropy_smb',
+            #        'entropy_smb_nn',
+            #        'redundancy_msg',
+            #        'redundancy_smb',
+            #        'max_entropy',
+            #    ):
+            #        channel_output[k].append(None)
+
+
+########
+# crop #
+########
+
+    # if messages.dim() == 3:
+    #     msg = messages.argmax(-1)
+    #     lengths = find_lengths(msg).unsqueeze(-1).expand(msg.size())
+    #    positions = torch.arange(msg.size(1)).unsqueeze(0).expand(msg.size())
+    #    nonzero_ids = msg.nonzero()
+    #    nonzero_chunks = nonzero_ids.t().chunk(chunks=2)
+    #    targets = (positions[nonzero_chunks] > lengths[nonzero_chunks] - 1)
+    #    targets = targets.squeeze()
+    #    target_ids = nonzero_ids[targets]
+    #    # if no targets are found, the dimension is 3
+    #    if target_ids.dim() == 2:
+    #        target_chunks = target_ids.t().chunk(chunks=3)
+    #        replacement_probs = torch.zeros_like(messages[0, 0])
+    #        replacement_probs[0] = 1.
+    #        messages[target_chunks] = replacement_probs
+    #    # if not torch.all(torch.eq(messages.argmax(-1), msg)):
+    #    #     check = [(messages[i], messages[i].argmax(-1), msg[i]) for i in range(len(msg))
+    #    # if not torch.all(torch.eq(messages[i].argmax(-1), msg[i]))]
+    #    #    for item in check:
+    #    #        print(item[0])
+    #    #        print(item[1])
+    #    #        print(item[2])
+    #    #        print('----')
+    #return messages

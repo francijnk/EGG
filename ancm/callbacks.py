@@ -297,7 +297,8 @@ class CustomProgressBarLogger(Callback):
             visible=False,
             cur_epoch=epoch,
             n_epochs=self.n_epochs,
-            mode="Train")
+            mode="Train",
+        )
 
     def on_validation_begin(self, epoch: int):
         self.progress.reset(
@@ -307,7 +308,8 @@ class CustomProgressBarLogger(Callback):
             visible=True,
             cur_epoch=epoch,
             n_epochs=self.n_epochs,
-            mode="Test")
+            mode="Test",
+        )
 
         self.progress.start_task(self.test_p)
         self.progress.update(self.test_p, visible=True)
@@ -327,7 +329,8 @@ class CustomProgressBarLogger(Callback):
             visible=False,
             cur_epoch=epoch,
             n_epochs=self.n_epochs,
-            mode="Test")
+            mode="Test",
+        )
 
         od = self.build_od(logs, loss, epoch, 'test')
 

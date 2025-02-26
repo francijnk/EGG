@@ -31,6 +31,9 @@ def parse_args():
     parser.add_argument('--resolution', type=int, default=64)
     parser.add_argument('--mode', type=str, default='random')
     parser.add_argument('--seed', type=int, default=42)
+    parser.add_argument('--p_same_shape', type=float, default=0.05)
+    parser.add_argument('--p_same_color', type=float, default=0.1)
+    parser.add_argument('--p_same_location', type=float, default=0.2)
     args = parser.parse_args()
     return args
 
@@ -85,7 +88,8 @@ def load_image(shape, color, x=None, y=None, rotation=None, idx=None, resolution
         )
         render_scene(idx, shape, color, location, rotation, resolution)
 
-        fname = get_object_fname(color, shape, location, None)
+        # fname = get_object_fname(color, shape, location[0], location[1], None, None)
+        fname = get_object_fname(color, shape, idx=idx)
         color, obj_type, _, xpos, ypos, rotation = \
             fname.split('.')[0].split('_')
 
@@ -96,43 +100,74 @@ def load_image(shape, color, x=None, y=None, rotation=None, idx=None, resolution
     return image, (obj_type, color, int(xpos), int(ypos), int(rotation))
 
 
-def pick_random_color(tuples, exclude=None):
-    if exclude is None:
-        exclude = []
-    elif not isinstance(exclude, list):
-        exclude = [exclude]
+def get_select_fn(p_same_shape=0, p_same_color=0, p_same_location=0):
 
-    available_colors = [item[1] for item in tuples if item not in exclude]
-    return random.choice(available_colors)
+    def select_fn(used_combos, object_tuples, aux_tuples, mode=None):
+        # aux attributes are only used if there are not enough object tuples
+        # that satisfy the criteria
+        # shape, color, xpos, ypos, rotation = attributes
+
+        if p_same_color + p_same_shape + p_same_location > 0 and mode is None:
+            r = random.uniform(0, 1)
+            if r < p_same_shape:
+                mode = 'same_shape'
+            elif r < p_same_shape + p_same_color:
+                mode = 'same_color'
+            elif r < p_same_shape + p_same_color + p_same_location:
+                mode = 'same_location'
+            else:
+                mode = 'random'
+
+        exclude = [x[:2] for x in used_combos]
+
+        if mode == 'same_shape':
+            d_shape = used_combos[0][0]
+            available_colors = [
+                x[1] for x in object_tuples
+                if x not in exclude and x[0] == d_shape
+            ]
+            if not available_colors:
+                available_colors = [
+                    x for x in colors if (d_shape, x) not in exclude
+                ]
+            d_color = random.choice(available_colors)
+        elif mode == 'same_color':
+            d_color = used_combos[0][1]
+            available_shapes = [
+                x[0] for x in object_tuples
+                if x not in exclude and x[1] == d_color
+            ]
+            if not available_shapes:
+                available_shapes = [
+                    x for x in object_types if (x, d_color) not in exclude
+                ]
+            d_shape = random.choice(available_shapes)
+        else:
+            available_shapes = [
+                x[0] for x in object_tuples if x not in exclude]
+            d_shape = random.choice(available_shapes)
+            available_colors = [
+                x[1] for x in object_tuples
+                if x not in exclude and x[0] == d_shape
+            ]
+            d_color = random.choice(available_colors)
+
+        if mode == 'same_location':
+            d_xpos, d_ypos = used_combos[0][2:4]
+        else:
+            d_xpos, d_ypos = None, None
+
+        d_rotation = None
+
+        combination = (d_shape, d_color, d_xpos, d_ypos, d_rotation)
+        used_combos.append(combination)
+
+        return combination, used_combos, mode
+
+    return select_fn
 
 
-def pick_random_shape(tuples, exclude=None):
-    if exclude is None:
-        exclude = []
-    elif not isinstance(exclude, list):
-        exclude = [exclude]
-
-    available_shapes = [item[0] for item in tuples if item not in exclude]
-    return random.choice(available_shapes)
-
-
-def select_random_distractor(attributes, used_combos, object_tuples):
-    # assert len(attributes) == 5
-    # shape, color, xpos, ypos, rotation = attributes
-
-    exclude = [item[0] for item in used_combos]
-    d_shape = pick_random_shape(object_tuples, exclude=exclude)
-    exclude = [item[1] for item in used_combos if item[0] == d_shape]
-    d_color = pick_random_color(object_tuples, exclude=exclude)
-
-    d_xpos, d_ypos, d_rotation = None, None, None
-
-    combination = (d_shape, d_color, d_xpos, d_ypos, d_rotation)
-    used_combos.append(combination)
-    return combination, used_combos
-
-
-def export_input_data(object_tuples, args, select_fn, n_samples):
+def export_input_data(object_tuples, args, select_fn, n_samples, aux_tuples=None):
     n_distractors = args.n_distractors
     size = (len(object_tuples) * n_samples, n_distractors + 1)
     positions = np.arange(n_distractors + 1)
@@ -175,10 +210,10 @@ def export_input_data(object_tuples, args, select_fn, n_samples):
                 attributes[key][idx, target_pos] = \
                     map_shape_color(target_attributes[k], key)
 
-            used_combos = [target_attributes]
+            used_combos, mode = [target_attributes], None
             for distr_k in range(n_distractors):
-                d_attributes, used_combos = \
-                    select_fn(target_attributes, used_combos, object_tuples)
+                d_attributes, used_combos, mode = \
+                    select_fn(used_combos, object_tuples, aux_tuples, mode)
                 d_image, d_attributes = \
                     load_image(*d_attributes, resolution=args.resolution)
                 d_pos = distractor_pos[distr_k]
@@ -224,11 +259,11 @@ if __name__ == '__main__':
 
     render_scenes(args)
 
-    if args.mode == 'random':
-        select_fn = select_random_distractor
-        fname = f'obverter-{args.n_distractors + 1}-{args.n_samples_train}-{args.resolution}.npz'
-    else:
-        raise NotImplementedError
+    select_fn = get_select_fn(
+        args.p_same_shape,
+        args.p_same_color,
+        args.p_same_location
+    )
 
     all_objects = list(itertools.product(object_types, colors))
     train_objects, test_objects = train_test_split(all_objects, test_size=0.25)
@@ -238,7 +273,7 @@ if __name__ == '__main__':
     eval_train, eval_train_attr, eval_train_targets, eval_train_mapping = \
         export_input_data(train_objects, args, select_fn, args.n_samples_train_eval)
     eval_test, eval_test_attr, eval_test_targets, eval_test_mapping = \
-        export_input_data(test_objects, args, select_fn, args.n_samples_test)
+        export_input_data(test_objects, args, select_fn, args.n_samples_test, train_objects)
 
     print('Number of shapes:', len(object_types))
     print('Number of colors:', len(colors.keys()))
@@ -248,6 +283,8 @@ if __name__ == '__main__':
     print('Eval samples (train):', len(eval_train))
     print('Eval samples (test):', len(eval_test))
 
+    fname = f'obverter-{args.n_distractors + 1}-{args.n_samples_train}-' \
+        f'{args.resolution}.npz'
     npz_fpath = os.path.join(
         current_dir, '..', 'input_data', fname)
 

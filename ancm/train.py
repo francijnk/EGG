@@ -136,11 +136,6 @@ def get_params(params):
         help="Temperature LR. Unless a value is specified, temperature is not"
         " a trainable parameter (default: None)")
     parser.add_argument(
-        "--temperature_cost", type=float, default=0.0,
-        help="Temperature cost used if temperature_lr is specified "
-        "(default: 0.0)"
-    )
-    parser.add_argument(
         "--temperature_decay", default=None, type=float,
         help="Factor, by which the temperature is decreased every epoch.")
     parser.add_argument(
@@ -261,7 +256,6 @@ def main(params):
             channel_type=opts.channel,
             error_prob=opts.error_prob,
             length_cost=opts.length_cost,
-            temperature_cost=opts.temperature_cost,
             device=device,
             seed=opts.random_seed,
         )
