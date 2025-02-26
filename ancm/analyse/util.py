@@ -106,17 +106,17 @@ def load_data(input_dir):
     # results: export to DataFrame and handle baseline results
     result_dfs = {}
     for key, dictionary in results.items():
-        df = pd.DataFrame(dictionary)  # .drop(['dataset'], axis=1)
+        df = pd.DataFrame(dictionary)
         result_dfs[key] = df
 
     baseline_df_list = []
     for dataset_key in result_dfs:
         for channel in channels:
-            for noise_key in df['noise'].unique():
+            for noise_key in result_dfs[dataset_key]['noise'].unique():
                 if noise_key == 'baseline':
                     continue
-                df = result_dfs[dataset_key]
-                df = df[df['channel'] == 'baseline'].copy()
+                df = result_dfs[dataset_key].copy(deep=True)
+                df = df[df['channel'] == 'baseline'].copy(deep=True)
                 df['channel'] = channel
                 df['noise'] = noise_key
                 baseline_df_list.append(df)

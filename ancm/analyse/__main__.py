@@ -306,7 +306,7 @@ def analyse(df, output_dir, dataset):
     #    file.write("\n".join(lines))
 
 
-def plot_test_perchannel(data_test, out_dir):
+def plot_test_perchannel(data_test, out_dir, key):
     test_long = pd.melt(pd.DataFrame(data_test),
         id_vars='max_len channel error_prob noise'.split(),
         value_vars=None, var_name='metric', value_name='value', ignore_index=True)
@@ -339,7 +339,7 @@ def plot_test_perchannel(data_test, out_dir):
         .tight_layout())
         plot.fig.subplots_adjust(top=0.95)
         plot.fig.suptitle(f'{channel}', fontsize = '30' )
-        plot.savefig(os.path.join(out_dir, f"test_{channel}.png"))
+        plot.savefig(os.path.join(out_dir, f"{key}_{channel}.png"))
         close_plot(plot)
 
 
@@ -362,7 +362,8 @@ def main():
     # plot_training(history_test, args.o, test=True)
     # analyse(results_train, args.o, 'train')
     # analyse(results_test, args.o, 'test')
-    plot_test_perchannel(results_test, args.o)
+    plot_test_perchannel(results_test, args.o, 'test')
+    plot_test_perchannel(results_train, args.o, 'train')
 
 
 if __name__ == '__main__':
