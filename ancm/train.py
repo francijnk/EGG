@@ -27,6 +27,7 @@ from ancm.util import (
 from ancm.archs import (
     Sender, Receiver,
     RnnSenderGS,
+    RnnReceiverGS,
     loss_rf, loss_gs,
     SenderReceiverRnnReinforce,
     SenderReceiverRnnGS,
@@ -245,11 +246,12 @@ def main(params):
             opts.temperature_lr,
             opts.sender_cell,
         )
-        receiver = core.RnnReceiverGS(
-            _receiver,
+        receiver = RnnReceiverGS(
             vocab_size,
             opts.embedding,
             opts.receiver_hidden,
+            data_handler.n_features,
+            opts.image_input,
             opts.receiver_cell,
         )
         game = SenderReceiverRnnGS(

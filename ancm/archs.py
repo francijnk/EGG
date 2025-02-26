@@ -556,15 +556,8 @@ def loss_gs(_sender_input, _message, _receiver_input, receiver_output, _labels, 
 
     return cross_entropy, {'accuracy': accuracy * 100}
 
-    # min_real = torch.finfo(receiver_output.dtype).min
-    # r_output = receiver_output.detach()
-    # r_probs = logits_to_probs(r_output)
-    # r_log2_prob = torch.clamp(r_output / np.log(2), min=min_real)
-    # r_entropy = torch.linalg.vecdot(-r_probs, r_log2_prob)
-
     aux_info = {
         'accuracy': accuracy * 100,
-    #     'entropy_receiver': r_entropy,
     }
 
     return cross_entropy, aux_info
@@ -677,13 +670,6 @@ class RnnSenderGS(nn.Module):
 
         return sample, probs
 
-        # size = sample.size()
-        # indexes = sample.argmax(dim=-1)
-        # hard_sample = torch.zeros_like(sample).view(-1, size[-1])
-        # hard_sample.scatter_(1, indexes.view(-1, 1), 1)
-        # hard_sample = hard_sample.view(size)
-        # return sample + (hard_sample - sample).detach(), probs
-
     def reset_parameters(self):
         nn.init.normal_(self.sos_embedding, 0.0, 0.01)
 
@@ -720,6 +706,72 @@ class RnnSenderGS(nn.Module):
         temperature = torch.cat(temperature, dim=-1)
 
         return sequence, probs, temperature
+
+
+class RnnReceiverGS(nn.Module):
+    """
+    Gumbel Softmax-based wrapper for Receiver agent in variable-length communication game. The user implemented logic
+    is passed in `agent` and is responsible for mapping (RNN's hidden state + Receiver's optional input)
+    into the output vector. Since, due to the relaxation, end-of-sequence symbol might have non-zero probability at
+    each timestep of the message, `RnnReceiverGS` is applied for each timestep. The corresponding EOS logic
+    is handled by `SenderReceiverRnnGS`.
+    """
+
+    def __init__(self, vocab_size, embed_dim, hidden_size, n_features, image_input, cell="rnn"):
+        super(RnnReceiverGS, self).__init__()
+
+        self.image_input = image_input
+        self.cell = None
+        cell = cell.lower()
+        if cell == "rnn":
+            self.cell = nn.RNNCell(input_size=embed_dim, hidden_size=hidden_size)
+        elif cell == "gru":
+            self.cell = nn.GRUCell(input_size=embed_dim, hidden_size=hidden_size)
+        elif cell == "lstm":
+            self.cell = nn.LSTMCell(input_size=embed_dim, hidden_size=hidden_size)
+        else:
+            raise ValueError(f"Unknown RNN Cell: {cell}")
+
+        self.message_encoder = nn.Linear(vocab_size, embed_dim)
+        self.logsoft = nn.LogSoftmax(dim=1)
+
+        if self.image_input:
+            self.input_encoder = SeeingConvNet(hidden_size)
+        else:
+            self.input_encoder = nn.Linear(n_features, hidden_size)
+
+    def forward(self, message, _input=None, aux_input=None):
+        embedded_input = self.input_encoder(_input).tanh()
+        embedded_message = self.message_encoder(message)
+
+        prev_hidden = None
+        prev_c = None
+
+        outputs = []
+        for step in range(message.size(1)):
+            e_t = embedded_message[:, step]
+            if isinstance(self.cell, nn.LSTMCell):
+                h_t, prev_c = (
+                    self.cell(e_t, (prev_hidden, prev_c))
+                    if prev_hidden is not None
+                    else self.cell(e_t)
+                )
+            else:
+                h_t = self.cell(e_t, prev_hidden)
+
+            print("embedded input", embedded_input.shape)
+            print("embedded message", h_t.shape)
+            # h_t: message embedding
+            energies = torch.matmul(embedded_input, h_t.unsqueeze(-1))
+            print("energies", energies.shape)
+            print("logsoft", self.logsoft(energies.squeeze()).shape)
+            outputs.append(self.logsoft(energies.squeeze()))
+            prev_hidden = h_t
+
+        outputs = torch.stack(outputs).permute(1, 0, 2)
+        print(outputs[0][2])
+
+        return outputs
 
 
 class SenderReceiverRnnGS(nn.Module):

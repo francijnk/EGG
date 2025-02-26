@@ -491,7 +491,6 @@ class Dump:
                     [t_attributes[:, idx]] + [a[:, idx] for a in d_attributes],
                     dim=1,
                 )
-                print('repr', obj_repr.shape)
                 min_entropy, n_uniq_samples = min_message_entropy(
                     r_inputs, labels, obj_repr)
             else:
