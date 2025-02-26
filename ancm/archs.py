@@ -759,17 +759,12 @@ class RnnReceiverGS(nn.Module):
             else:
                 h_t = self.cell(e_t, prev_hidden)
 
-            print("embedded input", embedded_input.shape)
-            print("embedded message", h_t.shape)
             # h_t: message embedding
             energies = torch.matmul(embedded_input, h_t.unsqueeze(-1))
-            print("energies", energies.shape)
-            print("logsoft", self.logsoft(energies.squeeze()).shape)
             outputs.append(self.logsoft(energies.squeeze()))
             prev_hidden = h_t
 
         outputs = torch.stack(outputs).permute(1, 0, 2)
-        print(outputs[0][2])
 
         return outputs
 

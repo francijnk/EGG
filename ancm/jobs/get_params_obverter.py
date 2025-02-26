@@ -8,12 +8,11 @@ channels = 'erasure deletion symmetric'.split()
 slr = 5e-4
 rlr = 1e-3
 tlr = 1e-5
-length_cost = 0.01
 vocab_size = 10
 hidden_units = 128
 n_epochs = 30
 emb = 16
-temperature = 5
+temperature = 3
 temperature_min = 1
 optimizer = 'rmsprop'
 
@@ -30,13 +29,13 @@ def get_opts(error_prob, channel, max_len, random_seed):
         f'--vocab_size {vocab_size}',
         f'--sender_lr {slr}',
         f'--receiver_lr {rlr}',
-        f'--length_cost {length_cost}',
         f'--sender_hidden {hidden_units}',
         f'--receiver_hidden {hidden_units}',
         f'--random_seed {random_seed}',
         f'--filename {filename}',
         f'--n_epochs {n_epochs}',
         f'--temperature {temperature}',
+        f'--temperature_lr {tlr}',
         f'--temperature_minimum {temperature_min}',
         f'--embedding {emb}',
         f'--optim {optimizer}',

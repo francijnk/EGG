@@ -13,7 +13,7 @@ vocab_size = 10
 hidden_units = 64
 n_epochs = 15
 emb = 16
-temperature = 5
+temperature = 3
 temperature_min = 1
 optimizer = 'rmsprop'
 
@@ -36,7 +36,7 @@ def get_opts(error_prob, channel, max_len, random_seed):
         f'--random_seed {random_seed}',
         f'--filename {filename}',
         f'--n_epochs {n_epochs}',
-        f'--temperature_lr {tlr}'
+        f'--temperature_lr {tlr}',
         f'--temperature {temperature}',
         f'--temperature_minimum {temperature_min}',
         f'--embedding {emb}',
