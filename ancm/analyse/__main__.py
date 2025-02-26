@@ -317,7 +317,7 @@ def plot_test_perchannel(data_test, out_dir, key):
 
     channels = pd.unique(test_long['channel'])
 
-    col_names = ['accuracy', 'redundancy', 'topsim']
+    col_names = ['accuracy', 'accuracy_symbol_removal', 'redundancy', 'topsim']
     df_metrics = test_long[test_long.metric.isin(col_names)]
     
     for channel in channels:
