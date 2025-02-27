@@ -5,7 +5,14 @@ from abc import ABCMeta, abstractmethod
 
 
 class Channel(nn.Module, metaclass=ABCMeta):
-    def __init__(self, error_prob, max_len, vocab_size, device, seed=42):
+    def __init__(
+        self,
+        error_prob: float,
+        max_len: int,
+        vocab_size: int,
+        device: torch.device = torch.device("cpu"),
+        seed: int = 42
+    ):
         super().__init__()
         self.p = torch.tensor(error_prob, device=device, requires_grad=False)
         self.vocab_size = vocab_size
@@ -24,17 +31,11 @@ class Channel(nn.Module, metaclass=ABCMeta):
         }
 
     @abstractmethod
-    def gs(
-            messages: torch.Tensor,
-            probs: torch.Tensor,
-            apply_noise: bool):
-        return
-
-    @abstractmethod
-    def reinforce(
-            messages: torch.Tensor,
-            probs: torch.Tensor,
-            apply_noise: bool, **kwargs):
+    def process(
+        messages: torch.Tensor,
+        probs: torch.Tensor,
+        apply_noise: bool
+    ):
         return
 
     # @staticmethod
@@ -45,7 +46,6 @@ class Channel(nn.Module, metaclass=ABCMeta):
     #     log2_q = torch.clamp(torch.log2(q), min=min_real)
     #     return -p * log2_p - q * log2_q
 
-    # @torch.compiler.disable(recursive=False)
     def sample_targets(self, *size):
         return torch.rand(
             *size,
@@ -84,22 +84,15 @@ class Channel(nn.Module, metaclass=ABCMeta):
 
         return max_entropy
 
-    def forward(self, messages, probs, *args, **kwargs):
-        if messages.dim() == 3:  # GS
-            return (
-                self.gs(messages, probs, apply_noise=True),
-                self.gs(messages, probs, apply_noise=False),
-            )
-
-        else:  # Reinforce
-            raise NotImplementedError
+    def forward(self, messages: torch.Tensor, probs: torch.Tensor, *args):
+        return (
+            self.process(messages, probs, apply_noise=True),
+            self.process(messages, probs, apply_noise=False),
+        )
 
 
 class NoChannel(Channel):
-    def gs(self, messages, probs, apply_noise):
-        return messages, probs
-
-    def reinforce(self, messages, probs, apply_noise, **kwargs):
+    def process(self, messages, probs, apply_noise):
         return messages, probs
 
 
@@ -118,7 +111,7 @@ class ErasureChannel(Channel):
         else:
             return np.log2(self.vocab_size - 1)
 
-    def gs(self, messages, probs, apply_noise):
+    def process(self, messages, probs, apply_noise):
         if not apply_noise:
             placeholder_probs = torch.zeros_like(messages[:, :, :1])
             messages = torch.cat([messages, placeholder_probs], dim=-1)
@@ -186,27 +179,6 @@ class ErasureChannel(Channel):
             assert torch.allclose(probs.sum(-1), torch.ones_like(probs.sum(-1)))
 
             return messages, probs
-
-    def reinforce(self, messages, entropies, apply_noise, **kwargs):
-        if not apply_noise:
-            return messages, entropies
-
-        # sample symbol indices to be erased, make sure EOS is not erased
-        size = messages.size()
-        non_eos_mask = messages != 0
-        target_mask = self.sample_targets(non_eos_mask.sum())
-        n_targets = target_mask.sum()
-
-        if n_targets == 0:
-            return messages, entropies
-
-        non_eos_symbols = torch.arange(1, size[-1]).expand(size[0], -1)
-        target_symbols = non_eos_symbols[target_mask]
-        target_rows = torch.arange(size[0]).unsqueeze(1)
-        target_rows = target_rows.expand(-1, size[-1])[target_mask]
-
-        messages[target_rows, target_symbols] = self.vocab_size
-        return messages  # TODO check
 
 
 class DeletionChannel(Channel):
@@ -309,9 +281,6 @@ class DeletionChannel(Channel):
 
             return messages, probs
 
-    def reinforce(self, messages, entropies, apply_noise, lengths=None):
-        pass
-
 
 class SymmetricChannel(Channel):
     """
@@ -319,7 +288,7 @@ class SymmetricChannel(Channel):
     The replacement symbol is randomly sampled from a uniform distribution.
     """
 
-    def gs(self, messages, probs, apply_noise):
+    def process(self, messages, probs, apply_noise):
         if not apply_noise:
             return messages, probs
 
@@ -328,24 +297,28 @@ class SymmetricChannel(Channel):
             size = messages.size()
             messages = messages.clone().view(size[0] * size[1], size[-1])
             target_mask = self.sample_targets(messages[:, 1:].size())
+            # target_mask = self.sample_targets(size[0] * size[1])
             n_targets = target_mask.sum()
 
             if n_targets == 0:
                 return messages.view(size), probs
 
-            # get target positions & messages
-            rows = torch.arange(len(target_mask)).unsqueeze(1)
-            target_rows = rows.expand(-1, messages.size(-1) - 1)[target_mask]
-            targets = messages[target_rows]
+            # get target positions & highest symbol probs
+            rows = torch.arange(len(target_mask))
+            cols = torch.arange(size[-1] - 1)
+            target_rows = rows.expand(size[-1] - 1, -1).t()[target_mask]
+            target_cols = cols.expand(target_mask.size())[target_mask]
 
-            # prob of replacing another non-EOS symbol for each non-EOS symbol
-            replacements = (1 - targets[:, 1:] - targets[:, :1])
-            replacements = replacements / (size[-1] - 2)
+            # compute probability adjustment for each symbol with a target
+            targets = messages.clone()[target_rows, target_cols]
+            adjustment = targets.expand(size[-1] - 1, -1).t() / (size[-1] - 2)
+            adjustment[torch.arange(len(adjustment)), target_cols] = -targets
 
-            # replace
-            messages[target_rows, 1:] = replacements
+            # adjust relaxed symbols
+            messages[target_rows, 1:] += adjustment
             messages = messages.view(size)
-            assert torch.allclose(messages.sum(-1), torch.ones_like(messages.sum(-1)))
+
+            # assert torch.allclose(messages.sum(-1), torch.ones_like(messages.sum(-1)))
 
             # adjust symbol probabilities
             probs = probs.clone()
@@ -353,7 +326,7 @@ class SymmetricChannel(Channel):
             p_replacement *= self.p / (size[-1] - 2)
             probs[:, :, 1:] *= 1 - self.p
             probs[:, :, 1:] += p_replacement
-            assert torch.allclose(probs.sum(-1), torch.ones_like(probs[..., 0]))
+            # assert torch.allclose(probs.sum(-1), torch.ones_like(probs[..., 0]))
 
             return messages, probs
 
@@ -384,7 +357,8 @@ class SymmetricChannel(Channel):
                 size=(n_targets,),
                 high=messages.size(-1) - 2,
                 generator=self.generator,
-                device=self.device)
+                device=self.device,
+            )
             idx = (torch.arange(n_targets), replacement_ids)
             replacement_symbols = candidate_symbols[idx]
 
@@ -401,42 +375,3 @@ class SymmetricChannel(Channel):
             probs[:, :, 1:] += p_replacement
 
             return messages, probs
-
-    def reinforce(self, messages, entropies, apply_noise, lengths=None):
-        raise NotImplementedError
-        if not apply_noise:
-            return messages, entropies
-
-        size = messages.size()
-        messages = messages.clone().view(size[0] * size[1])
-        non_eos_ids = torch.arange(len(messages))[messages != 0]
-        target_mask = self.sample_targets(non_eos_ids.numel())
-        n_targets = target_mask.sum()
-
-        if n_targets == 0:
-            return messages.view(size), entropies
-
-        # target positions & symbols
-        target_rows = non_eos_ids[target_mask]
-        target_symbols = messages[target_rows]
-
-        # find candidate symbols different from target symbols
-        candidate_symbols = (
-            torch.arange(1, self.vocab_size)
-            .unsqueeze(0)
-            .expand(n_targets, -1))
-        candidate_mask = candidate_symbols != target_symbols.unsqueeze(-1)
-        candidate_symbols = candidate_symbols[candidate_mask].view(-1, self.vocab_size - 2)
-
-        # sample replacement symbols
-        replacement_ids = torch.randint(
-            size=(n_targets,),
-            high=self.vocab_size - 2,
-            generator=self.generator,
-            device=self.device)
-        replacement_symbols = candidate_symbols[torch.arange(n_targets), replacement_ids]
-
-        # replace
-        messages[target_rows] = replacement_symbols
-
-        return messages.view(size), entropies

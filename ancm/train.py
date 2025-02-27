@@ -25,11 +25,10 @@ from ancm.util import (
     is_jsonable,
 )
 from ancm.archs import (
+    loss,
     Sender, Receiver,
     RnnSenderGS,
     RnnReceiverGS,
-    loss_rf, loss_gs,
-    SenderReceiverRnnReinforce,
     SenderReceiverRnnGS,
 )
 from ancm.callbacks import (
@@ -109,6 +108,11 @@ def get_params(params):
         help="Optimizer to use {adam, rmsprop} (default: rmsprop)"
     )
     parser.add_argument(
+        "--warmup_steps", type=int, default=300,
+        help="Number of initial training steps, during which length cost is "
+        "not applied (default: 300)"
+    )
+    parser.add_argument(
         "--n_targets", type=int, default=None,
         help="Number of additional targets in each sample (default: None)"
     )
@@ -117,27 +121,20 @@ def get_params(params):
         help="Do not shuffle train data before every epoch (default: False)"
     )
 
-    # RF-specific
-    parser.add_argument(
-        "--sender_entropy_coeff", type=float, default=0.01,
-        help="RF sender entropy coefficient (default: 0.01)")
-    parser.add_argument(
-        "--receiver_entropy_coeff", type=float, default=0.001,
-        help="RF receiver entropy coefficient (default: 0.001)"
-    )
-
-    # GS-specific
     parser.add_argument(
         "--temperature", type=float, default=1.0,
         help="GS temperature for the sender; if temperature_lr is specified, "
-        "the value is used as the maximum temperature (default: 1.0)")
+        "the value is used as the maximum temperature (default: 1.0)",
+    )
     parser.add_argument(
         "--temperature_lr", type=float, default=None,
         help="Temperature LR. Unless a value is specified, temperature is not"
-        " a trainable parameter (default: None)")
+        " a trainable parameter (default: None)",
+    )
     parser.add_argument(
         "--temperature_decay", default=None, type=float,
-        help="Factor, by which the temperature is decreased every epoch.")
+        help="Factor, by which the temperature is decreased every epoch.",
+    )
     parser.add_argument(
         "--temperature_minimum", default=None, type=float,
         help="Minimum temperature value."
@@ -175,9 +172,6 @@ def check_args(args):
         args.error_prob = 0.0
         args.channel = 'none'
 
-    args.mode = args.mode.lower()
-    assert args.mode in ("rf", "gs")
-
     if args.results_folder is not None:
         os.makedirs(os.path.dirname(args.results_folder), exist_ok=True)
 
@@ -199,66 +193,44 @@ def main(params):
     _sender = Sender(
         n_features=data_handler.n_features,
         n_hidden=opts.sender_hidden,
-        image_input=opts.image_input)
-    _receiver = Receiver(
-        n_features=data_handler.n_features,
-        linear_units=opts.receiver_hidden,
-        image_input=opts.image_input)
-    if opts.mode == 'rf':
-        sender = core.RnnSenderReinforce(
-            _sender,
-            opts.vocab_size,
-            opts.embedding,
-            opts.sender_hidden,
-            opts.max_len,
-            cell=opts.sender_cell)
-        receiver = core.RnnReceiverReinforce(
-            agent=core.ReinforceWrapper(_receiver),
-            vocab_size=vocab_size,
-            embed_dim=opts.embedding,
-            hidden_size=opts.receiver_hidden,
-            cell=opts.receiver_cell)
-        game = SenderReceiverRnnReinforce(
-            sender, receiver,
-            loss=loss_rf,
-            vocab_size=opts.vocab_size,
-            channel_type=opts.channel,
-            error_prob=opts.error_prob,
-            length_cost=opts.length_cost,
-            sender_entropy_coeff=opts.sender_entropy_coeff,
-            receiver_entropy_coeff=opts.receiver_entropy_coeff,
-            device=device,
-            seed=opts.random_seed)
-    elif opts.mode == 'gs':
-        sender = RnnSenderGS(
-            _sender,
-            opts.vocab_size,
-            opts.embedding,
-            opts.sender_hidden,
-            opts.max_len,
-            opts.temperature,
-            opts.temperature_minimum,
-            opts.temperature_lr,
-            opts.sender_cell,
-        )
-        receiver = RnnReceiverGS(
-            vocab_size,
-            opts.embedding,
-            opts.receiver_hidden,
-            data_handler.n_features,
-            opts.image_input,
-            opts.receiver_cell,
-        )
-        game = SenderReceiverRnnGS(
-            sender, receiver,
-            loss=loss_gs,
-            vocab_size=opts.vocab_size,
-            channel_type=opts.channel,
-            error_prob=opts.error_prob,
-            length_cost=opts.length_cost,
-            device=device,
-            seed=opts.random_seed,
-        )
+        image_input=opts.image_input,
+    )
+    # _receiver = Receiver(
+    #     n_features=data_handler.n_features,
+    #     linear_units=opts.receiver_hidden,
+    #     image_input=opts.image_input,
+    # )
+    sender = RnnSenderGS(
+        _sender,
+        opts.vocab_size,
+        opts.embedding,
+        opts.sender_hidden,
+        opts.max_len,
+        opts.temperature,
+        opts.temperature_minimum,
+        opts.temperature_lr,
+        opts.sender_cell,
+    )
+    receiver = RnnReceiverGS(
+        # _receiver,
+        vocab_size,
+        opts.embedding,
+        opts.receiver_hidden,
+        data_handler.n_features,
+        opts.image_input,
+        opts.receiver_cell,
+    )
+    game = SenderReceiverRnnGS(
+        sender, receiver,
+        loss=loss,
+        vocab_size=opts.vocab_size,
+        channel_type=opts.channel,
+        error_prob=opts.error_prob,
+        length_cost=opts.length_cost,
+        warmup_steps=opts.warmup_steps,
+        device=device,
+        seed=opts.random_seed,
+    )
 
     optimizer = build_optimizer(game, opts)
 
@@ -267,15 +239,19 @@ def main(params):
         CustomProgressBarLogger(
             opts,
             train_data_len=len(train_data),
-            test_data_len=len(eval_test_data)),
+            test_data_len=len(eval_test_data),
+        ),
     ]
 
     if opts.mode == "gs" and not opts.temperature_lr \
             and opts.temperature_decay is not None:
-        callbacks.append(core.TemperatureUpdater(
-            agent=sender,
-            decay=opts.temperature_decay,
-            minimum=opts.temperature_minimum))
+        callbacks.append(
+            core.TemperatureUpdater(
+                agent=sender,
+                decay=opts.temperature_decay,
+                minimum=opts.temperature_minimum,
+            ),
+        )
 
     trainer = Trainer(
         game=game,
@@ -283,7 +259,8 @@ def main(params):
         optimizer_scheduler=None,
         train_data=train_data,
         validation_data=eval_test_data,
-        callbacks=callbacks)
+        callbacks=callbacks,
+    )
 
     t_start = time.monotonic()
     trainer.train(n_epochs=opts.n_epochs)

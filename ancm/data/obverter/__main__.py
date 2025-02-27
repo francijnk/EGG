@@ -29,11 +29,10 @@ def parse_args():
     parser.add_argument('--n_samples_test', type=int, default=30)
     parser.add_argument('--n_img', type=int, default=100)
     parser.add_argument('--resolution', type=int, default=64)
-    parser.add_argument('--mode', type=str, default='random')
     parser.add_argument('--seed', type=int, default=42)
-    parser.add_argument('--p_same_shape', type=float, default=0.05)
+    parser.add_argument('--p_same_shape', type=float, default=0.1)
     parser.add_argument('--p_same_color', type=float, default=0.1)
-    parser.add_argument('--p_same_location', type=float, default=0.2)
+    parser.add_argument('--p_same_location', type=float, default=0.1)
     args = parser.parse_args()
     return args
 

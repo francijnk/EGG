@@ -221,12 +221,6 @@ def build_optimizer(game, opts):
             if 'temperature' in name
         ]
 
-        # temperature_params = game.sender.hidden_to_inv_temperature.parameters()
-        # sender_params = [
-        #     p for p in game.sender.parameters()
-        #     if p is not temperature_params
-        # ]
-
         return optimizer([
             {"params": temperature_params, "lr": opts.temperature_lr},
             {"params": sender_params, "lr": opts.sender_lr},
@@ -555,12 +549,7 @@ class Dump:
                     })
             else:
                 del results[key]['posdis'], results[key]['bosdis']
-                # print(t_attributes.shape)
-                # print(d_attributes[0].shape)
                 category = torch.cat([t_attributes] + d_attributes, dim=-1)
-                # category = torch.cat([
-                #     item['category'] for item in [t_attributes] + d_attributes
-                # ], dim=-1)
                 min_entropy_cat, n_uniq_samples_cat = min_message_entropy(
                     r_inputs, labels, category)
                 n_uniq_cat = len(torch.unique(category))

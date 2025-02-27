@@ -15,17 +15,10 @@ from itertools import combinations
 from egg.zoo.language_bottleneck import intervention
 from torch.distributions.utils import logits_to_probs, probs_to_logits
 
-from typing import Optional, List, Tuple
+from typing import Optional, List, Tuple, Dict
 
 
 # Entropy, Mutual information
-# def binary_entropy(p: float):
-#     if p == 0. or p == 1.:
-#         return 0.
-#     return -p * np.log2(p) - (1 - p) * np.log2(1 - p)
-
-
-# @torch.compile
 def get_prefix_indices(
     prev_symbols: torch.Tensor, split_size: int = 1000
 ) -> torch.Tensor:
@@ -38,11 +31,12 @@ def get_prefix_indices(
         yield indices, torch.arange(n_prev).view(1, -1).expand(indices.size())
 
 
-# @torch.compile
 def aggregate_prefix_logits(
         prev_symbols: torch.Tensor, idx: Tuple[torch.Tensor, torch.Tensor]
 ) -> torch.Tensor:
-    return prev_symbols.transpose(0, -1)[idx].sum(1).t()
+    min_real = torch.finfo(prev_symbols.dtype).min
+    aggregated = prev_symbols.transpose(0, -1)[idx].sum(1).t()
+    return aggregated.clamp(min=min_real)
 
 
 def min_message_entropy(
@@ -134,8 +128,20 @@ def message_entropy(
                 symbol_logits.unsqueeze(1) + p_logits.unsqueeze(-1), dim=0)
             c_logits -= c_logits.logsumexp(-1, keepdim=True)  # normalize
             c_log2_prob = torch.clamp(c_logits / np.log(2), min=min_real)
-            c_probs = c_logits.exp()
+            c_probs = logits_to_probs(c_logits)
             c_entropy = torch.linalg.vecdot(-c_probs, c_log2_prob)
+            # threshold = 1e-7
+            # if torch.any(c_probs < threshold):
+            #     # mask = c_probs < threshold
+            #     # print('')
+            #     # print('prob', c_probs[mask])
+            #     # print('log2', c_log2_prob[mask])
+            #     # print('entr', c_entropy[mask])
+            #     c_probs = torch.where(c_probs > threshold, c_probs, 0.)
+            #     c_entropy = torch.linalg.vecdot(-c_probs, c_log2_prob)
+            #     # print('prob', c_probs[mask])
+            #     # print('log2', c_log2_prob[mask])
+            #     # print('entr', c_entropy[mask])
 
             prefix_logits.append(p_logits.logsumexp(0))
             cond_entropy.append(c_entropy)
@@ -211,7 +217,7 @@ def relative_message_entropy(
                 step_logits_p.unsqueeze(1) + prefix_logits_p.unsqueeze(-1), dim=0)
             c_logits_p -= c_logits_p.logsumexp(-1, keepdim=True)  # normalize
             c_log2_p = c_logits_p / np.log(2)
-            c_probs_p = c_logits_p.exp()
+            c_probs_p = logits_to_probs(c_logits_p)  # .exp()
 
             c_logits_q = torch.logsumexp(
                 step_logits_q.unsqueeze(1) + prefix_logits_q.unsqueeze(-1), dim=0)
@@ -304,7 +310,10 @@ def compute_mi(
 
     if attributes.size(1) == 1:
         entropy_attr = intervention.entropy(attributes)
-        entropy_msg_attr = joint_entropy(probs, attributes, split_size)
+        if entropy_message is None or entropy_message > 1e-2:
+            entropy_msg_attr = joint_entropy(probs, attributes, split_size)
+        else:
+            entropy_msg_attr = 0
         mi_msg_attr = entropy_message + entropy_attr - entropy_msg_attr
         vi_msg_attr = 2 * entropy_msg_attr - entropy_message - entropy_attr
         proficiency_msg_attr = mi_msg_attr / entropy_attr
@@ -498,7 +507,6 @@ def compute_top_sim(attributes: torch.Tensor, messages: torch.Tensor) -> float:
     """
     Computes topographic rho.
     """
-    # TODO switch to implementation from core.language_analysis?
 
     attributes = attributes.long()
 
@@ -516,9 +524,7 @@ def compute_top_sim(attributes: torch.Tensor, messages: torch.Tensor) -> float:
     # pairwise cosine similarity between object vectors
     cos_sims = cosine_similarity(attributes)
 
-    messages = [
-        [s.int().item() for s in msg if s > 0] + [0]
-        for msg in messages]
+    messages = [[s.int().item() for s in m if s > 0] + [0] for m in messages]
 
     # pairwise Levenshtein distance between messages
     lev_dists = np.ones((len(messages), len(messages)), dtype='int')
