@@ -214,7 +214,8 @@ def crop_messages(
     not_eosed = (
         torch.unsqueeze(
             torch.arange(0, symbols.size(1)),
-            dim=0).expand(symbols.size()[:2]).to(symbols.device)
+            dim=0,
+        ).expand(symbols.size()[:2]).to(symbols.device)
         < torch.unsqueeze(lengths - 1, dim=-1).expand(symbols.size()[:2])
     )
 
@@ -270,7 +271,7 @@ class Dump:
         self.lengths = lengths
 
         # select receiver output at 1st EOS
-        idx = (torch.arange(len(messages)), lengths - 1)
+        idx = (torch.arange(len(messages), device=device), lengths - 1)
         self.receiver_outputs = logs.receiver_output[idx] \
             if opts.mode == 'rf' \
             else logs.receiver_output.argmax(-1)[idx]
@@ -487,7 +488,7 @@ class Dump:
                 'unique_samples_per_target_cat': None,
                 'unique_cats_per_msg': None,
                 'average_length': (
-                    torch.arange(probs.size(1)) * length_probs
+                    torch.arange(probs.size(1)) * length_probs.cpu()
                 ).sum(),  # does not include additional EOS
                 'actual_vocab_size': torch.unique(messages).numel(),
                 'accuracy': (r_outputs == labels).float().mean(),

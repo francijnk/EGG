@@ -1,6 +1,6 @@
 # wandb sweep --project cezary_test IMG_SWEEP.YAML
 program: train.py
-name: img
+name: visa
 method: bayes
 metric:
   goal: maximize
@@ -15,33 +15,28 @@ parameters:
   temperature_lr:
     min: !!float 1e-6
     max: !!float 1e-3
-
 early_terminate:
   type: hyperband
-  eta: 3
+  eta: 2
   s: 3
-  min_iter: 3
+  min_iter: 2
 
 command:  
 - python3
 - -m 
 - ancm.train
-- --embedding=16
-- --image_input
-- --temperature_max=3
 - --results_folder=runs/
-- --data_path=ancm/data/input_data/obverter-5-160-64.npz
-- --warmup_steps=64
+- --data_path=ancm/data/input_data/visa-5-256.npz
 - --wandb_entity=koala_lab
 - --wandb_project=cezary_test
-- --random_seed=44
-- --sender_hidden=128
-- --receiver_hidden=128
+- --random_seed=42
+- --temperature=5
+- --sender_hidden=64
+- --receiver_hidden=64
+- --optim=rmsprop
 - --filename=sweep
 - --max_len=5
-- --n_epochs=30
-- --warmup_steps=64
-- --length_cost=0.01
-- --optim=rmsprop
+- --n_epochs=25
 - --batch_size=32
+- --length_cost=0.01
 - ${args_no_boolean_flags}

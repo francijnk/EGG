@@ -1,4 +1,5 @@
 old_scripts/
+ancm/remove_later/
 ancm/jobs/job_outputs/
 local_runs/
 wandb/
