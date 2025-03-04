@@ -508,7 +508,7 @@ class Dump:
                     if 'cat' in k:
                         del results[key][k]
 
-                results[key]['topsim'] = compute_top_sim(t_attributes, messages),
+                results[key]['topsim'] = compute_top_sim(t_attributes, messages)
                 mi_attr = compute_mi(probs, t_attributes, entropy)
                 results[key]['entropy_attr'] = mi_attr['entropy_attr']
                 for i, name in enumerate(attr_names):
