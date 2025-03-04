@@ -17,7 +17,7 @@ class Channel(nn.Module, metaclass=ABCMeta):
         self.p = torch.tensor(error_prob, device=device, requires_grad=False)
         self.vocab_size = vocab_size
         self.max_len = max_len
-        self.generator = torch.Generator()
+        self.generator = torch.Generator(device=device)
         self.generator.manual_seed(seed)
         self.device = device
 
