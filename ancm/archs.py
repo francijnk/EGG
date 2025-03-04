@@ -4,9 +4,6 @@ import torch.nn.functional as F
 from torch.distributions.utils import logits_to_probs
 from torch.distributions import RelaxedOneHotCategorical, OneHotCategorical
 
-
-from typing import Callable, Optional
-
 from ancm.channels import (
     NoChannel,
     ErasureChannel,
@@ -14,6 +11,14 @@ from ancm.channels import (
     SymmetricChannel,
 )
 from ancm.interaction import LoggingStrategy
+
+from typing import Optional
+
+
+def loss(_sender_input, _message, _receiver_input, receiver_output, _labels, _aux_input):
+    cross_entropy = F.cross_entropy(receiver_output, _labels, reduction="none")
+    accuracy = (receiver_output.detach().argmax(dim=-1) == _labels).float()
+    return cross_entropy, {'accuracy': accuracy * 100}
 
 
 class SeeingConvNet(nn.Module):
@@ -48,7 +53,7 @@ class SeeingConvNet(nn.Module):
             nn.BatchNorm2d(n_filters * 2),
             nn.ReLU(),
         )
-        # self.out_features = ((input_shape - k + 2 * p) // s + 1) ** 2
+
         self.out_features = (
             (
                 input_shape + 2 * kwargs['padding'] - 1
@@ -72,96 +77,48 @@ class SeeingConvNet(nn.Module):
             return self.fc(x)
 
 
-class Sender(nn.Module):
-    def __init__(self, n_features, n_hidden, image_input=False):
-        super(Sender, self).__init__()
-        if image_input:
-            self.encoder = SeeingConvNet(64, n_hidden)
-        else:
-            self.encoder = nn.Linear(n_features, n_hidden)
-
-    def forward(self, x, _aux_input=None):
-        return self.encoder(x).tanh()
-
-
-class Receiver(nn.Module):
-    def __init__(self, n_features, linear_units, image_input=False):
-        super(Receiver, self).__init__()
-        input_encoder = SeeingConvNet if image_input else nn.Linear
-        self.encoder = input_encoder(n_features, linear_units)
-        self.logsoft = nn.LogSoftmax(dim=1)
-
-    def forward(self, encoded_message, _input, _aux_input=None):
-        embedded_input = self.encoder(_input).tanh()
-        energies = torch.matmul(embedded_input, encoded_message.unsqueeze(-1))
-        energies = energies.squeeze()
-        return self.logsoft(energies)
-
-
-def loss(_sender_input, _message, _receiver_input, receiver_output, _labels, _aux_input):
-    cross_entropy = F.cross_entropy(receiver_output, _labels, reduction="none")
-    accuracy = (receiver_output.detach().argmax(dim=-1) == _labels).float()
-
-    return cross_entropy, {'accuracy': accuracy * 100}
-
-
 class RnnSenderGS(nn.Module):
     """
-    Gumbel Softmax wrapper for Sender that outputs variable-length sequence of symbols.
-    The user-defined `agent` takes an input and outputs an initial hidden state vector for the RNN cell;
-    `RnnSenderGS` then unrolls this RNN for the `max_len` symbols. The end-of-sequence logic
-    is supposed to be handled by the game implementation. Supports vanilla RNN ('rnn'), GRU ('gru'), and LSTM ('lstm')
-    cells.
+    Gumbel Softmax wrapper for Sender that outputs variable-length sequence of
+    symbols. The user-defined `agent` takes an input and outputs an initial
+    hidden state vector for the RNN cell; `RnnSenderGS` then unrolls this RNN
+    for the `max_len` symbols. The end-of-sequence logic is supposed to be
+    handled by the game implementation. Supports vanilla RNN ('rnn'), GRU
+    ('gru'), and LSTM ('lstm') cells.
 
-    >>> class Sender(nn.Module):
-    ...     def __init__(self):
-    ...         super().__init__()
-    ...         self.fc_out = nn.Linear(10, 5) #  input size 10, the RNN's hidden size is 5
-    ...     def forward(self, x, _aux_input=None):
-    ...         return self.fc_out(x)
-    >>> agent = Sender()
-    >>> agent = RnnSenderGS(agent, vocab_size=2, embed_dim=10, hidden_size=5, max_len=3, temperature=1.0, cell='lstm')
-    >>> output = agent(torch.ones((1, 10)))
-    >>> output.size()  # batch size x max_len+1 x vocab_size
-    torch.Size([1, 4, 2])
+    Based on the implementation from `egg/core/gs_wrappers.py`.
     """
 
     def __init__(
         self,
-        agent: nn.Module,
         vocab_size: int,
         embed_dim: int,
+        n_features: int,
         hidden_size: int,
         max_len: int,
-        temperature: float,
-        temperature_minimum: Optional[float] = None,
-        temperature_lr: Optional[float] = None,
+        temperature_max: float,
+        image_input: bool,
         cell: str = "lstm",
     ):
 
         super(RnnSenderGS, self).__init__()
-        self.agent = agent
 
         assert max_len >= 1, "Cannot have a max_len below 1"
         self.max_len = max_len
+
+        input_encoder = SeeingConvNet if image_input else nn.Linear
+        self.encoder = input_encoder(n_features, hidden_size)
         self.hidden_to_output = nn.Linear(hidden_size, vocab_size)
         self.embedding = nn.Linear(vocab_size, embed_dim)
         self.sos_embedding = nn.Parameter(torch.zeros(embed_dim))
         self.embed_dim = embed_dim
         self.vocab_size = vocab_size
-        self.temperature = temperature
-        self.temperature_minimum = temperature_minimum \
-            if temperature_minimum is not None else 0
 
-        if temperature_lr is None:
-            self.hidden_to_inv_temperature = None
-        else:
-            # if temperature is trainable, self.temperature
-            # represents its maximum value
-            self.hidden_to_inv_temperature = torch.nn.Sequential(
-                nn.Linear(hidden_size, 1),
-                nn.Softplus(1),
-            )
+        self.temperature_max = temperature_max
+        self.hidden_to_inv_temperature = nn.Sequential(
+            nn.Linear(hidden_size, 1, bias=False),
+            nn.Softplus(1),
+        )
 
         cells = {
             'rnn': nn.RNNCell,
@@ -177,14 +134,9 @@ class RnnSenderGS(nn.Module):
         self.reset_parameters()
 
     def hidden_to_temperature(self, hidden: torch.Tensor):
-        if self.hidden_to_inv_temperature is None:
-            return torch.tensor([self.temperature])
-
         # predict inverse temperature and scale it
-        tau_min = self.temperature_minimum
-        tau_max = self.temperature
-        tau_0 = (tau_max - tau_min) ** -1
-        return tau_min + 1 / (self.hidden_to_inv_temperature(hidden) + tau_0)
+        tau_0 = self.temperature_max ** -1
+        return (self.hidden_to_inv_temperature(hidden) + tau_0) ** -1
 
     def gumbel_softmax_sample(self, logits: torch.Tensor, temperature: float):
         """
@@ -212,7 +164,7 @@ class RnnSenderGS(nn.Module):
         nn.init.normal_(self.sos_embedding, 0.0, 0.01)
 
     def forward(self, x, aux_input=None):
-        prev_hidden = self.agent(x, aux_input)
+        prev_hidden = self.encoder(x).tanh()
         prev_c = torch.zeros_like(prev_hidden)  # only for LSTM
 
         e_t = torch.stack([self.sos_embedding] * prev_hidden.size(0))
@@ -299,12 +251,7 @@ class RnnReceiverGS(nn.Module):
             outputs.append(self.logsoft(energies.squeeze()))
             prev_hidden = h_t
 
-        outputs = torch.stack(outputs).permute(1, 0, 2)
-
-        return outputs
-
-
-step = 0
+        return torch.stack(outputs, dim=1)
 
 
 class SenderReceiverRnnGS(nn.Module):
@@ -312,12 +259,11 @@ class SenderReceiverRnnGS(nn.Module):
         self,
         sender: nn.Module,
         receiver: nn.Module,
-        loss: Callable,
         vocab_size: int,
         channel_type: Optional[str],
         error_prob: float = 0.0,
         length_cost: float = 0.0,
-        warmup_steps: int = 300,
+        warmup_steps: int = 0,
         device: torch.device = torch.device("cpu"),
         seed: int = 42,
     ):
@@ -333,14 +279,13 @@ class SenderReceiverRnnGS(nn.Module):
         self.receiver = receiver
         self.loss = loss
         self.length_cost = length_cost
-        self.warmup_steps = warmup_steps  # loss cost is not applied on warmup
         self.channel = channel_types[channel_type](
             error_prob, sender.max_len, vocab_size, device, seed,
         )
-
+        self.warmup = iter(True for _ in range(warmup_steps))
 
     def forward(self, sender_input, labels, receiver_input, aux_input):
-        global step
+        warmup = next(self.warmup, False)
 
         sender_output = self.sender(sender_input, aux_input)
         temperatures = sender_output[-1]
@@ -410,34 +355,41 @@ class SenderReceiverRnnGS(nn.Module):
 
             z += add_mask
             loss += step_loss * add_mask
-            if step > self.warmup_steps:
+            if warmup:
                 loss += self.length_cost * step * add_mask
             length += add_mask.detach() * (1 + step)
             length_nn += add_mask_nn * (1 + step)
 
             # aggregate aux info
             for name, value in step_aux.items():
-                aux_info[name] = value * add_mask + aux_info.get(name, 0)
-            aux_info['accuracy_nn'] = accuracy_nn[:, step] * add_mask_nn \
+                aux_info[name] = (
+                    value * add_mask.detach() + aux_info.get(name, 0)
+                )
+            aux_info['accuracy_nn'] = (
+                accuracy_nn[:, step] * add_mask_nn.detach()
                 + aux_info.get('accuracy_nn', 0)
+            )
 
-            if temperatures.dim() == 2:  # trainable temperature
-                tau = temperatures[:, step] \
-                    if step < temperatures.size(1) else temperatures[:, -1]
-                aux_info['temperature'] = tau * add_mask \
-                    + aux_info.get('temperature', 0)
-                aux_info['temperature_nn'] = tau * add_mask_nn \
-                    + aux_info.get('temperature_nn', 0)
+            # aggregate temperature weighted by eos probs without noise
+            # (this only matters for the deletion channel)
+            step_temperature = (
+                temperatures[:, step] if step < temperatures.size(1)
+                else temperatures[:, -1]
+            ).detach()
+            aux_info['temperature'] = (
+                step_temperature * add_mask_nn.detach()
+                + aux_info.get('temperature', 0)
+            )
 
             not_eosed_before = not_eosed_before * (1 - message[:, step, 0])
-            not_eosed_before_nn *= 1 - message_nn[:, step, 0]
+            not_eosed_before_nn *= 1 - message_nn[:, step, 0].detach()
 
         # the remainder of the probability mass
         z += not_eosed_before
         loss += step_loss * not_eosed_before
-        if self.warmup_steps < step:
+        if warmup:
             loss += self.length_cost * step * not_eosed_before
-        length += (step + 1) * not_eosed_before
+        length += (step + 1) * not_eosed_before.detach()
         length_nn += (step + 1) * not_eosed_before_nn
 
         assert z.allclose(
@@ -445,16 +397,13 @@ class SenderReceiverRnnGS(nn.Module):
         ), f"lost probability mass, {z.min()}, {z.max()}"
 
         for name, value in step_aux.items():
-            aux_info[name] = value * not_eosed_before + aux_info.get(name, 0.0)
+            aux_info[name] = (
+                value * not_eosed_before.detach() + aux_info.get(name, 0.0)
+            )
+        aux_info["temperature"] += step_temperature * not_eosed_before_nn
 
-        if temperatures.dim() == 2:
-            aux_info["temperature"] += tau * not_eosed_before
-            aux_info["temperature_nn"] += tau * not_eosed_before_nn
-        else:
-            aux_info["temperature"] = temperatures[:1]
-
-        aux_info["length"] = length - 1
-        aux_info["length_nn"] = length_nn - 1
+        aux_info["length"] = (length - 1).detach()
+        aux_info["length_nn"] = (length_nn - 1).detach()
 
         interaction = LoggingStrategy().filtered_interaction(
             sender_input=sender_input,
@@ -471,7 +420,5 @@ class SenderReceiverRnnGS(nn.Module):
             receiver_output_nn=receiver_output_nn.detach(),
             aux=aux_info,
         )
-
-        step += 1
 
         return loss.mean(), interaction

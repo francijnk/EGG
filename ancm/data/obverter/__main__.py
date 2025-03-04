@@ -18,7 +18,23 @@ from ancm.data.obverter.render import (
 )
 
 
+np.set_printoptions(suppress=True, precision=5)
 current_dir = os.path.dirname(os.path.abspath(__file__))
+stopwords = {
+    'many', 'several', 'other', 'different',
+    'day', 'double', 'various', 'few', 'park',
+    'restaurant', 'colorful', 'full', 'birthday',
+    'stall', 'pretty', 'light', 'field', 'area', 'room',
+    'park', 'building', 'kitchen', 'bathroom', 'toilet',
+    'sky', 'group',
+}  # abstract properties, intangible objects, places etc
+synonyms = {
+    'little': 'small',
+}
+
+
+def path(*paths):
+    return os.path.join(current_dir, *paths)
 
 
 def parse_args():
@@ -29,12 +45,12 @@ def parse_args():
     parser.add_argument('--n_samples_test', type=int, default=30)
     parser.add_argument('--n_img', type=int, default=100)
     parser.add_argument('--resolution', type=int, default=64)
+    parser.add_argument('--p_same_shape', type=float, default=0)
+    parser.add_argument('--p_same_color', type=float, default=0)
+    parser.add_argument('--p_same_location', type=float, default=0)
+    parser.add_argument('--alpha', type=float, default=0.75)
     parser.add_argument('--seed', type=int, default=42)
-    parser.add_argument('--p_same_shape', type=float, default=0.1)
-    parser.add_argument('--p_same_color', type=float, default=0.1)
-    parser.add_argument('--p_same_location', type=float, default=0.1)
-    args = parser.parse_args()
-    return args
+    return parser.parse_args()
 
 
 def load_image(shape, color, x=None, y=None, rotation=None, idx=None, resolution=128):
@@ -99,9 +115,9 @@ def load_image(shape, color, x=None, y=None, rotation=None, idx=None, resolution
     return image, (obj_type, color, int(xpos), int(ypos), int(rotation))
 
 
-def get_select_fn(p_same_shape=0, p_same_color=0, p_same_location=0):
+def get_select_random(p_same_shape=0, p_same_color=0, p_same_location=0):
 
-    def select_fn(used_combos, object_tuples, aux_tuples, mode=None):
+    def select_random(used_combos, object_tuples, aux_tuples, mode=None):
         # aux attributes are only used if there are not enough object tuples
         # that satisfy the criteria
         # shape, color, xpos, ypos, rotation = attributes
@@ -159,11 +175,10 @@ def get_select_fn(p_same_shape=0, p_same_color=0, p_same_location=0):
         d_rotation = None
 
         combination = (d_shape, d_color, d_xpos, d_ypos, d_rotation)
-        used_combos.append(combination)
 
-        return combination, used_combos, mode
+        return combination, used_combos, mode, None
 
-    return select_fn
+    return select_random
 
 
 def export_input_data(object_tuples, args, select_fn, n_samples, aux_tuples=None):
@@ -178,6 +193,9 @@ def export_input_data(object_tuples, args, select_fn, n_samples, aux_tuples=None
     attributes = defaultdict(lambda: np.empty(size, dtype=np.int64))
     sample_features = []
 
+    entropy_distr_targets = defaultdict(list)
+    shared_attributes = {k: [] for k in keys}
+
     def map_shape_color(attr, key):
         if key == 'shape':
             return object_types.index(attr)
@@ -186,11 +204,8 @@ def export_input_data(object_tuples, args, select_fn, n_samples, aux_tuples=None
         else:
             return attr
 
-    # n_same_shape = int(0.1 * n_samples)
-    # n_same_color = int(0.1 * n_samples)
-    # n_same_location = int(0.2 * n_samples)
-
     for tuple_i, (shape, color) in tqdm(enumerate(object_tuples), total=len(object_tuples)):
+        # H(D_1, ..., D_k | T = target_i)
         for sample_j in range(n_samples):
             idx = tuple_i * n_samples + sample_j
             image_idx = sample_j % args.n_img
@@ -209,12 +224,13 @@ def export_input_data(object_tuples, args, select_fn, n_samples, aux_tuples=None
                 attributes[key][idx, target_pos] = \
                     map_shape_color(target_attributes[k], key)
 
-            used_combos, mode = [target_attributes], None
+            used_combos, mode, entropy_distr = [target_attributes], None, 0
             for distr_k in range(n_distractors):
-                d_attributes, used_combos, mode = \
+                d_attributes, used_combos, mode, d_entropy = \
                     select_fn(used_combos, object_tuples, aux_tuples, mode)
                 d_image, d_attributes = \
                     load_image(*d_attributes, resolution=args.resolution)
+                used_combos.append(d_attributes)
                 d_pos = distractor_pos[distr_k]
 
                 sample[d_pos] = d_image
@@ -223,9 +239,19 @@ def export_input_data(object_tuples, args, select_fn, n_samples, aux_tuples=None
                         map_shape_color(d_attributes[key_k], key)
 
             sample_features.append(sample.reshape(1, *sample.shape))
+            entropy_distr_targets[target_attributes[:2]].append(entropy_distr)
+            for k, key in enumerate(keys):
+                shared_attributes[key].append(sum(
+                    1 for c in used_combos[1:] if c[k] == target_attributes[k]
+                ))
+
+    for k, v in shared_attributes.items():
+        print(
+            f'Avg number of distractors sharing {k} with '
+            'the target: ', np.round(np.mean(v), 2)
+        )
 
     input_data = np.vstack(sample_features)
-
     attributes = np.array(
         tuple(array for array in attributes.values()),
         dtype=[(key, np.int64, size) for key in keys],
@@ -258,37 +284,50 @@ if __name__ == '__main__':
 
     render_scenes(args)
 
-    select_fn = get_select_fn(
-        args.p_same_shape,
-        args.p_same_color,
-        args.p_same_location
-    )
-
     all_objects = list(itertools.product(object_types, colors))
     train_objects, test_objects = train_test_split(all_objects, test_size=0.25)
+    select_fn = get_select_random(
+        args.p_same_shape,
+        args.p_same_color,
+        args.p_same_location,
+    )
 
+    print('\nTrain')
     train, train_attr, train_targets, train_mapping = \
-        export_input_data(train_objects, args, select_fn, args.n_samples_train)
-    eval_train, eval_train_attr, eval_train_targets, eval_train_mapping = \
-        export_input_data(train_objects, args, select_fn, args.n_samples_train_eval)
-    eval_test, eval_test_attr, eval_test_targets, eval_test_mapping = \
-        export_input_data(test_objects, args, select_fn, args.n_samples_test, train_objects)
+        export_input_data(train_objects, args, select_fn, args.n_samples_train, None)
 
+    print('\nEval (train)')
+    eval_train, eval_train_attr, eval_train_targets, eval_train_mapping = \
+        export_input_data(train_objects, args, select_fn, args.n_samples_train_eval, None)
+
+    print('\nEval (test)')
+    eval_test, eval_test_attr, eval_test_targets, eval_test_mapping = \
+        export_input_data(test_objects, args, select_fn, args.n_samples_test, None)
+
+    train_shapes = len({t[0] for t in train_objects})
+    train_colors = len({t[1] for t in train_objects})
+
+    print('')
     print('Number of shapes:', len(object_types))
-    print('Number of colors:', len(colors.keys()))
+    print('Number of colors:', len(colors.keys()), '\n')
+    print('Number of shapes in the train set:', train_shapes)
+    print('Number of colors in the train set:', train_colors, '\n')
     print('Unique tuples in the train set:', len(train_objects))
-    print('Unique tuples in the test set:', len(test_objects))
+    print('Unique tuples in the test set:', len(test_objects), '\n')
     print('Train samples:', len(train))
     print('Eval samples (train):', len(eval_train))
-    print('Eval samples (test):', len(eval_test))
+    print('Eval samples (test):', len(eval_test), '\n')
 
-    fname = f'obverter-{args.n_distractors + 1}-{args.n_samples_train}-' \
-        f'{args.resolution}.npz'
+    os.makedirs(path('../input_data/'), exist_ok=True)
+    fname = f'obverter-{args.n_distractors + 1}-' \
+        f'{args.n_samples_train}-{args.resolution}.npz'
     npz_fpath = os.path.join(
         current_dir, '..', 'input_data', fname)
 
+    print(f'data saved to .../data/input_data/{fname}')
+
     np.savez_compressed(
-        npz_fpath,
+        path('..', 'input_data', fname),
         train=train,
         train_targets=train_targets,
         train_attributes=train_attr,

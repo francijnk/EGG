@@ -25,8 +25,6 @@ from ancm.util import (
     is_jsonable,
 )
 from ancm.archs import (
-    loss,
-    Sender, Receiver,
     RnnSenderGS,
     RnnReceiverGS,
     SenderReceiverRnnGS,
@@ -108,7 +106,7 @@ def get_params(params):
         help="Optimizer to use {adam, rmsprop} (default: rmsprop)"
     )
     parser.add_argument(
-        "--warmup_steps", type=int, default=300,
+        "--warmup_steps", type=int, default=0,
         help="Number of initial training steps, during which length cost is "
         "not applied (default: 300)"
     )
@@ -122,22 +120,13 @@ def get_params(params):
     )
 
     parser.add_argument(
-        "--temperature", type=float, default=1.0,
-        help="GS temperature for the sender; if temperature_lr is specified, "
-        "the value is used as the maximum temperature (default: 1.0)",
-    )
-    parser.add_argument(
         "--temperature_lr", type=float, default=None,
-        help="Temperature LR. Unless a value is specified, temperature is not"
-        " a trainable parameter (default: None)",
+        help="Temperature LR to be used with predicted/trainable temperature"
     )
     parser.add_argument(
-        "--temperature_decay", default=None, type=float,
-        help="Factor, by which the temperature is decreased every epoch.",
-    )
-    parser.add_argument(
-        "--temperature_minimum", default=None, type=float,
-        help="Minimum temperature value."
+        "--temperature_max", default=3, type=float,
+        help="Maximum temperature value to be used with predicted "
+        "temperature (default: 3)"
     )
 
     # W&B
@@ -190,29 +179,17 @@ def main(params):
     vocab_size = opts.vocab_size + 1 \
         if opts.channel == 'erasure' else opts.vocab_size
 
-    _sender = Sender(
-        n_features=data_handler.n_features,
-        n_hidden=opts.sender_hidden,
-        image_input=opts.image_input,
-    )
-    # _receiver = Receiver(
-    #     n_features=data_handler.n_features,
-    #     linear_units=opts.receiver_hidden,
-    #     image_input=opts.image_input,
-    # )
     sender = RnnSenderGS(
-        _sender,
         opts.vocab_size,
         opts.embedding,
+        data_handler.n_features,
         opts.sender_hidden,
         opts.max_len,
-        opts.temperature,
-        opts.temperature_minimum,
-        opts.temperature_lr,
+        opts.temperature_max,
+        opts.image_input,
         opts.sender_cell,
     )
     receiver = RnnReceiverGS(
-        # _receiver,
         vocab_size,
         opts.embedding,
         opts.receiver_hidden,
@@ -222,7 +199,6 @@ def main(params):
     )
     game = SenderReceiverRnnGS(
         sender, receiver,
-        loss=loss,
         vocab_size=opts.vocab_size,
         channel_type=opts.channel,
         error_prob=opts.error_prob,
@@ -242,16 +218,6 @@ def main(params):
             test_data_len=len(eval_test_data),
         ),
     ]
-
-    if opts.mode == "gs" and not opts.temperature_lr \
-            and opts.temperature_decay is not None:
-        callbacks.append(
-            core.TemperatureUpdater(
-                agent=sender,
-                decay=opts.temperature_decay,
-                minimum=opts.temperature_minimum,
-            ),
-        )
 
     trainer = Trainer(
         game=game,
@@ -296,7 +262,7 @@ def main(params):
 
     # save training time
     training_time = timedelta(seconds=t_end - t_start)
-    evaluation_time = timedelta(seconds=time.monotonic() - t_start)
+    evaluation_time = timedelta(seconds=time.monotonic() - t_end)
 
     sec_per_epoch = training_time.seconds / opts.n_epochs
     minutes, seconds = divmod(sec_per_epoch, 60)

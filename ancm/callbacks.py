@@ -22,8 +22,6 @@ from ancm.eval import (
     compute_mi,
     compute_max_rep,
     compute_top_sim,
-    compute_posdis,
-    compute_bosdis,
 )
 from ancm.channels import Channel, NoChannel
 from ancm.util import crop_messages
@@ -379,7 +377,7 @@ class TrainingEvaluationCallback(Callback):
         self.channel = channel
         self.error_prob = opts.error_prob
         self.image_input = opts.image_input
-        self.max_samples = 20000
+        self.max_samples = 10000
 
         self.train_probs = None
         self.train_probs_nn = None
@@ -411,7 +409,7 @@ class TrainingEvaluationCallback(Callback):
         messages = crop_messages(logs.message) \
             if logs.message.dim() == 2 \
             else crop_messages(logs.message.argmax(-1))
-        vocab_size = logs.probs.size(-1)  # includes additional symbols
+        # vocab_size = logs.probs.size(-1)  # includes additional symbols
 
         attr_keys = [k for k in logs.aux_input if k.startswith('target')]
         attr = torch.cat([logs.aux_input[k] for k in attr_keys], dim=1)
@@ -421,29 +419,12 @@ class TrainingEvaluationCallback(Callback):
         logs.aux['lexicon_size'] = len(unique_msg)
         logs.aux['actual_vocab_size'] = torch.unique(messages).numel()
 
-        split_size = 1000
-        entropy, length_probs = message_entropy(
-            trim(logs.probs),
-            split_size)
+        entropy, length_probs = message_entropy(trim(logs.probs))
         max_entropy = self.channel.max_message_entropy(length_probs, True)
         logs.aux['entropy_msg_as_a_whole'] = \
             intervention.entropy(categorized_msg)
         logs.aux['entropy_msg'] = entropy
         logs.aux['entropy_max'] = max_entropy
-        # if self.image_input:
-        #     shape = self.get_attribute(logs.aux_input, 'shape')
-        #     color = self.get_attribute(logs.aux_input, 'color')
-        #     stacked = torch.stack([shape, color], -1)
-        #     _, categorized = torch.unique(stacked, -1, return_inverse=True)
-        #    print(categorized.shape)
-        #    logs.aux['entropy_min'] = min_message_entropy(
-        #        logs.receiver_input, logs.labels, categorized)[0]
-        # else:
-        #     logs.aux['entropy_min'] = min_message_entropy(
-        #        logs.receiver_input, logs.labels)[0]
-        #    cat = self.get_attribute(logs.aux_input, 'category')
-        #    logs.aux['entropy_min_cat'] = min_message_entropy(
-        #        logs.receiver_input, logs.labels, cat)[0]
         logs.aux['max_rep'] = compute_max_rep(messages)
         logs.aux['redundancy'] = 1 - entropy / max_entropy
         if not training:
@@ -459,13 +440,8 @@ class TrainingEvaluationCallback(Callback):
             logs.aux['topsim'] = compute_top_sim(
                 trim(attr, True),
                 trim(messages, True))
-            logs.aux['posdis'] = compute_posdis(
-                trim(attr, True), trim(messages, True), vocab_size)
-            logs.aux['bosdis'] = compute_bosdis(
-                trim(attr, True), trim(messages, True), vocab_size)
 
-            mi_attr = compute_mi(
-                trim(logs.probs), trim(attr), entropy, split_size)
+            mi_attr = compute_mi(trim(logs.probs), trim(attr), entropy)
             logs.aux['entropy_attr'] = mi_attr['entropy_attr']
             for i, key in enumerate(attr_keys):
                 key = key.replace('target_', '')
@@ -487,7 +463,7 @@ class TrainingEvaluationCallback(Callback):
                 in compute_mi(
                     trim(logs.probs),
                     trim(input_cat),
-                    entropy, split_size,
+                    entropy,
                 ).items()
             })
             logs.aux.update({
@@ -495,7 +471,7 @@ class TrainingEvaluationCallback(Callback):
                 in compute_mi(
                     trim(logs.probs),
                     trim(attr),
-                    entropy, split_size,
+                    entropy,
                 ).items()
             })
 
@@ -512,9 +488,7 @@ class TrainingEvaluationCallback(Callback):
             logs.aux['lexicon_size_nn'] = len(unique_msg)
             logs.aux['actual_vocab_size_nn'] = torch.unique(messages).numel()
 
-            entropy, length_probs = message_entropy(
-                trim(logs.probs_nn),
-                split_size)
+            entropy, length_probs = message_entropy(trim(logs.probs_nn))
             max_entropy = self.channel.max_message_entropy(length_probs, False)
             logs.aux['max_rep_nn'] = compute_max_rep(messages)
             logs.aux['entropy_whole_msg_nn'] = \
@@ -541,21 +515,14 @@ class TrainingEvaluationCallback(Callback):
                         for k, v in compute_mi(
                             trim(logs.probs_nn),
                             trim(attr),
-                            entropy, split_size
+                            entropy,
                         ).items() if 'attr_dim' in k
                     })
 
                 logs.aux['topsim_nn'] = compute_top_sim(
                     trim(attr, True),
-                    trim(messages, True))
-                logs.aux['posdis_nn'] = compute_posdis(
-                    trim(attr, True),
                     trim(messages, True),
-                    self.vocab_size)
-                logs.aux['bosdis_nn'] = compute_bosdis(
-                    trim(attr, True),
-                    trim(messages, True),
-                    self.vocab_size)
+                )
             else:
                 logs.aux.update({
                     k.replace('attr', 'input_nn'): v for k, v in
@@ -563,8 +530,7 @@ class TrainingEvaluationCallback(Callback):
                         trim(logs.probs_nn),
                         trim(input_cat),
                         entropy,
-                        split_size).items()
-                    if k != 'entropy_msg'
+                    ).items() if k != 'entropy_msg'
                 })
                 logs.aux.update({
                     k.replace('attr', 'cat_nn'): v

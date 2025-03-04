@@ -95,6 +95,7 @@ def message_entropy(
 
     symbol_entropies = torch.zeros_like(probs[0, :, 0])
     eos_probs = torch.ones_like(probs[0, :, 0])
+    eos_logits = torch.ones_like(probs[0, :, 0])
     p_not_eosed = 1
 
     # iterate over all symbols except for the appended EOS
@@ -105,18 +106,23 @@ def message_entropy(
             log_prob = symbol_logits.logsumexp(0)
             log_prob -= log_prob.logsumexp(0)  # normalize
             log2_prob = torch.clamp(log_prob / np.log(2), min=min_real)
-            prob = probs[:, step].sum(0) / probs.size(0)
-
+            prob = logits_to_probs(log_prob)
+            # prob = probs[:, step].sum(0) / probs.size(0)
             symbol_entropies[0] = torch.dot(-prob, log2_prob)
             eos_probs[0] = prob[0]
             p_not_eosed *= 1 - prob[0]
+            # print('ZERO', p_not_eosed, torch.allclose(p_not_eosed, torch.zeros_like(p_not_eosed)))
+            # print('ZERO:0', prob)
             continue
 
+        check = False
+        # print("STEP", step, "not eosed:", p_not_eosed)
         first_symbol = 0 if order is None else max(0, step - order)
         prev_logits = logits[:, first_symbol:step, 1:]
 
         # iterate over all possible non-EOS prefixes of the symbol
         prefix_logits, cond_entropy, cond_p_eos = [], [], []
+        cond_eos_logits = []
         for idx in get_prefix_indices(prev_logits, split_size):
             # log-probs of previous symbols being equal to a given prefix
             p_logits = aggregate_prefix_logits(prev_logits, idx)
@@ -130,21 +136,24 @@ def message_entropy(
             c_log2_prob = torch.clamp(c_logits / np.log(2), min=min_real)
             c_probs = logits_to_probs(c_logits)
             c_entropy = torch.linalg.vecdot(-c_probs, c_log2_prob)
-            # threshold = 1e-7
-            # if torch.any(c_probs < threshold):
-            #     # mask = c_probs < threshold
-            #     # print('')
-            #     # print('prob', c_probs[mask])
-            #     # print('log2', c_log2_prob[mask])
-            #     # print('entr', c_entropy[mask])
-            #     c_probs = torch.where(c_probs > threshold, c_probs, 0.)
-            #     c_entropy = torch.linalg.vecdot(-c_probs, c_log2_prob)
-            #     # print('prob', c_probs[mask])
-            #     # print('log2', c_log2_prob[mask])
-            #     # print('entr', c_entropy[mask])
+            threshold = 1e-6
+            if torch.any(p_logits.logsumexp(0).isnan()):  # probs < threshold):
+                # mask = c_probs < threshold
+                # mask = p_logits.logsumexp(0).isnan()
+                mask = p_logits.isinf()
+                print('')
+                print('prob', c_probs[mask])
+                print('log2', c_log2_prob[mask])
+                # print('entr', c_entropy[mask])
+                c_probs = torch.where(c_probs > threshold, c_probs, 0.)
+                c_entropy = torch.linalg.vecdot(-c_probs, c_log2_prob)
+                print('prob', c_probs[mask])
+                # print('log2', c_log2_prob[mask])
+                # print('entr', c_entropy[mask])
 
             prefix_logits.append(p_logits.logsumexp(0))
             cond_entropy.append(c_entropy)
+            cond_eos_logits.append(c_logits[:, 0])
             cond_p_eos.append(c_probs[:, 0])
 
         prefix_probs = logits_to_probs(torch.cat(prefix_logits)) * p_not_eosed
@@ -152,15 +161,50 @@ def message_entropy(
         cond_p_eos = torch.cat(cond_p_eos)
 
         symbol_entropies[step] = torch.dot(prefix_probs, cond_entropy)
+        if symbol_entropies[step].isnan():
+            mult = prefix_probs * cond_entropy
+            mask = (mult).isnan()
+            prefix_logits = torch.cat(prefix_logits)
+            print('prefix pro', prefix_probs[mask])
+            mask = torch.logical_or(prefix_logits.isnan(), prefix_logits.isinf())
+            print('prefix log', prefix_logits[mask])
+            print('p_not_eosed', p_not_eosed)
+            raise ValueError
         p_eos = torch.dot(prefix_probs, cond_p_eos) / p_not_eosed
-        eos_probs[step] = p_eos
+        if False:
+            mask = torch.logical_or(
+                (prefix_probs * cond_p_eos).isnan(),
+                (prefix_probs * cond_p_eos).isinf())
+            print('cond p eos', cond_p_eos[mask])
+            print('pref', prefix_probs[mask])
+            print("P eos", p_eos)
+
+        if not p_eos.isnan():  # prevents nan values for eos probs close to 1
+            eos_probs[step] = p_eos
+        else:
+            print('EOS REPLACED')
+            check = True
+
         p_not_eosed *= 1 - p_eos
 
     entropy = symbol_entropies.sum()
+    # not_eosed_logits = torch.logcumsumexp(
+    #     k
+    #     , dim=0,
+    # )
+    # length_logits = torch.cat([
+    #     eos_logits[:1],
+    #     eos_logits[1:] * torch.logcumsumexp(torch.logsumexp(torch.e, ) , dim=0)
+    # ])
     length_probs = torch.cat([
         eos_probs[:1],
         eos_probs[1:] * torch.cumprod(1 - eos_probs[:-1], dim=0),
     ])
+    if torch.any(length_probs.isnan()):
+        print('EOS PROBS', eos_probs)
+
+    if check:
+        print('check', eos_probs, length_probs)
     return entropy, length_probs
 
 
@@ -195,7 +239,11 @@ def relative_message_entropy(
             log_q = step_logits_q.logsumexp(0)
             log_q -= log_q.logsumexp(0)  # normalize
             log2_q = torch.clamp(log_q / np.log(2), min=min_real)
-            p = probs_p[:, step].sum(0) / size_p[0]
+
+            log_p = step_logits_p.logsumexp(0)
+            log_p -= log_p.logsumexp(0)  # normalize
+            p = logits_to_probs(log_p.clamp(min=min_real))
+            # p = probs_p[:, step].sum(0) / size_p[0]
 
             symbol_kld[0] = torch.dot(-p, log2_q)
             p_not_eosed *= 1 - p[0]
@@ -217,7 +265,7 @@ def relative_message_entropy(
                 step_logits_p.unsqueeze(1) + prefix_logits_p.unsqueeze(-1), dim=0)
             c_logits_p -= c_logits_p.logsumexp(-1, keepdim=True)  # normalize
             c_log2_p = c_logits_p / np.log(2)
-            c_probs_p = logits_to_probs(c_logits_p)  # .exp()
+            c_probs_p = logits_to_probs(c_logits_p)
 
             c_logits_q = torch.logsumexp(
                 step_logits_q.unsqueeze(1) + prefix_logits_q.unsqueeze(-1), dim=0)
@@ -237,8 +285,16 @@ def relative_message_entropy(
         cond_p_eos = torch.cat(cond_p_eos)
 
         symbol_kld[step] = torch.dot(prefix_probs, cond_kld)
+        if symbol_kld[step].isnan():
+            print(
+                'step',
+                step, torch.any(prefix_probs.isnan()), torch.any(cond_kld.isnan()),
+                torch.any(cond_p_eos.isnan()), p_not_eosed.isnan(),
+            )
         p_eos = torch.dot(prefix_probs, cond_p_eos) / p_not_eosed
         p_not_eosed *= 1 - p_eos
+        if p_not_eosed.isnan():
+            print('eos step', p_eos)
 
     return symbol_kld.sum()
 
@@ -540,68 +596,4 @@ def compute_top_sim(attributes: torch.Tensor, messages: torch.Tensor) -> float:
                 lev_dists[i][j] = dist
                 lev_dists[j][i] = dist
 
-    rho = spearmanr(cos_sims, lev_dists, axis=None).statistic
-    return rho
-
-
-def compute_posdis(
-    sender_inputs: torch.Tensor,
-    messages: torch.Tensor,
-    receiver_vocab_size: Optional[int] = None,
-) -> float:
-    """
-    Computes PosDis.
-    """
-
-    gaps = torch.zeros(messages.size(1))
-    non_constant_positions = 0.0
-    for j in range(messages.size(1)):
-        symbol_mi = []
-
-        for i in range(sender_inputs.size(1)):
-            x, y = messages[:, j], sender_inputs[:, i]
-            y = sender_inputs[:, i]
-            H_j = intervention.entropy(y)
-            info = intervention.mutual_info(x, y)
-            symbol_mi.append(info)
-
-        symbol_mi.sort(reverse=True)
-
-        if H_j > 0.0:
-            gaps[j] = (symbol_mi[0] - symbol_mi[1]) / H_j
-            non_constant_positions += 1
-
-    score = gaps.sum() / non_constant_positions
-    return score.item()
-
-
-def histogram(messages: torch.Tensor, vocab_size: int) -> torch.Tensor:
-
-    # Handle messages with added noise
-    if vocab_size in messages:
-        vocab_size += 1
-
-    # Create a histogram with size [batch_size, vocab_size] initialized with 0s
-    histogram = torch.zeros(messages.size(0), vocab_size)
-
-    if messages.dim() > 2:
-        messages = messages.view(messages.size(0), -1)
-
-    # Count occurrences of each value in strings and store them in histogram
-    histogram.scatter_add_(
-        1, messages.long(), torch.ones_like(messages, dtype=torch.float)
-    )
-
-    return histogram
-
-
-def compute_bosdis(
-    sender_inputs: torch.Tensor,
-    messages: torch.Tensor,
-    vocab_size: int,
-) -> float:
-    """
-    Computes BosDis.
-    """
-    histograms = histogram(messages, vocab_size)
-    return compute_posdis(sender_inputs, histograms[:, 1:])
+    return spearmanr(cos_sims, lev_dists, axis=None).statistic

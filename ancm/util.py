@@ -15,8 +15,6 @@ from ancm.eval import (
     compute_symbol_removal_accuracy,
     compute_top_sim,
     compute_mi,
-    compute_posdis,
-    compute_bosdis,
 )
 from ancm.interaction import Interaction
 
@@ -33,39 +31,22 @@ class ObjectDataset(Dataset):
         obj_sets: np.ndarray,
         targets: np.ndarray,
         attributes: np.ndarray,
-        n_additional_targets: Optional[int] = 2,
         seed: int = 42
     ):
         n_objects = obj_sets.shape[1]
-        self.n_targets = 1 if n_additional_targets is None \
-            else 1 + n_additional_targets \
 
-        # save object sets
-        self.obj_sets = obj_sets
+        self.receiver_input = obj_sets
+        self.labels = targets
 
-        # get additional targets & save them as labels
-        if n_additional_targets is not None:
-            rng = np.random.default_rng(seed=seed)
-            candidates = np.tile(np.arange(n_objects), (len(obj_sets), 1))
-            candidates = candidates[candidates != targets.reshape(-1, 1)]
-            candidates = candidates.reshape(len(obj_sets), -1)
-            candidates = rng.permuted(candidates, axis=1)
-            additional_targets = candidates[:, :n_additional_targets]
-            target_pos = np.hstack([targets.reshape(-1, 1), additional_targets])
-        else:
-            target_pos = targets.reshape(-1, 1)
-
-        # save additional labels
-        self.labels = target_pos.reshape(-1, order='F')
-
-        # save attributes
-        obj_set = np.tile(np.arange(len(obj_sets)), self.n_targets)
+        # reformat aux attributes
+        obj_set = np.arange(len(obj_sets))
         distr_pos = np.tile(
             np.arange(n_objects),
-            (self.n_targets * len(obj_sets), 1))
-        distr_pos = distr_pos[distr_pos != target_pos.reshape(-1, 1)]
-        distr_pos = distr_pos.reshape(len(target_pos) * self.n_targets, -1)
-        col = np.hstack([target_pos.reshape(-1, 1), distr_pos])
+            (len(obj_sets), 1),
+        )
+        distr_pos = distr_pos[distr_pos != targets.reshape(-1, 1)]
+        distr_pos = distr_pos.reshape(len(targets), -1)
+        col = np.hstack([targets.reshape(-1, 1), distr_pos])
         row = np.tile(np.arange(len(col)), (col.shape[1], 1)).T
         attr_array = np.hstack([
             attributes[name][obj_set][row, col]
@@ -77,27 +58,13 @@ class ObjectDataset(Dataset):
             for item in [(f'target_{name}', np.int64)]
             + [(f'distr{i}_{name}', np.int64) for i in range(n_objects - 1)]
         ]
-        self.attributes = np.array(list(map(tuple, attr_array)), dtype=dtype)
-
-        # idx = len(obj_sets)
-        # x, y = 0, 10
-        # print('ATTRIBUTES CHECK')
-        # print(self.attributes[x:y])
-        # print(self.attributes[idx + x:idx + y])
-        # print(self.attributes[2 * idx + x : 2 * idx + y])
-        # print('LABELS CHECK')
-        # print(self.labels[x:y])
-        # print(self.labels[idx + x:idx + y])
-        # print(self.labels[2 * idx + x : 2 * idx + y])
+        self.aux_input = np.array(list(map(tuple, attr_array)), dtype=dtype)
 
     def __len__(self):
-        return len(self.obj_sets) * self.n_targets
+        return len(self.labels)
 
-    def __getitem__(self, idx):
-        obj_set = self.obj_sets[idx % len(self.obj_sets)]
-        label = self.labels[idx]
-        attributes = self.attributes[idx]
-        return obj_set, label, attributes
+    def __getitem__(self, key):
+        return self.receiver_input[key], self.labels[key], self.aux_input[key]
 
 
 class DataHandler:
@@ -206,7 +173,7 @@ def build_optimizer(game, opts):
     else:
         raise ValueError('Optimizer must be either RMSprop or Adam')
 
-    if opts.mode == 'rf':
+    if opts.temperature_lr is None:  # mode == 'rf':
         return optimizer([
             {"params": game.sender.parameters(), "lr": opts.sender_lr},
             {"params": game.receiver.parameters(), "lr": opts.receiver_lr},
@@ -220,8 +187,13 @@ def build_optimizer(game, opts):
             param for name, param in game.sender.named_parameters()
             if 'temperature' in name
         ]
+        # sender_params = [
+        #    param for param in game.sender.parameters()
+        #    if param is not game.sender.temperature
+        # ]
 
         return optimizer([
+            # {"params": game.sender.temperature, "lr": opts.temperature_lr},
             {"params": temperature_params, "lr": opts.temperature_lr},
             {"params": sender_params, "lr": opts.sender_lr},
             {"params": game.receiver.parameters(), "lr": opts.receiver_lr},
@@ -470,8 +442,8 @@ class Dump:
                 = self.get_tensors(key != 'no noise')
 
             # whether to include additional symbols
-            vocab_size = self.probs.size(-1) if key == 'noise' \
-                else opts.vocab_size
+            # vocab_size = self.probs.size(-1) if key == 'noise' \
+            #     else opts.vocab_size
 
             entropy, length_probs = message_entropy(probs)
             max_entropy = self.channel.max_message_entropy(
@@ -493,7 +465,11 @@ class Dump:
 
             unique_messages, categorized_messages = \
                 torch.unique(messages, dim=0, return_inverse=True)
-            n_uniq_targets = len(torch.unique(s_inputs, dim=0))
+            if opts.image_input:
+                pass
+                n_uniq_targets = len(torch.unique(t_attributes, dim=0))
+            else:
+                n_uniq_targets = len(torch.unique(s_inputs, dim=0))
             n_uniq_messages = len(unique_messages)
 
             results[key] = {
@@ -520,8 +496,6 @@ class Dump:
                 'max_rep': compute_max_rep(messages).mean().item(),
                 'redundancy': 1 - entropy / max_entropy,
                 'topsim': None,
-                'posdis': None,
-                'bosdis': None,
                 'entropy_msg': entropy,
                 'entropy_msg_as_a_whole':
                     intervention.entropy(categorized_messages),
@@ -534,12 +508,7 @@ class Dump:
                     if 'cat' in k:
                         del results[key][k]
 
-                results[key].update({
-                    'topsim': compute_top_sim(t_attributes, messages),
-                    'posdis': compute_posdis(t_attributes, messages),
-                    'bosdis': compute_bosdis(
-                        t_attributes, messages, vocab_size),
-                })
+                results[key]['topsim'] = compute_top_sim(t_attributes, messages),
                 mi_attr = compute_mi(probs, t_attributes, entropy)
                 results[key]['entropy_attr'] = mi_attr['entropy_attr']
                 for i, name in enumerate(attr_names):
@@ -548,7 +517,6 @@ class Dump:
                         for k, v in mi_attr.items() if 'attr_dim' in k
                     })
             else:
-                del results[key]['posdis'], results[key]['bosdis']
                 category = torch.cat([t_attributes] + d_attributes, dim=-1)
                 min_entropy_cat, n_uniq_samples_cat = min_message_entropy(
                     r_inputs, labels, category)

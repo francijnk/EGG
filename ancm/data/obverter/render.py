@@ -56,11 +56,7 @@ def render_scene(idx, object_type, color, location, rotation, resolution):
         if object_type in 'sphere torus cone cylinder'.split():
             return 0
 
-        # ellipsoid and box exhibit reflection symmetry
-        if object_type == 'box':  # 2 symmetry axes
-            rotation = rotation % 90
-        elif object_type == 'ellipsoid':
-            rotation = rotation % 180
+        rotation = rotation % 180  # ellipsoid and box have reflection symmetry
 
         if 0 <= rotation < 22.5 or 157.5 <= rotation <= 180:
             rotation = 0  # front view
@@ -74,6 +70,7 @@ def render_scene(idx, object_type, color, location, rotation, resolution):
             rotation = None
         assert rotation is not None
 
+        # box has 2 symmetry axes
         if object_type == 'box':
             rotation = rotation % 2
         return rotation

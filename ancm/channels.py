@@ -53,12 +53,6 @@ class Channel(nn.Module, metaclass=ABCMeta):
             device=self.device
         ) < self.p
 
-    @staticmethod
-    def binary_entropy(p: float):  # TODO move to ErasureChannel?
-        if p == 0. or p == 1.:
-            return 0.
-        return -p * np.log2(p) - (1 - p) * np.log2(1 - p)
-
     def max_non_eos_entropy(self, noise: bool):
         """
         Returns maximum achievable entropy of a single symbol passing through
@@ -72,14 +66,18 @@ class Channel(nn.Module, metaclass=ABCMeta):
         maximum achievable message entropy, computed according to the formula
         H_max(M) = H(L) + H_max(M | L)
         """
-        min_real = torch.finfo(length_probs.dtype).min
-        length_log2_prob = torch.clamp(torch.log2(length_probs), min=min_real)
 
-        max_entropy = (-length_probs * length_log2_prob).sum()  # H(L)
+        # clamping log probabilities to (0, 1) prevents nan entropy values for
+        # negative prob. values that may occasionally happen, for symbols that
+        # are almost certainly eosed
+        min_real = torch.finfo(length_probs.dtype).min
+        length_log2_prob = torch.log2(length_probs.clamp(0, 1)).clamp(min_real, 0)
+
+        max_entropy = (-length_probs.clamp(0, 1) * length_log2_prob).sum()  # H(L)
         for i in range(len(length_probs)):
             idx = 1 - int(noise)  # 0/1 for max. entropy with/without noise
             max_entropy_i = self._max_message_entropy[i][idx]
-            max_entropy += length_probs[i] * max_entropy_i
+            max_entropy += length_probs[i].clamp(0, 1) * max_entropy_i
             # P(L = i) * H_max(M | L = i)
 
         return max_entropy
@@ -100,6 +98,12 @@ class ErasureChannel(Channel):
     """
     Erases a symbol from a message with a given probability
     """
+
+    @staticmethod
+    def binary_entropy(p: float):
+        if p == 0. or p == 1.:
+            return 0.
+        return -p * np.log2(p) - (1 - p) * np.log2(1 - p)
 
     def max_non_eos_entropy(self, noise: bool):
         if noise:
@@ -154,7 +158,6 @@ class ErasureChannel(Channel):
             # apply argmax, exclude EOS, sample batch rows to be replaced
             discrete_symbols = messages.argmax(-1)
             non_eos_mask = discrete_symbols != 0
-            # non_eos_symbols = discrete_symbols[non_eos_mask]
             target_mask = self.sample_targets(non_eos_mask.sum())
             n_targets = target_mask.sum()
 
@@ -196,7 +199,7 @@ class DeletionChannel(Channel):
                 dims=1
             )
 
-    def gs(self, messages, probs, apply_noise):
+    def process(self, messages, probs, apply_noise):
         if messages.is_cuda:
             self.shift = torch.compile(self.shift)
 
