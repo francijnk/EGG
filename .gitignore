@@ -2,7 +2,6 @@ old_scripts/
 ancm/jobs/job_outputs/
 local_runs/
 wandb/
-runs/
 *.DS_Store
 
 # Byte-compiled / optimized / DLL files
