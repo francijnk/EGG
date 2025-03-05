@@ -1,20 +1,21 @@
 import sys
 from uuid import uuid4
 
-random_seeds = [i + 1 for i in range(5)]
+random_seeds = [i + 1 for i in range(20)]
 error_probs = [0.00, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30]
 channels = 'erasure deletion symmetric'.split()
 
 slr = 5e-4
 rlr = 1e-3
 tlr = 1e-5
+length_cost = 0.01
 vocab_size = 10
 hidden_units = 128
-n_epochs = 30
+n_epochs = 40
 emb = 16
-temperature = 3
-temperature_min = 1
+temperature_max = 3
 optimizer = 'rmsprop'
+warmup = 64
 
 
 def get_opts(error_prob, channel, max_len, random_seed):
@@ -29,17 +30,16 @@ def get_opts(error_prob, channel, max_len, random_seed):
         f'--vocab_size {vocab_size}',
         f'--sender_lr {slr}',
         f'--receiver_lr {rlr}',
+        f'--length_cost {length_cost}',
         f'--sender_hidden {hidden_units}',
         f'--receiver_hidden {hidden_units}',
         f'--random_seed {random_seed}',
         f'--filename {filename}',
         f'--n_epochs {n_epochs}',
-        f'--temperature {temperature}',
         f'--temperature_lr {tlr}',
-        f'--temperature_minimum {temperature_min}',
+        f'--temperature_max {temperature_max}',
         f'--embedding {emb}',
         f'--optim {optimizer}',
-        '--image_input',
         '--sender_cell lstm',
         '--receiver_cell lstm',
         '--validation_freq 1',

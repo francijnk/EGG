@@ -309,7 +309,7 @@ def compute_max_rep(messages: torch.Tensor) -> torch.Tensor:
     all_symbols = torch.unique(torch.flatten(messages), dim=0)
     non_eos_symbols = all_symbols[all_symbols != 0]
 
-    output = torch.zeros(messages.size(0))
+    output = torch.zeros(messages.size(0)).to(messages.device)
     for smb in non_eos_symbols:
         smb_tensor = smb.expand(messages.size(1))
         smb_tensor = smb_tensor.t().expand(*messages.size())
@@ -575,7 +575,7 @@ def compute_top_sim(attributes: torch.Tensor, messages: torch.Tensor) -> float:
         else:
             one_hot = torch.nn.functional.one_hot(attributes[:, i])
             one_hots.append(one_hot)
-    attributes = torch.cat(one_hots, dim=-1).numpy()
+    attributes = torch.cat(one_hots, dim=-1).cpu().numpy()
 
     # pairwise cosine similarity between object vectors
     cos_sims = cosine_similarity(attributes)

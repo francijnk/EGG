@@ -226,6 +226,7 @@ class DeletionChannel(Channel):
             assert torch.all(n_deleted_2 == n_deleted)
             target_mask = (
                 torch.arange(size[1] - 1, -1, step=-1)
+                .to(self.device)
                 .unsqueeze(0)
                 .expand(size[:-1])
             ) < n_deleted
@@ -246,7 +247,7 @@ class DeletionChannel(Channel):
             size = messages.size()
             messages = messages.clone().view(size[0] * size[1], size[2])
             discrete_symbols = messages.argmax(-1)
-            non_eos_ids = torch.arange(len(messages))[discrete_symbols != 0]
+            non_eos_ids = torch.arange(len(messages)).to(self.device)[discrete_symbols != 0]
             target_mask = self.sample_targets(non_eos_ids.numel())
             n_targets = target_mask.sum()
 
@@ -267,6 +268,7 @@ class DeletionChannel(Channel):
             n_deleted = target_mask.int().clamp(0, 1).sum(1, keepdim=True)
             target_mask = (
                 torch.arange(size[1] - 1, -1, step=-1)
+                .to(self.device)
                 .unsqueeze(0)
                 .expand(size[:-1])
             ) < n_deleted
@@ -307,14 +309,15 @@ class SymmetricChannel(Channel):
                 return messages.view(size), probs
 
             # get target positions & highest symbol probs
-            rows = torch.arange(len(target_mask))
-            cols = torch.arange(size[-1] - 1)
+            rows = torch.arange(len(target_mask)).to(self.device)
+            cols = torch.arange(size[-1] - 1).to(self.device)
             target_rows = rows.expand(size[-1] - 1, -1).t()[target_mask]
             target_cols = cols.expand(target_mask.size())[target_mask]
 
             # compute probability adjustment for each symbol with a target
             targets = messages.clone()[target_rows, target_cols]
             adjustment = targets.expand(size[-1] - 1, -1).t() / (size[-1] - 2)
+            idx = (torch.arange(len(adjustment)).to(self.device), target_cols)
             adjustment[torch.arange(len(adjustment)), target_cols] = -targets
 
             # adjust relaxed symbols
@@ -338,7 +341,7 @@ class SymmetricChannel(Channel):
             size = messages.size()
             messages = messages.clone().view(size[0] * size[1], size[-1])
             discrete_symbols = messages.argmax(-1)
-            non_eos_ids = torch.arange(len(messages))[discrete_symbols != 0]
+            non_eos_ids = torch.arange(len(messages)).to(self.device)[discrete_symbols != 0]
             target_mask = self.sample_targets(non_eos_ids.numel())
             n_targets = target_mask.sum()
 
@@ -351,7 +354,7 @@ class SymmetricChannel(Channel):
 
             # find candidate symbols different from target symbols
             n_targets = target_symbols.numel()
-            symbols = torch.arange(1, messages.size(-1)).expand(n_targets, -1)
+            symbols = torch.arange(1, messages.size(-1)).to(self.device).expand(n_targets, -1)
             candidate_mask = symbols != target_symbols.unsqueeze(-1)
             candidate_symbols = symbols[candidate_mask].view(-1, size[-1] - 2)
 
@@ -362,7 +365,7 @@ class SymmetricChannel(Channel):
                 generator=self.generator,
                 device=self.device,
             )
-            idx = (torch.arange(n_targets), replacement_ids)
+            idx = (torch.arange(n_targets).to(self.device), replacement_ids)
             replacement_symbols = candidate_symbols[idx]
 
             # replace probabilities
