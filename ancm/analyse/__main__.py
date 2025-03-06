@@ -319,7 +319,7 @@ def plot_test_perchannel(data_test, out_dir, key):
 
     col_names = ['accuracy', 'accuracy_symbol_removal', 'redundancy', 'topsim']
     df_metrics = test_long[test_long.metric.isin(col_names)]
-    
+
     for channel in channels:
         df = df_metrics.loc[
                 (df_metrics.channel == channel)]
@@ -327,7 +327,7 @@ def plot_test_perchannel(data_test, out_dir, key):
         plot = sns.relplot(df, x = "error_prob", y= 'value', row="max_len",
                            col="metric", hue="max_len", style="noise", kind='line',
                            marker ='o', markersize=8, facet_kws={"margin_titles": True})
-        
+
         for ax in plot.axes.flatten():
             ax.tick_params(labelbottom=True)
 
@@ -339,7 +339,13 @@ def plot_test_perchannel(data_test, out_dir, key):
         .tight_layout())
         plot.fig.subplots_adjust(top=0.95)
         plot.fig.suptitle(f'{channel}', fontsize = '30' )
-        plot.savefig(os.path.join(out_dir, f"{key}_{channel}.png"))
+        plot.savefig(
+            os.path.join(out_dir, f"{key}_{channel}.pdf"),
+            format='pdf',
+            dpi=None,
+            pad_inches=0.01,
+            bbox_inches='tight',
+        )
         close_plot(plot)
 
 

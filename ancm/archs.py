@@ -72,8 +72,7 @@ class SeeingConvNet(nn.Module):
             x = self.convnet(x.view(batch_size * n_candidates, *image_dims))
             return self.fc(x.view(batch_size, n_candidates, -1))
         else:
-            x = self.convnet(x)
-            x = x.view(x.size(0), -1)
+            x = self.convnet(x).view(x.size(0), -1)
             return self.fc(x)
 
 

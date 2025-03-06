@@ -20,17 +20,6 @@ from ancm.data.obverter.render import (
 
 np.set_printoptions(suppress=True, precision=5)
 current_dir = os.path.dirname(os.path.abspath(__file__))
-stopwords = {
-    'many', 'several', 'other', 'different',
-    'day', 'double', 'various', 'few', 'park',
-    'restaurant', 'colorful', 'full', 'birthday',
-    'stall', 'pretty', 'light', 'field', 'area', 'room',
-    'park', 'building', 'kitchen', 'bathroom', 'toilet',
-    'sky', 'group',
-}  # abstract properties, intangible objects, places etc
-synonyms = {
-    'little': 'small',
-}
 
 
 def path(*paths):
@@ -48,7 +37,6 @@ def parse_args():
     parser.add_argument('--p_same_shape', type=float, default=0)
     parser.add_argument('--p_same_color', type=float, default=0)
     parser.add_argument('--p_same_location', type=float, default=0)
-    parser.add_argument('--alpha', type=float, default=0.75)
     parser.add_argument('--seed', type=int, default=42)
     return parser.parse_args()
 
@@ -205,7 +193,6 @@ def export_input_data(object_tuples, args, select_fn, n_samples, aux_tuples=None
             return attr
 
     for tuple_i, (shape, color) in tqdm(enumerate(object_tuples), total=len(object_tuples)):
-        # H(D_1, ..., D_k | T = target_i)
         for sample_j in range(n_samples):
             idx = tuple_i * n_samples + sample_j
             image_idx = sample_j % args.n_img
