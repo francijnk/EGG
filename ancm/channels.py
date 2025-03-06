@@ -168,7 +168,7 @@ class ErasureChannel(Channel):
             target_messages = torch.zeros_like(messages).bool()
             target_messages[non_eos_mask] = torch.where(
                 target_mask.unsqueeze(-1),
-                torch.ones(target_mask.size(0), messages.size(-1)).bool(),
+                torch.ones(target_mask.size(0), messages.size(-1)).to(self.device).bool(),
                 False)
             erased_messages = torch.zeros_like(messages)
             erased_messages[:, :, -1] = 1
@@ -221,9 +221,8 @@ class DeletionChannel(Channel):
             self.shift(messages, target_mask)
 
             # get new target positions
-            n_deleted = torch.sum(target_mask.int().clamp(0, 1), dim=1).unsqueeze(-1)
-            n_deleted_2 = target_mask.int().clamp(0, 1).sum(1, keepdim=True)
-            assert torch.all(n_deleted_2 == n_deleted)
+            # n_deleted = torch.sum(target_mask.int().clamp(0, 1), dim=1).unsqueeze(-1)
+            n_deleted = target_mask.int().clamp(0, 1).sum(1, keepdim=True)
             target_mask = (
                 torch.arange(size[1] - 1, -1, step=-1)
                 .to(self.device)
