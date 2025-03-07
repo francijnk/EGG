@@ -32,7 +32,7 @@ def plot_final(df, output_dir, dataset):
     value_x_tick = [0, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30]
 
     # (1) Accuracy
-    metrics = ['accuracy', 'accuracy_symbol_removal', 'temperature', 'topsim']
+    metrics = ['accuracy', 'accuracy_symbol_removal', 'topsim', 'redundancy']
     df_acc = df_long[df_long.measure.isin(metrics)]
     plot = sns.relplot(
         df_acc,
@@ -60,28 +60,28 @@ def plot_final(df, output_dir, dataset):
     close_plot(plot)
 
     # (2) Redundancy
-    df_r = df_long[df_long.measure == 'redundancy']
-    plot = sns.relplot(
-        df_r,
-        x='error_prob', y='value', hue='measure',
-        col='max_len', row='channel', style='condition',
-        errorbar=None,  # errorbar=('se',2),
-        marker='o', kind='line', markersize=8,
-        facet_kws=dict(margin_titles=True), legend=True,
-    )
+    # df_r = df_long[df_long.measure == 'redundancy']
+    # plot = sns.relplot(
+    #     df_r,
+    #     x='error_prob', y='value', hue='measure',
+    #     col='max_len', row='channel', style='condition',
+    #     errorbar=None,  # errorbar=('se',2),
+    #     marker='o', kind='line', markersize=8,
+    #     facet_kws=dict(margin_titles=True), legend=True,
+    # )
     # sns.move_legend(
     #    plot, "upper center", bbox_to_anchor=(.5, 1.04), ncol=3,
     #     title="redundancy", frameon=False,)
-    plot.set(xticks=value_x_tick)
-    fname = f'final_{dataset}_redundancy.pdf'
-    plot.savefig(
-        os.path.join(output_dir, fname),
-        format='pdf',
-        dpi=None,
-        pad_inches=0.01,
-        bbox_inches='tight',
-    )
-    close_plot(plot)
+    # plot.set(xticks=value_x_tick)
+    # fname = f'final_{dataset}_redundancy.pdf'
+    # plot.savefig(
+    #     os.path.join(output_dir, fname),
+    #     format='pdf',
+    #     dpi=None,
+    #     pad_inches=0.01,
+    #     bbox_inches='tight',
+    # )
+    # close_plot(plot)
 
     # (3) KLD
     df_kld = df_long[df_long.measure.apply(lambda x: x.startswith('KLD'))]
@@ -183,8 +183,7 @@ def plot_history(history_df, output_dir, dataset):
             row='max_len', col='error_prob',
             x='epoch', y='redundancy', kind='line',
             hue='channel', style='condition',
-            errorbar=None,
-            # errorbar=('se', 2),
+            errorbar=None,  # errorbar=('se', 2),
             facet_kws=dict(margin_titles=True))
         plot.set_titles("{col_name}")
         fname = f'history_{dataset}_{channel}_redundancy.pdf'
@@ -199,17 +198,20 @@ def plot_history(history_df, output_dir, dataset):
 
     # temperature, entropy
     for channel in pd.unique(df.channel):
+        print('entropy channel')
+        # print(history_df[history_df.channel == channel]['entropy_msg'])
         df_channel = get_long_data(
             history_df[history_df.channel == channel],
             ['temperature', 'entropy_msg', 'entropy_msg_as_a_whole'],
             dataset,
         )
+        print(df_channel)
         sns.set_palette(sns.husl_palette(4))
         plot = sns.relplot(
             legend=True, data=df_channel,
             row='max_len', col='error_prob',
-            x='epoch', y='measure', kind='line',
-            hue='channel', style='condition',
+            x='epoch', y='value', kind='line',
+            hue='measure', style='condition',
             errorbar=None,
             # errorbar=('se', 2),
             facet_kws=dict(margin_titles=True))
@@ -233,7 +235,7 @@ def plot_history(history_df, output_dir, dataset):
         hue='channel', style='condition',
         errorbar=None,
         # errorbar=('se', 2),
-        facet_kws=dict(margin_titles=True))
+        facet_kws=dict(margin_titles=True, sharey=False))
     plot.set_titles("{col_name}")
     fname = f'history_{dataset}_lexicon.pdf'
     plot.savefig(
@@ -250,8 +252,6 @@ def plot_history(history_df, output_dir, dataset):
     plot = sns.relplot(
         legend=True, data=history_df,
         x='epoch', y='actual_vocab_size', hue='channel',
-        row='max_len', col='error_prob', style='condition',
-        errorbar=None,  # errorbar=('se', 2),
         kind='line', facet_kws=dict(margin_titles=True)
     )
     plot.set_titles("{col_name}")
@@ -268,7 +268,11 @@ def plot_history(history_df, output_dir, dataset):
     # length, max rep, actual_vs
     metrics = ['length', 'max_rep']
     for channel in pd.unique(df.channel):
-        df_channel = get_long_data(df[df.channel == channel], metrics, dataset)
+        df_channel = get_long_data(
+            history_df[history_df.channel == channel],
+            metrics,
+            dataset,
+        )
         sns.set_palette(sns.husl_palette(3))
         plot = sns.relplot(
             legend=True, data=df,
@@ -289,34 +293,9 @@ def plot_history(history_df, output_dir, dataset):
         )
         close_plot(plot)
 
-    # compositionality
-    metrics = ['topsim']  # 'top_sim pos_dis bos_dis'.split()
-    # df = get_long_data(history_df, metrics)
-    # df = history_df[history_df.measure.isin(metrics)]
-    for channel in pd.unique(df.channel):
-        df_channel = history_df[history_df.channel == channel]
-        sns.set_palette(sns.color_palette("husl", 3))
-        plot = sns.relplot(
-            data=df_channel,
-            x='epoch', y='topsim',
-            row='max_len', col='error_prob', style='condition',
-            hue='channel', kind='line',
-            errorbar=None,
-            facet_kws=dict(margin_titles=True, legend_out=True))
-        plot.set_titles("{col_name}")
-        fname = f'history_{dataset}_{channel}_compositionality.pdf'
-        plot.savefig(
-            os.path.join(output_dir, fname),
-            format='pdf',
-            dpi=None,
-            pad_inches=0.01,
-            bbox_inches='tight',
-        )
-        close_plot(plot)
-
 
 def analyse(df, output_dir, dataset):
-    print(type(df), data_test.columns)
+    print(type(df), df.columns)
     channels = pd.unique(df['channel'])
     max_lengths = pd.unique(df['max_len'])
     error_probs = pd.unique(df['error_prob'])
@@ -324,10 +303,10 @@ def analyse(df, output_dir, dataset):
     def get_stats(values):
         try:
             mean = values.mean()
-            std_er = np.std(values, ddof=1) / np.sqrt(np.size(values))
-            return f"{mean:.2f}"#, f"{std_er:.2f}"
+            # std_er = np.std(values, ddof=1) / np.sqrt(np.size(values))
+            return f"{mean:.2f}"  # , f"{std_er:.2f}"
         except:
-            return "--"#, "--"
+            return "--"  # , "--"
 
     lines = []
     header = [
@@ -416,7 +395,7 @@ def plot_test_perchannel(data_test, out_dir, key):
     channels = pd.unique(test_long['channel'])
 
     col_names = ['accuracy', 'accuracy_symbol_removal', 'redundancy', 'topsim']
-    df_metrics = test_long[test_long.metric.isin(col_names)]
+    df_metrics = test_long[test_long.measure.isin(col_names)]
 
     for channel in channels:
         df = df_metrics.loc[
