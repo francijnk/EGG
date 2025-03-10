@@ -59,30 +59,6 @@ def plot_final(df, output_dir, dataset):
     )
     close_plot(plot)
 
-    # (2) Redundancy
-    # df_r = df_long[df_long.measure == 'redundancy']
-    # plot = sns.relplot(
-    #     df_r,
-    #     x='error_prob', y='value', hue='measure',
-    #     col='max_len', row='channel', style='condition',
-    #     errorbar=None,  # errorbar=('se',2),
-    #     marker='o', kind='line', markersize=8,
-    #     facet_kws=dict(margin_titles=True), legend=True,
-    # )
-    # sns.move_legend(
-    #    plot, "upper center", bbox_to_anchor=(.5, 1.04), ncol=3,
-    #     title="redundancy", frameon=False,)
-    # plot.set(xticks=value_x_tick)
-    # fname = f'final_{dataset}_redundancy.pdf'
-    # plot.savefig(
-    #     os.path.join(output_dir, fname),
-    #     format='pdf',
-    #     dpi=None,
-    #     pad_inches=0.01,
-    #     bbox_inches='tight',
-    # )
-    # close_plot(plot)
-
     # (3) KLD
     df_kld = df_long[df_long.measure.apply(lambda x: x.startswith('KLD'))]
     plot = sns.relplot(
@@ -107,36 +83,48 @@ def plot_final(df, output_dir, dataset):
     )
     close_plot(plot)
 
-    # (3) Max. rep.
-    # df = test_long[test_long.metric == 'max_rep']
-    # plot = sns.relplot(
-    #    df, col='max_len', x='error_prob', y='value', kind='line',
-    #    errorbar=('se',2), style='noise', row='channel', marker='o',
-    #    markersize=8, # hue='max_len',
-    #    facet_kws=dict(margin_titles=True), legend=True)
-    # sns.move_legend(
-    #     plot, "upper center", bbox_to_anchor=(.5, 1.04), ncol=3,
-    #     title="avg len of max rep subsequence", frameon=False,)
-    # lot.set(xticks=value_x_tick)
-    # plot.savefig(os.path.join(output_dir, "test_max_rep.png"), dpi=400)
-    # close_plot(plot)
+    # (4) entropy
+    measures = ['entropy_msg', 'entropy_msg_as_a_whole', 'temperature']
+    df_entropy = df_long[df_long.measure.isin(measures)]
+    plot = sns.relplot(
+        df_entropy,
+        x='error_prob', y='value', hue='measure',
+        col='max_len', row='channel', style='condition',
+        errorbar=('se', 2), marker='o', kind='line', markersize=8,
+        facet_kws=dict(margin_titles=True), legend=True,
+    )
+    plot.set(xticks=value_x_tick)
+    fname = f'final_{dataset}_entropy.pdf'
+    plot.savefig(
+        os.path.join(output_dir, fname),
+        format='pdf',
+        dpi=None,
+        pad_inches=0.01,
+        bbox_inches='tight',
+    )
+    close_plot(plot)
 
-    # (4) Compositionality
-    # df = test_long[(test_long.metric.isin('topographic_rho pos_dis bos_dis'.split()))]
-    # sns.set_palette(sns.color_palette("Set2", 3))
-    # plot = sns.relplot(
-    #     df,
-    #     x='error_prob', y='value', style='noise',
-    #     col='max_len', row='channel',
-    #     errorbar=None, # errorbar=('se',2),
-    #     marker='o', markersize=8, kind='line',
-    #     hue='metric', facet_kws=dict(margin_titles=True), legend=True)
-    # sns.move_legend(
-    #    plot, "upper center", bbox_to_anchor=(.5, 1.04), ncol=3,
-    #    title="max message length", frameon=False,)
-    # plot.set(xticks=value_x_tick)
-    # plot.savefig(os.path.join(output_dir, "test_compositionality.png"), dpi=400)
-    # close_plot(plot)
+    # (5) proficiency
+    measures = [m for m in pd.unique(df_long.measure) if m.startswith('proficiency')] + ['accuracy']
+    df_proficiency = df_long[df_long.measure.isin(measures)]
+    plot = sns.relplot(
+        df_proficiency,
+        x='error_prob', y='value', hue='measure',
+        col='max_len', row='channel', style='condition',
+        errorbar=None,  # ('se', 2), 
+        marker='o', kind='line', markersize=8,
+        facet_kws=dict(margin_titles=True), legend=True,
+    )
+    plot.set(xticks=value_x_tick)
+    fname = f'final_{dataset}_proficiency.pdf'
+    plot.savefig(
+        os.path.join(output_dir, fname),
+        format='pdf',
+        dpi=None,
+        pad_inches=0.01,
+        bbox_inches='tight',
+    )
+    close_plot(plot)
 
 
 def plot_history(history_df, output_dir, dataset):
@@ -159,20 +147,6 @@ def plot_history(history_df, output_dir, dataset):
         bbox_inches='tight',
     )
     close_plot(plot)
-
-    # metrics = ['alignment']
-    # df = get_long_val_data(data_val, metrics)
-
-    # sns.set_palette(sns.husl_palette(4, 0.76))
-    # plot = sns.relplot(
-    #     legend=True, data=df,
-    #     x='epoch', y='value', hue='channel',
-    #     row='max_len', col='error_prob', style='noise',
-    #     errorbar=None,  # errorbar=('se', 2),
-    #     kind='line', facet_kws=dict(margin_titles=True))
-    # plot.set_titles("{col_name}")
-    # plot.savefig(os.path.join(output_dir, "training_alignment.png"))
-    # close_plot(plot)
 
     # redundancy
     for channel in pd.unique(df.channel):
@@ -198,14 +172,11 @@ def plot_history(history_df, output_dir, dataset):
 
     # temperature, entropy
     for channel in pd.unique(df.channel):
-        print('entropy channel')
-        # print(history_df[history_df.channel == channel]['entropy_msg'])
         df_channel = get_long_data(
             history_df[history_df.channel == channel],
             ['temperature', 'entropy_msg', 'entropy_msg_as_a_whole'],
             dataset,
         )
-        print(df_channel)
         sns.set_palette(sns.husl_palette(4))
         plot = sns.relplot(
             legend=True, data=df_channel,
@@ -275,7 +246,7 @@ def plot_history(history_df, output_dir, dataset):
         )
         sns.set_palette(sns.husl_palette(3))
         plot = sns.relplot(
-            legend=True, data=df,
+            legend=True, data=df_channel,
             row='max_len', col='error_prob',
             x='epoch', y='value', kind='line',
             hue='measure', style='condition',
@@ -284,6 +255,35 @@ def plot_history(history_df, output_dir, dataset):
         )
         plot.set_titles("{col_name}")
         fname = f'history_{dataset}_{channel}_msg_len.pdf'
+        plot.savefig(
+            os.path.join(output_dir, fname),
+            format='pdf',
+            dpi=None,
+            pad_inches=0.01,
+            bbox_inches='tight',
+        )
+        close_plot(plot)
+
+    # length, max rep, actual_vs
+    metrics = [col for col in history_df.columns if col.startswith('proficiency')] + ['accuracy']
+    print('metrics', metrics)
+    for channel in pd.unique(df.channel):
+        df_channel = get_long_data(
+            history_df[history_df.channel == channel],
+            metrics,
+            dataset,
+        )
+        sns.set_palette(sns.husl_palette(3))
+        plot = sns.relplot(
+            legend=True, data=df_channel,
+            row='max_len', col='error_prob',
+            x='epoch', y='value', kind='line',
+            hue='measure', style='condition',
+            errorbar=None,  # errorbar=('se', 2),
+            facet_kws=dict(margin_titles=True),
+        )
+        plot.set_titles("{col_name}")
+        fname = f'history_{dataset}_{channel}_proficiency.pdf'
         plot.savefig(
             os.path.join(output_dir, fname),
             format='pdf',
