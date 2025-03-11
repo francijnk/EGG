@@ -59,13 +59,37 @@ def plot_final(df, output_dir, dataset):
     )
     close_plot(plot)
 
+    # (2) redundancy
+    df_redundancy = df_long[df_long.measure == 'redundancy']
+    plot = sns.relplot(
+        df_redundancy,
+        x='error_prob', y='value',
+        col='max_len', row='channel',
+        style='condition', kind='line',
+        errorbar=('se', 2),
+        marker='o', markersize=8,
+        facet_kws={'margin_titles': True}, legend=True,
+    )
+    fname = f'final_{dataset}_redundancy.pdf'
+    plot.savefig(
+        os.path.join(output_dir, fname),
+        format='pdf',
+        dpi=None,
+        pad_inches=0.01,
+        bbox_inches='tight',
+    )
+    close_plot(plot)
+
+
+
     # (3) KLD
     df_kld = df_long[df_long.measure.apply(lambda x: x.startswith('KLD'))]
     plot = sns.relplot(
         df_kld,
         x='error_prob', y='value', hue='measure',
         col='max_len', row='channel', style='condition',
-        errorbar=None,  # errorbar=('se',2),
+        # errorbar=None,  
+        errorbar=('se',2),
         marker='o', kind='line', markersize=8,
         facet_kws=dict(margin_titles=True), legend=True,
     )
