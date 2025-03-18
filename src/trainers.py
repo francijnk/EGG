@@ -26,8 +26,9 @@ from egg.core.callbacks import (
     TensorboardLogger,
 )
 from egg.core.distributed import get_preemptive_checkpoint_dir
-from ancm.interaction import Interaction
 from egg.core.util import get_opts, move_to
+
+from src.interaction import Interaction
 
 try:
     from torch.cuda.amp import GradScaler, autocast

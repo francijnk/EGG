@@ -3,22 +3,17 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions.utils import logits_to_probs
 from torch.distributions import RelaxedOneHotCategorical, OneHotCategorical
+from argparse import Namespace
 
-from ancm.channels import (
+from src.channels import (
     NoChannel,
     ErasureChannel,
     DeletionChannel,
     SymmetricChannel,
 )
-from ancm.interaction import LoggingStrategy
+from src.interaction import LoggingStrategy
 
 from typing import Optional
-
-
-def loss(_sender_input, _message, _receiver_input, receiver_output, _labels, _aux_input):
-    cross_entropy = F.cross_entropy(receiver_output, _labels, reduction="none")
-    accuracy = (receiver_output.detach().argmax(dim=-1) == _labels).float()
-    return cross_entropy, {'accuracy': accuracy * 100}
 
 
 class SeeingConvNet(nn.Module):
@@ -85,37 +80,24 @@ class RnnSenderGS(nn.Module):
     handled by the game implementation. Supports vanilla RNN ('rnn'), GRU
     ('gru'), and LSTM ('lstm') cells.
 
-    Based on the implementation from `egg/core/gs_wrappers.py`.
+    Based on `egg/core/gs_wrappers.py`.
     """
 
-    def __init__(
-        self,
-        vocab_size: int,
-        embed_dim: int,
-        n_features: int,
-        hidden_size: int,
-        max_len: int,
-        temperature_max: float,
-        image_input: bool,
-        cell: str = "lstm",
-    ):
-
+    def __init__(self, opts: Namespace):
+        assert opts.max_len >= 1, "Cannot have a max_len below 1"
         super(RnnSenderGS, self).__init__()
+        self.max_len = opts.max_len
 
-        assert max_len >= 1, "Cannot have a max_len below 1"
-        self.max_len = max_len
+        input_encoder = SeeingConvNet if opts.image_input else nn.Linear
+        self.encoder = input_encoder(opts.n_features, opts.sender_hidden)
+        self.hidden_to_output = nn.Linear(opts.sender_hidden, opts.vocab_size)
+        self.embedding = nn.Linear(opts.vocab_size, opts.embedding)
+        self.sos_embedding = nn.Parameter(torch.zeros(opts.embedding))
+        self.vocab_size = opts.vocab_size
 
-        input_encoder = SeeingConvNet if image_input else nn.Linear
-        self.encoder = input_encoder(n_features, hidden_size)
-        self.hidden_to_output = nn.Linear(hidden_size, vocab_size)
-        self.embedding = nn.Linear(vocab_size, embed_dim)
-        self.sos_embedding = nn.Parameter(torch.zeros(embed_dim))
-        self.embed_dim = embed_dim
-        self.vocab_size = vocab_size
-
-        self.temperature_max = temperature_max
+        self.temperature_max = opts.temperature_max
         self.hidden_to_inv_temperature = nn.Sequential(
-            nn.Linear(hidden_size, 1, bias=False),
+            nn.Linear(opts.sender_hidden, 1, bias=False),
             nn.Softplus(1),
         )
 
@@ -124,12 +106,13 @@ class RnnSenderGS(nn.Module):
             'gru': nn.GRUCell,
             'lstm': nn.LSTMCell,
         }
+        if opts.sender_cell not in cells:
+            raise ValueError(f"Unknown RNN Cell: {opts.sender_cell}")
 
-        cell = cell.lower()
-        if cell not in cells:
-            raise ValueError(f"Unknown RNN Cell: {cell}")
-        self.cell = cells[cell](input_size=embed_dim, hidden_size=hidden_size)
-
+        self.cell = cells[opts.sender_cell](
+            input_size=opts.embedding,
+            hidden_size=opts.sender_hidden,
+        )
         self.reset_parameters()
 
     def hidden_to_temperature(self, hidden: torch.Tensor):
@@ -138,26 +121,21 @@ class RnnSenderGS(nn.Module):
         return (self.hidden_to_inv_temperature(hidden) + tau_0) ** -1
 
     def gumbel_softmax_sample(self, logits: torch.Tensor, temperature: float):
-        """
-        Straight-through GS sample.
-        """
-        probs = logits_to_probs(logits.detach() / temperature)
-
-        if not self.training:
+        if self.training:
+            sample = RelaxedOneHotCategorical(
+                logits=logits,
+                temperature=temperature,
+            ).rsample()
+        else:
             # argmax of GS sample is equivalent to sampling from the original
             # distribution: Softmax(logits, temperature)
-            sample = OneHotCategorical(
-                logits=(logits / temperature)
-            ).sample()
+            sample = OneHotCategorical(logits=logits / temperature).sample()
 
-            return sample, probs
+        logits = (logits.detach() / temperature.detach()).log_softmax(-1) \
+            if isinstance(temperature, torch.Tensor) \
+            else (logits.detach() / temperature).log_softmax(-1)
 
-        sample = RelaxedOneHotCategorical(
-            logits=logits,
-            temperature=temperature,
-        ).rsample()
-
-        return sample, probs
+        return sample, logits
 
     def reset_parameters(self):
         nn.init.normal_(self.sos_embedding, 0.0, 0.01)
@@ -198,15 +176,7 @@ class RnnSenderGS(nn.Module):
 
 
 class RnnReceiverGS(nn.Module):
-    """
-    Gumbel Softmax-based wrapper for Receiver agent in variable-length communication game. The user implemented logic
-    is passed in `agent` and is responsible for mapping (RNN's hidden state + Receiver's optional input)
-    into the output vector. Since, due to the relaxation, end-of-sequence symbol might have non-zero probability at
-    each timestep of the message, `RnnReceiverGS` is applied for each timestep. The corresponding EOS logic
-    is handled by `SenderReceiverRnnGS`.
-    """
-
-    def __init__(self, vocab_size, embed_dim, hidden_size, n_features, image_input, cell="rnn"):
+    def __init__(self, opts):
         super(RnnReceiverGS, self).__init__()
 
         cells = {
@@ -215,15 +185,20 @@ class RnnReceiverGS(nn.Module):
             'lstm': nn.LSTMCell,
         }
 
-        cell = cell.lower()
-        if cell not in cells:
-            raise ValueError(f"Unknown RNN Cell: {cell}")
+        if opts.receiver_cell not in cells:
+            raise ValueError(f"Unknown RNN Cell: {opts.receiver_cell}")
 
-        input_encoder = SeeingConvNet if image_input else nn.Linear
+        input_encoder = SeeingConvNet if opts.image_input else nn.Linear
+        vocab_size = opts.vocab_size + 1 \
+            if opts.channel == 'erasure' else opts.vocab_size
 
-        self.cell = cells[cell](input_size=embed_dim, hidden_size=hidden_size)
-        self.message_encoder = nn.Linear(vocab_size, embed_dim)
-        self.input_encoder = input_encoder(n_features, hidden_size)
+        self.cell = cells[opts.receiver_cell](
+            input_size=opts.embedding,
+            hidden_size=opts.receiver_hidden)
+        self.message_encoder = nn.Linear(vocab_size, opts.embedding)
+        self.input_encoder = input_encoder(
+            opts.n_features,
+            opts.receiver_hidden)
         self.logsoft = nn.LogSoftmax(dim=1)
 
     def forward(self, message, _input=None, aux_input=None):
@@ -256,16 +231,10 @@ class RnnReceiverGS(nn.Module):
 class SenderReceiverRnnGS(nn.Module):
     def __init__(
         self,
-        sender: nn.Module,
-        receiver: nn.Module,
-        vocab_size: int,
-        channel_type: Optional[str],
-        error_prob: float = 0.0,
-        length_cost: float = 0.0,
-        warmup_steps: int = 0,
+        opts: Namespace,
         device: torch.device = torch.device("cpu"),
-        seed: int = 42,
     ):
+        super(SenderReceiverRnnGS, self).__init__()
         channel_types = {
             'none': NoChannel,
             'erasure': ErasureChannel,
@@ -273,15 +242,18 @@ class SenderReceiverRnnGS(nn.Module):
             'symmetric': SymmetricChannel,
         }
 
-        super(SenderReceiverRnnGS, self).__init__()
-        self.sender = sender
-        self.receiver = receiver
-        self.loss = loss
-        self.length_cost = length_cost
-        self.channel = channel_types[channel_type](
-            error_prob, sender.max_len, vocab_size, device, seed,
-        )
-        self.warmup = iter(True for _ in range(warmup_steps))
+        self.sender = RnnSenderGS(opts)
+        self.receiver = RnnReceiverGS(opts)
+        self.channel = channel_types[opts.channel](opts, device)
+
+        self.length_cost = opts.length_cost
+        self.warmup = iter(True for _ in range(opts.warmup_steps))
+
+    @staticmethod
+    def loss(s_input, message, r_input, r_output, labels, aux_input):
+        cross_entropy = F.cross_entropy(r_output, labels, reduction="none")
+        accuracy = (r_output.detach().argmax(dim=-1) == labels).float()
+        return cross_entropy, {'accuracy': accuracy * 100}
 
     def forward(self, sender_input, labels, receiver_input, aux_input):
         warmup = next(self.warmup, False)
@@ -290,15 +262,15 @@ class SenderReceiverRnnGS(nn.Module):
         temperatures = sender_output[-1]
 
         # pass messages and symbol probabilities through the channel
-        (message, probs), (message_nn, probs_nn) = self.channel(*sender_output)
+        message, logits, message_nn, logits_nn = self.channel(*sender_output)
 
         # append EOS to each message
         eos = torch.zeros_like(message[:, :1, :])
         eos[:, 0, 0] = 1
         message = torch.cat([message, eos], dim=1)
-        message_nn = torch.cat([message_nn, eos], dim=1)
-        probs = torch.cat([probs, eos], dim=1)
-        probs_nn = torch.cat([probs_nn, eos], dim=1)
+        logits = torch.cat([logits, torch.log(eos)], dim=1)
+        message_nn = torch.cat([message_nn, eos], dim=1)  # no noise
+        logits_nn = torch.cat([logits_nn, torch.log(eos)], dim=1)
 
         if isinstance(self.channel, NoChannel):
             receiver_output = self.receiver(message, receiver_input, aux_input)
@@ -410,11 +382,11 @@ class SenderReceiverRnnGS(nn.Module):
             labels=labels,
             aux_input=aux_input,
             message=message.detach(),
-            probs=probs.detach(),
+            logits=logits.detach(),
             message_length=length.detach(),
             receiver_output=receiver_output.detach(),
             message_nn=message_nn.detach(),
-            probs_nn=probs_nn.detach(),
+            logits_nn=logits_nn.detach(),
             message_length_nn=length_nn.detach(),
             receiver_output_nn=receiver_output_nn.detach(),
             aux=aux_info,

@@ -19,11 +19,11 @@ class LoggingStrategy:
     store_labels: bool = True
     store_aux_input: bool = True
     store_message: bool = True
-    store_symbol_probs: bool = True
+    store_symbol_logits: bool = True
     store_receiver_output: bool = True
     store_message_length: bool = True
     store_message_nn: bool = True
-    store_symbol_probs_nn: bool = True
+    store_symbol_logits_nn: bool = True
     store_receiver_output_nn: bool = True
     store_message_length_nn: bool = True
 
@@ -34,11 +34,11 @@ class LoggingStrategy:
         labels: Optional[torch.Tensor],
         aux_input: Optional[Dict[str, torch.Tensor]],
         message: Optional[torch.Tensor],
-        probs: Optional[torch.Tensor],
+        logits: Optional[torch.Tensor],
         receiver_output: Optional[torch.Tensor],
         message_length: Optional[torch.Tensor],
         message_nn: Optional[torch.Tensor],
-        probs_nn: Optional[torch.Tensor],
+        logits_nn: Optional[torch.Tensor],
         receiver_output_nn: Optional[torch.Tensor],
         message_length_nn: Optional[torch.Tensor],
         aux: Dict[str, torch.Tensor],
@@ -50,11 +50,11 @@ class LoggingStrategy:
             labels=labels if self.store_labels else None,
             aux_input=aux_input if self.store_aux_input else None,
             message=message if self.store_message else None,
-            probs=probs if self.store_symbol_probs else None,
+            logits=logits if self.store_symbol_logits else None,
             receiver_output=receiver_output if self.store_receiver_output else None,
             message_length=message_length if self.store_message_length else None,
             message_nn=message_nn if self.store_message_nn else None,
-            probs_nn=probs_nn if self.store_symbol_probs_nn else None,
+            logits_nn=logits_nn if self.store_symbol_logits_nn else None,
             receiver_output_nn=receiver_output_nn if self.store_receiver_output_nn else None,
             message_length_nn=message_length_nn if self.store_message_length_nn else None,
             aux=aux,
@@ -80,13 +80,13 @@ class Interaction:
 
     # what agents produce
     message: Optional[torch.Tensor]
-    probs: Optional[torch.Tensor]
+    logits: Optional[torch.Tensor]
     receiver_output: Optional[torch.Tensor]
     message_length: Optional[torch.Tensor]
 
     # what would happen if no noise was added
     message_nn: Optional[torch.Tensor]
-    probs_nn: Optional[torch.Tensor]
+    logits_nn: Optional[torch.Tensor]
     receiver_output_nn: Optional[torch.Tensor]
     message_length_nn: Optional[torch.Tensor]
 
@@ -126,11 +126,11 @@ class Interaction:
             labels=_check_cat([x.labels for x in interactions]),
             aux_input=_combine_aux_dicts(self.aux_input, other.aux_input),
             message=_check_cat([x.message for x in interactions]),
-            probs=_check_cat([x.probs for x in interactions]),
+            logits=_check_cat([x.logits for x in interactions]),
             receiver_output=_check_cat([x.receiver_output for x in interactions]),
             message_length=_check_cat([x.message_length for x in interactions]),
             message_nn=_check_cat([x.message_nn for x in interactions]),
-            probs_nn=_check_cat([x.probs_nn for x in interactions]),
+            logits_nn=_check_cat([x.logits_nn for x in interactions]),
             receiver_output_nn=_check_cat([x.receiver_output_nn for x in interactions]),
             message_length_nn=_check_cat([x.message_length_nn for x in interactions]),
             aux=_combine_aux_dicts(self.aux, other.aux),
@@ -143,11 +143,11 @@ class Interaction:
             self.receiver_input,
             self.labels,
             self.message,
-            self.probs,
+            self.logits,
             self.receiver_output,
             self.message_length,
             self.message_nn,
-            self.probs_nn,
+            self.logits_nn,
             self.receiver_output_nn,
             self.message_length_nn,
         ]
@@ -169,11 +169,11 @@ class Interaction:
         self.receiver_input = _to(self.receiver_input)
         self.labels = _to(self.labels)
         self.message = _to(self.message)
-        self.probs = _to(self.probs)
+        self.logits = _to(self.logits)
         self.receiver_output = _to(self.receiver_output)
         self.message_length = _to(self.message_length)
         self.message_nn = _to(self.message_nn)
-        self.probs_nn = _to(self.probs_nn)
+        self.logits_nn = _to(self.logits_nn)
         self.receiver_output_nn = _to(self.receiver_output_nn)
         self.message_length_nn = _to(self.message_length_nn)
 
@@ -229,16 +229,16 @@ class Interaction:
             aux_input=aux_input,
             message=_check_cat(
                 [x.message for x in interactions]),
-            probs=_check_cat(
-                [x.probs for x in interactions]),
+            logits=_check_cat(
+                [x.logits for x in interactions]),
             message_length=_check_cat(
                 [x.message_length for x in interactions]),
             receiver_output=_check_cat(
                 [x.receiver_output for x in interactions]),
             message_nn=_check_cat(
                 [x.message_nn for x in interactions]),
-            probs_nn=_check_cat(
-                [x.probs_nn for x in interactions]),
+            logits_nn=_check_cat(
+                [x.logits_nn for x in interactions]),
             message_length_nn=_check_cat(
                 [x.message_length_nn for x in interactions]),
             receiver_output_nn=_check_cat(
@@ -286,11 +286,11 @@ class Interaction:
                 "receiver_input",
                 "labels",
                 "message",
-                "probs",
+                "logits",
                 "message_length",
                 "receiver_output",
                 "message_nn",
-                "probs_nn",
+                "logits_nn",
                 "message_length_nn",
                 "receiver_output_nn",
             ]

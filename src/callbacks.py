@@ -16,19 +16,21 @@ from rich.progress import (
 from rich.table import Table
 from rich.text import Text
 
-from ancm.eval import (
+from src.eval import (
     message_entropy,
     relative_message_entropy,
+    entropy_message_as_a_whole,
+    mutual_info_sent_received,
     compute_mi,
     compute_max_rep,
     compute_top_sim,
 )
-from ancm.channels import Channel, NoChannel
-from ancm.util import crop_messages
-from ancm.interaction import Interaction
+from src.channels import Channel, NoChannel, DeletionChannel, ErasureChannel
+from src.util import crop_messages
+from src.interaction import Interaction
 
 from egg.core.callbacks import Callback, CustomProgress
-from egg.zoo.language_bottleneck import intervention
+# from egg.zoo.language_bottleneck import intervention
 
 from typing import Dict, Any
 
@@ -102,7 +104,7 @@ class CustomProgressBarLogger(Callback):
 
         self.history = defaultdict(lambda: defaultdict(list))
         self.hide_cols = [
-            'receiver_entropy', 'sender_entropy',  # 'length_probs',
+            'entropy_max', 
             'entropy_inp', 'entropy_cat', 'entropy_shape', 'entropy_color',
             'entropy_xpos', 'entropy_ypos', 'entropy_rotation', 'entropy_attr',
             'redundancy_', 'mutual_info', 'variation', 'proficiency_rotation',
@@ -174,24 +176,24 @@ class CustomProgressBarLogger(Callback):
             show_footer=False, padding=(0, 1), pad_edge=True)
 
         row_values = []
-        for colname in ('epoch', 'phase', 'condition'):
-            if colname == 'condition' and not self.display_nn:
-                od['condition'] = 'baseline'
+        for colname in ('epoch', 'phase', 'messages'):
+            if colname == 'messages' and not self.display_nn:
+                od['messages'] = 'baseline'
                 continue
-            elif colname == 'condition' and self.display_nn:
-                od['condition'] = 'noise' if noise else 'no noise'
-                row_values.append('noise' if noise else 'no noise')
+            elif colname == 'messages' and self.display_nn:
+                od['messages'] = 'sent' if noise else 'received'
+                row_values.append('sent' if noise else 'received')
             else:
                 row_values.append(str(od[colname]))
             row.add_column(
                 colname,
                 justify='left',
-                ratio=0.5 if colname != 'condition' else 1)
+                ratio=0.5 if colname != 'messages' else 1)
 
         for colname in od:
             if any(colname.startswith(c) for c in self.hide_cols) \
                     or colname.endswith('_nn') \
-                    or colname in ('epoch', 'phase', 'condition'):
+                    or colname in ('epoch', 'phase', 'messages'):
                 continue
             if noise:
                 value = self.format_values(od[colname])
@@ -362,12 +364,11 @@ class CustomProgressBarLogger(Callback):
                 pd.DataFrame(history_dict)
                 for history_dict in self.history.values()
             ])
-            cols = ['epoch', 'phase', 'condition']
+            cols = ['epoch', 'phase', 'messages']
             df = df[cols + [c for c in df.columns if c not in cols]]
             filename = f'{self.filename}-training-history.csv'
             dump_path = self.results_folder / filename
             df.to_csv(dump_path, index=False)
-            print(f"Training history saved to {dump_path}")
 
 
 class TrainingEvaluationCallback(Callback):
@@ -378,13 +379,14 @@ class TrainingEvaluationCallback(Callback):
         self.error_prob = opts.error_prob
         self.image_input = opts.image_input
         self.max_samples = 10000
+        self.eval_samples = opts.eval_test_samples
 
-        self.train_probs = None
-        self.train_probs_nn = None
+        self.train_logits = None
+        self.train_logits_nn = None
 
     def on_epoch_end(self, loss: float, logs: Interaction, epoch: int):
-        self.train_probs = logs.probs
-        self.train_probs_nn = logs.probs_nn
+        self.train_logits = logs.logits
+        self.train_logits_nn = logs.logits_nn
         self.compute(logs, training=True)
 
     def on_validation_end(self, loss: float, logs: Interaction, epoch: int):
@@ -403,13 +405,14 @@ class TrainingEvaluationCallback(Callback):
     def compute(self, logs: Interaction, training: bool):
 
         def trim(tensor: torch.Tensor, strict=False):
-            max_size = self.max_samples if not strict else 1000
+            # selects up to self.max_samples (or self.eval_samples if strict)
+            # of most recent positions from the tensor
+            max_size = self.max_samples if not strict else self.eval_samples
             return tensor if len(tensor) <= max_size else tensor[-max_size:]
 
         messages = crop_messages(logs.message) \
             if logs.message.dim() == 2 \
             else crop_messages(logs.message.argmax(-1))
-        # vocab_size = logs.probs.size(-1)  # includes additional symbols
 
         attr_keys = [k for k in logs.aux_input if k.startswith('target')]
         attr = torch.cat([logs.aux_input[k] for k in attr_keys], dim=1)
@@ -419,19 +422,30 @@ class TrainingEvaluationCallback(Callback):
         logs.aux['lexicon_size'] = len(unique_msg)
         logs.aux['actual_vocab_size'] = torch.unique(messages).numel()
 
-        entropy, length_probs = message_entropy(trim(logs.probs))
+        entropy, length_probs = message_entropy(logs.logits)
         max_entropy = self.channel.max_message_entropy(length_probs, True)
-        logs.aux['entropy_msg_as_a_whole'] = \
-            intervention.entropy(categorized_msg)
+        # logs.aux['expected_length'] = (torch.arange(logs.logits.size(1)) * length_probs.cpu()).sum(-1)
+        logs.aux['entropy_msg_as_a_whole'] = entropy_message_as_a_whole(
+            logs.logits, max_len=self.max_len, vocab_size=self.vocab_size,
+            erasure_channel=isinstance(self.channel, ErasureChannel),
+            n_samples=(10 if training else 200))
         logs.aux['entropy_msg'] = entropy
         logs.aux['entropy_max'] = max_entropy
+        logs.aux['MI_sent_received'] = mutual_info_sent_received(
+            logits_sent=logs.logits_nn,
+            logits_received=logs.logits,
+            max_len=self.max_len,
+            vocab_size=self.vocab_size,
+            erasure_channel=isinstance(self.channel, ErasureChannel),
+            n_samples=(10 if training else 200),
+        )
         logs.aux['max_rep'] = compute_max_rep(messages)
         logs.aux['redundancy'] = 1 - entropy / max_entropy
         if not training:
             logs.aux['KLD_train_test'] = relative_message_entropy(
-                trim(self.train_probs), trim(logs.probs))
+                trim(self.train_logits), trim(logs.logits))
             logs.aux['KLD_test_train'] = relative_message_entropy(
-                trim(logs.probs), trim(self.train_probs))
+                trim(logs.logits), trim(self.train_logits))
         else:
             logs.aux['KLD_train_test'] = None
             logs.aux['KLD_test_train'] = None
@@ -441,7 +455,7 @@ class TrainingEvaluationCallback(Callback):
                 trim(attr, True),
                 trim(messages, True))
 
-            mi_attr = compute_mi(trim(logs.probs), trim(attr), entropy)
+            mi_attr = compute_mi(trim(logs.logits), trim(attr), entropy)
             logs.aux['entropy_attr'] = mi_attr['entropy_attr']
             for i, key in enumerate(attr_keys):
                 key = key.replace('target_', '')
@@ -461,7 +475,7 @@ class TrainingEvaluationCallback(Callback):
             logs.aux.update({
                 k.replace('attr', 'input'): v for k, v
                 in compute_mi(
-                    trim(logs.probs),
+                    trim(logs.logits),
                     trim(input_cat),
                     entropy,
                 ).items()
@@ -469,7 +483,7 @@ class TrainingEvaluationCallback(Callback):
             logs.aux.update({
                 k.replace('attr', 'cat'): v for k, v
                 in compute_mi(
-                    trim(logs.probs),
+                    trim(logs.logits),
                     trim(attr),
                     entropy,
                 ).items()
@@ -488,21 +502,23 @@ class TrainingEvaluationCallback(Callback):
             logs.aux['lexicon_size_nn'] = len(unique_msg)
             logs.aux['actual_vocab_size_nn'] = torch.unique(messages).numel()
 
-            entropy, length_probs = message_entropy(trim(logs.probs_nn))
+            entropy, length_probs = message_entropy(logs.logits_nn)
             max_entropy = self.channel.max_message_entropy(length_probs, False)
+            # logs.aux['expected_length_nn'] = (torch.arange(logs.logits_nn.size(1)) * length_probs.cpu()).sum()
             logs.aux['max_rep_nn'] = compute_max_rep(messages)
-            logs.aux['entropy_whole_msg_nn'] = \
-                intervention.entropy(categorized_msg)
+            logs.aux['entropy_msg_as_a_whole_nn'] = entropy_message_as_a_whole(
+                logs.logits_nn, max_len=self.max_len, vocab_size=self.vocab_size,
+                erasure_channel=False, n_samples=(10 if training else 200))
             logs.aux['entropy_msg_nn'] = entropy
             logs.aux['entropy_max_nn'] = max_entropy
             logs.aux['redundancy_nn'] = 1 - entropy / max_entropy
             if not training:
                 logs.aux['KLD_train_test_nn'] = relative_message_entropy(
-                    trim(self.train_probs_nn),
-                    trim(logs.probs_nn))
+                    trim(self.train_logits_nn),
+                    trim(logs.logits_nn))
                 logs.aux['KLD_test_train_nn'] = relative_message_entropy(
-                    trim(logs.probs_nn),
-                    trim(self.train_probs))
+                    trim(logs.logits_nn),
+                    trim(self.train_logits))
             else:
                 logs.aux['KLD_train_test_nn'] = None
                 logs.aux['KLD_test_train_nn'] = None
@@ -513,9 +529,9 @@ class TrainingEvaluationCallback(Callback):
                     logs.aux.update({
                         k.replace('attr_dim', f'{key}_nn'): v[i]
                         for k, v in compute_mi(
-                            trim(logs.probs_nn),
+                            trim(logs.logits_nn),
                             trim(attr),
-                            entropy,
+                            entropy_message=entropy,
                         ).items() if 'attr_dim' in k
                     })
 
@@ -527,17 +543,17 @@ class TrainingEvaluationCallback(Callback):
                 logs.aux.update({
                     k.replace('attr', 'input_nn'): v for k, v in
                     compute_mi(
-                        trim(logs.probs_nn),
+                        trim(logs.logits_nn),
                         trim(input_cat),
-                        entropy,
+                        entropy_message=entropy,
                     ).items() if k != 'entropy_msg'
                 })
                 logs.aux.update({
                     k.replace('attr', 'cat_nn'): v
                     for k, v in compute_mi(
-                        trim(logs.probs_nn),
+                        trim(logs.logits_nn),
                         trim(attr),
-                        entropy
+                        entropy_message=entropy,
                     ).items()
                     if k != 'entropy_msg'
                 })

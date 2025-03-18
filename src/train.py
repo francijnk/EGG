@@ -16,24 +16,24 @@ import torch.utils.data
 
 import egg.core as core
 
-from ancm.trainers import Trainer
-from ancm.util import (
+from src.trainers import Trainer
+from src.util import (
     DataHandler,
     Dump,
     build_optimizer,
     print_training_results,
     is_jsonable,
 )
-from ancm.archs import (
+from src.archs import (
     RnnSenderGS,
     RnnReceiverGS,
     SenderReceiverRnnGS,
 )
-from ancm.callbacks import (
+from src.callbacks import (
     CustomProgressBarLogger,
     TrainingEvaluationCallback,
 )
-from ancm.eval import relative_message_entropy
+from src.eval import relative_message_entropy
 
 
 def get_params(params):
@@ -111,12 +111,11 @@ def get_params(params):
         "not applied (default: 300)"
     )
     parser.add_argument(
-        "--n_targets", type=int, default=None,
-        help="Number of additional targets in each sample (default: None)"
-    )
-    parser.add_argument(
         "--no_shuffle", action="store_false", default=True,
         help="Do not shuffle train data before every epoch (default: False)"
+    )
+    parser.add_argument(
+        "--double_precision", action="store_true", default=False,
     )
 
     parser.add_argument(
@@ -171,45 +170,17 @@ def check_args(args):
 def main(params):
     opts = get_params(params)
 
+    if opts.double_precision:
+        torch.set_default_dtype(torch.float64)
+
     device = torch.device("cuda" if opts.cuda else "cpu")
 
     data_handler = DataHandler(opts)
     train_data, eval_train_data, eval_test_data = data_handler.load_data(opts)
 
-    vocab_size = opts.vocab_size + 1 \
-        if opts.channel == 'erasure' else opts.vocab_size
-
-    sender = RnnSenderGS(
-        opts.vocab_size,
-        opts.embedding,
-        data_handler.n_features,
-        opts.sender_hidden,
-        opts.max_len,
-        opts.temperature_max,
-        opts.image_input,
-        opts.sender_cell,
-    )
-    receiver = RnnReceiverGS(
-        vocab_size,
-        opts.embedding,
-        opts.receiver_hidden,
-        data_handler.n_features,
-        opts.image_input,
-        opts.receiver_cell,
-    )
-    game = SenderReceiverRnnGS(
-        sender, receiver,
-        vocab_size=opts.vocab_size,
-        channel_type=opts.channel,
-        error_prob=opts.error_prob,
-        length_cost=opts.length_cost,
-        warmup_steps=opts.warmup_steps,
-        device=device,
-        seed=opts.random_seed,
-    )
+    game = SenderReceiverRnnGS(opts, device)
 
     optimizer = build_optimizer(game, opts)
-
     callbacks = [
         TrainingEvaluationCallback(opts, game.channel),
         CustomProgressBarLogger(
@@ -250,11 +221,11 @@ def main(params):
 
     # if we evaluated on the train set, compute KLD between the protocols
     for key in dump_dict['train']['evaluation']:
-        probs_p, probs_q = (train_dump.probs_nn, test_dump.probs_nn) \
-            if key == 'no noise' else (train_dump.probs, test_dump.probs)
+        logits_p, logits_q = (train_dump.logits_nn, test_dump.logits_nn) \
+            if key == 'no noise' else (train_dump.logits, test_dump.logits)
 
-        kld_train = relative_message_entropy(probs_p, probs_q).item()
-        kld_test = relative_message_entropy(probs_q, probs_p).item()
+        kld_train = relative_message_entropy(logits_p, logits_q).item()
+        kld_test = relative_message_entropy(logits_q, logits_p).item()
         dump_dict['train']['evaluation'][key]['KLD_train_test'] = kld_train
         dump_dict['test']['evaluation'][key]['KLD_train_test'] = kld_train
         dump_dict['train']['evaluation'][key]['KLD_test_train'] = kld_test
