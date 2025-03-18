@@ -182,11 +182,11 @@ def build_optimizer(game, opts):
     else:
         sender_params = [
             param for name, param in game.sender.named_parameters()
-            if 'temperature' not in name
+            if 'temperature' not in name  # and 'sos_embedding' not in name
         ]
         temperature_params = [
             param for name, param in game.sender.named_parameters()
-            if 'temperature' in name
+            if 'temperature' in name # or 'sos_embedding' in name
         ]
 
         return optimizer([

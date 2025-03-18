@@ -422,7 +422,7 @@ class TrainingEvaluationCallback(Callback):
         logs.aux['lexicon_size'] = len(unique_msg)
         logs.aux['actual_vocab_size'] = torch.unique(messages).numel()
 
-        entropy, length_probs = message_entropy(logs.logits)
+        entropy, length_probs = message_entropy(trim(logs.logits))
         max_entropy = self.channel.max_message_entropy(length_probs, True)
         # logs.aux['expected_length'] = (torch.arange(logs.logits.size(1)) * length_probs.cpu()).sum(-1)
         logs.aux['entropy_msg_as_a_whole'] = entropy_message_as_a_whole(
@@ -502,7 +502,7 @@ class TrainingEvaluationCallback(Callback):
             logs.aux['lexicon_size_nn'] = len(unique_msg)
             logs.aux['actual_vocab_size_nn'] = torch.unique(messages).numel()
 
-            entropy, length_probs = message_entropy(logs.logits_nn)
+            entropy, length_probs = message_entropy(trim(logs.logits_nn))
             max_entropy = self.channel.max_message_entropy(length_probs, False)
             # logs.aux['expected_length_nn'] = (torch.arange(logs.logits_nn.size(1)) * length_probs.cpu()).sum()
             logs.aux['max_rep_nn'] = compute_max_rep(messages)

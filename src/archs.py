@@ -267,10 +267,11 @@ class SenderReceiverRnnGS(nn.Module):
         # append EOS to each message
         eos = torch.zeros_like(message[:, :1, :])
         eos[:, 0, 0] = 1
+        log_eos = torch.log(eos)#.log_softmax(0)#clamp(min=torch.finfo(eos.dtype).min)
         message = torch.cat([message, eos], dim=1)
-        logits = torch.cat([logits, torch.log(eos)], dim=1)
+        logits = torch.cat([logits, log_eos], dim=1)
         message_nn = torch.cat([message_nn, eos], dim=1)  # no noise
-        logits_nn = torch.cat([logits_nn, torch.log(eos)], dim=1)
+        logits_nn = torch.cat([logits_nn, log_eos], dim=1)
 
         if isinstance(self.channel, NoChannel):
             receiver_output = self.receiver(message, receiver_input, aux_input)

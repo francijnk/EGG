@@ -14,7 +14,7 @@ from torch.distributions.utils import logits_to_probs
 from torch.distributions.categorical import Categorical
 import pyitlib.discrete_random_variable as drv
 
-from typing import Optional, List, Tuple, Dict
+from typing import Optional, Union, List, Tuple, Dict
 
 
 min_real = torch.finfo(torch.get_default_dtype()).min
@@ -309,7 +309,6 @@ def crop(sample):
     return torch.where(not_eosed, sample, 0)
 
 
-
 def mutual_info_sent_received(
     logits_sent: torch.Tensor,
     logits_received: torch.Tensor,
@@ -368,7 +367,7 @@ def compute_mi(
     attributes: torch.Tensor,
     entropy_message: Optional[torch.Tensor] = None,
     split_size: int = 1000,
-) -> Dict[str, float]:
+) -> Dict[str, Union[float, List[float]]]:
 
     if entropy_message is None:
         entropy_message, _ = message_entropy(probs, split_size)
