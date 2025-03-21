@@ -9,7 +9,6 @@ from Levenshtein import distance  # , ratio
 from scipy.stats import spearmanr  # pearsonr
 from torch.utils.data import Dataset
 from itertools import combinations
-from egg.zoo.language_bottleneck import intervention
 from torch.distributions.utils import logits_to_probs
 from torch.distributions.categorical import Categorical
 import pyitlib.discrete_random_variable as drv
@@ -155,22 +154,32 @@ def message_entropy(
     return entropy, length_probs
 
 
+def get_alphabets(
+    max_len: int,
+    vocab_size: int,
+    erasure_channel: bool,
+) -> Tuple[np.array, np.array]:
+
+    n_messages_sent = ((vocab_size - 1) ** np.arange(max_len + 1)).sum()
+    n_messages_received = ((vocab_size) ** np.arange(max_len + 1)).sum() \
+        if erasure_channel else n_messages_sent
+
+    return np.arange(n_messages_sent), np.arange(n_messages_received)
+
+
 def relative_message_entropy(
-    probs_p: torch.Tensor,
-    probs_q: torch.Tensor,
+    logits_p: torch.Tensor,
+    logits_q: torch.Tensor,
     order: int = 4,
     split_size: int = 1000,
 ) -> torch.Tensor:
     """
-    Computes conditional KLD: D( Mi | M1, ..., Mi-1 || M'i | M'1, ..., M'i-1)
+    Computes KLD between messages based on two symbol distributions.
     """
-    assert probs_p.numel() > 0 and probs_q.numel() > 0
-
-    logits_p = probs_p
-    logits_q = probs_q
+    assert logits_p.numel() > 0 and logits_q.numel() > 0
 
     logp_not_eosed = 0
-    symbol_kld = torch.zeros_like(probs_p[0, :, 0])
+    symbol_kld = torch.zeros_like(logits_p[0, :, 0])
 
     # iterate over all symbols except for the appended EOS
     for step in range(logits_p.size(1) - 1):
@@ -217,10 +226,6 @@ def relative_message_entropy(
                 c_p.unsqueeze(1),
                 c_log2_pq.unsqueeze(-1),
             ).view(-1)
-            if torch.any(c_kld.isnan()):
-                print('prob', c_p[:20])
-                print('logp', c_log2_p[:20])
-                print('logq', c_log2_q[:20])
 
             cond_kld.append(c_kld)
             prefix_logits.append(prefix_logits_p.logsumexp(0))
@@ -271,30 +276,11 @@ def compute_max_rep(messages: torch.Tensor) -> torch.Tensor:
 
 
 def joint_entropy(
-    probs: torch.Tensor,
+    logits: torch.Tensor,
     y: torch.Tensor,
     split_size: int = 1000,
-) -> torch.Tensor:
-    """
-    Given symbol probabilities representing realizations of a message M
-    (M = M1, ..., Mn) and corresponding realizations of a non-compound RV Y,
-    computes joint entropy H(M1, ..., Mn, Y) of message symbols and Y using
-    the formula H(M1, ..., Mn, Y) = H(Y) + H(M1, ..., Mn | Y).
-    """
-    assert len(y) == y.numel()
-    _, indices = torch.unique(y, dim=0, return_inverse=True)
-
-    entropy_msg_y = intervention.entropy(indices)  # H(Y)
-    for cat in range(indices.max() + 1):
-        cat_mask = indices == cat
-        prob_cat = (cat_mask).float().mean()
-        entropy_cat, _ = message_entropy(
-            probs[cat_mask],
-            split_size=split_size,
-        )
-        entropy_msg_y += prob_cat * entropy_cat  # P(Y = y) * H(M | Y = y)
-
-    return entropy_msg_y
+) -> float:
+    pass
 
 
 def crop(sample):
@@ -316,8 +302,13 @@ def mutual_info_sent_received(
     vocab_size: int,
     erasure_channel: bool = False,
     n_samples: int = 100,
+    estimator: str = 'PERKS',
 ):
     size = logits_sent.size()
+    n_messages_sent = ((vocab_size - 1) ** np.arange(max_len + 1)).sum()
+    n_messages_received = ((vocab_size) ** np.arange(max_len + 1)).sum() \
+        if erasure_channel else n_messages_sent
+
     sample_sent = Categorical(logits=logits_sent).sample((n_samples,))
     sample_received = Categorical(logits=logits_received).sample((n_samples,))
     sample_sent = sample_sent.reshape(size[0] * n_samples, size[1])
@@ -327,89 +318,118 @@ def mutual_info_sent_received(
     _, sent = torch.unique(sample_sent, return_inverse=True, dim=0)
     _, received = torch.unique(sample_received, return_inverse=True, dim=0)
 
-    n_messages_sent = ((vocab_size - 1) ** np.arange(max_len + 1)).sum()
-    n_messages_received = ((vocab_size) ** np.arange(max_len + 1)).sum() \
-        if erasure_channel else n_messages_sent
-
     return drv.information_mutual(
         sent.cpu().numpy(), received.cpu().numpy(),
-        estimator='PERKS',
-        Alphabet_X=np.arange(n_messages_sent.sum()),
-        Alphabet_Y=np.arange(n_messages_received.sum()),
+        estimator=estimator,
+        Alphabet_X=np.arange(n_messages_sent),
+        Alphabet_Y=np.arange(n_messages_received),
     ).item()
 
 
-def entropy_message_as_a_whole(
-    # messages: torch.Tensor,
+def mutual_info_message_attributes(
+    logits: torch.Tensor,
+    attributes: torch.Tensor,
+    max_len: int,
+    vocab_size: int,
+    # n_samples: int = 100,
+    erasure_channel: bool,
+    n_samples: int = 100,
+    estimator: str = 'PERKS',
+) -> float:
+
+    n_messages = np.sum(
+        (vocab_size if erasure_channel else vocab_size - 1)
+        ** np.arange(max_len + 1))
+
+    sample = Categorical(logits=logits).sample((n_samples,))
+    size = sample.size()
+    sample = crop(sample.reshape(size[0] * size[1], size[2]))
+
+    _, sample = torch.unique(sample, return_inverse=True, dim=0)
+    _, attributes = torch.unique(attributes, return_inverse=True, dim=0)
+    attributes = attributes.expand(n_samples, *attributes.size()).reshape(size[0] * size[1])
+
+    return drv.information_mutual(
+        sample.cpu().numpy(),
+        attributes.cpu().numpy(),
+        Alphabet_X=np.arange(n_messages),
+        estimator=estimator,
+    ).item()
+
+
+def message_entropy_mc(
     logits: torch.Tensor,
     max_len: int,
     vocab_size: int,
     n_samples: int = 100,
     erasure_channel: bool = False,
-):
-    # sample = messages
-    sample = Categorical(logits=logits).sample((n_samples,))
-    size = sample.size()
-    sample = crop(sample.reshape(size[0] * size[1], size[2]))
+    estimator: str = 'PERKS',
+) -> float:
+
     n_messages = np.sum(
         (vocab_size if erasure_channel else vocab_size - 1)
         ** np.arange(max_len + 1))
+    sample = Categorical(logits=logits).sample((n_samples,))
+    size = sample.size()
+    sample = crop(sample.reshape(size[0] * size[1], size[2]))
     _, sample = torch.unique(sample, return_inverse=True, dim=0)
     return drv.entropy(
         sample.cpu().numpy(),
-        estimator='PERKS',
+        estimator=estimator,
         Alphabet_X=np.arange(n_messages),
     ).item()
 
 
 def compute_mi(
-    probs: torch.Tensor,
+    logits: torch.Tensor,
     attributes: torch.Tensor,
+    max_len: int,
+    vocab_size: int,
+    erasure_channel: bool,
     entropy_message: Optional[torch.Tensor] = None,
-    split_size: int = 1000,
+    n_samples: int = 100,
+    estimator: str = 'PERKS',
 ) -> Dict[str, Union[float, List[float]]]:
 
     if entropy_message is None:
-        entropy_message, _ = message_entropy(probs, split_size)
+        entropy_message = message_entropy_mc(
+            logits,
+            max_len=max_len, vocab_size=vocab_size,
+            n_samples=n_samples, erasure_channel=erasure_channel,
+        )
 
-    if attributes.size(1) == 1:
-        entropy_attr = intervention.entropy(attributes)
-        if entropy_message is None or entropy_message > 1e-2:
-            entropy_msg_attr = joint_entropy(probs, attributes, split_size)
-        else:
-            entropy_msg_attr = 0
-        mi_msg_attr = entropy_message + entropy_attr - entropy_msg_attr
-        vi_msg_attr = 2 * entropy_msg_attr - entropy_message - entropy_attr
-        proficiency_msg_attr = mi_msg_attr / entropy_attr
-        redundancy_msg_attr = mi_msg_attr / (entropy_message + entropy_attr)
+    _, attr = torch.unique(attributes, return_inverse=True, dim=0)
+    entropy_attr = drv.entropy(attr.cpu().numpy(), estimator=estimator).item()
+    mi_msg_attr = mutual_info_message_attributes(
+        logits=logits, attributes=attributes, max_len=max_len,
+        vocab_size=vocab_size, n_samples=n_samples,
+        erasure_channel=erasure_channel)
+    proficiency_msg_attr = mi_msg_attr / entropy_attr
+    redundancy_msg_attr = mi_msg_attr / (entropy_message + entropy_attr)
 
-        output = {
-            'entropy_msg': entropy_message,
-            'entropy_attr': entropy_attr,
-            'mutual_info_msg_attr': mi_msg_attr,
-            'variation_of_info_msg_attr': vi_msg_attr,
-            'proficiency_msg_attr': proficiency_msg_attr,
-            'redundancy_msg_attr': redundancy_msg_attr,
-        }
+    output = {
+        'entropy_msg': entropy_message,
+        'entropy_attr': entropy_attr,
+        'mutual_info_msg_attr': mi_msg_attr,
+        'proficiency_msg_attr': proficiency_msg_attr,
+        'redundancy_msg_attr': redundancy_msg_attr,
+    }
 
-    else:  # return values per attribute dimension instead
-        _, categorical = torch.unique(attributes, dim=0, return_inverse=True)
-        entropy_attr = intervention.entropy(categorical)
+    if attributes.size(1) > 1:
         entropy_attr_dim = [
-            intervention.entropy(attributes[:, i])
+            drv.entropy(
+                attributes[:, i].cpu().numpy(), estimator=estimator,
+            ).item()
             for i in range(attributes.size(-1))]
-        entropy_msg_attr_dim = [
-            joint_entropy(probs, attributes[:, i], split_size)
-            for i in range(attributes.size(1))]
         mi_msg_attr_dim = [
-            entropy_message + entropy_attr - entropy_msg_attr
-            for entropy_attr, entropy_msg_attr
-            in zip(entropy_attr_dim, entropy_msg_attr_dim)
+            mutual_info_message_attributes(
+                logits, attributes[:, i],
+                max_len=max_len,
+                vocab_size=vocab_size,
+                n_samples=n_samples,
+                erasure_channel=erasure_channel)
+            for i in range(attributes.size(1))
         ]
-        vi_msg_attr_dim = [
-            2 * entropy_msg_attr - entropy_message - entropy_attr
-            for entropy_attr, entropy_msg_attr
-            in zip(entropy_attr_dim, entropy_msg_attr_dim)]
         redundancy_msg_attr_dim = [
             mi_msg_attr / (entropy_message + entropy_attr)
             for mi_msg_attr, entropy_attr
@@ -419,15 +439,12 @@ def compute_mi(
             for mi_msg_attr, entropy_attr
             in zip(mi_msg_attr_dim, entropy_attr_dim)]
 
-        output = {
-            'entropy_msg': entropy_message,
-            'entropy_attr': entropy_attr,
+        output.update({
             'entropy_attr_dim': entropy_attr_dim,
             'mutual_info_msg_attr_dim': mi_msg_attr_dim,
-            'variation_of_info_msg_attr_dim': vi_msg_attr_dim,
             'proficiency_msg_attr_dim': proficiency_msg_attr_dim,
             'redundancy_msg_attr_dim': redundancy_msg_attr_dim,
-        }
+        })
 
     return output
 

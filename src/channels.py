@@ -143,6 +143,7 @@ class ErasureChannel(Channel):
             # adjust symbol log-probs
             logits[..., 1:-1] += np.log(1 - self.p)
             logits[..., -1] = np.log(self.p) + torch.log(1 - logits[..., 0].exp())
+            assert torch.allclose(logits.logsumexp(-1).exp(), torch.ones_like(logits[..., 0]))
             return messages, logits
 
         else:
@@ -172,6 +173,7 @@ class ErasureChannel(Channel):
             logits = logits.clone()
             logits[..., 1:-1] += np.log(1 - self.p)
             logits[..., -1] = np.log(self.p) + torch.log(1 - logits[..., 0].exp())
+            assert torch.allclose(logits.logsumexp(-1).exp(), torch.ones_like(logits[..., 0]))
             return messages, logits
 
 

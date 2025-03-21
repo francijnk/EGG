@@ -95,6 +95,7 @@ class RnnSenderGS(nn.Module):
         self.sos_embedding = nn.Parameter(torch.zeros(opts.embedding))
         self.vocab_size = opts.vocab_size
 
+        self.temperature_eval = opts.evaluation_temperature
         self.temperature_max = opts.temperature_max
         self.hidden_to_inv_temperature = nn.Sequential(
             nn.Linear(opts.sender_hidden, 1, bias=False),
@@ -115,27 +116,47 @@ class RnnSenderGS(nn.Module):
         )
         self.reset_parameters()
 
-    def hidden_to_temperature(self, hidden: torch.Tensor):
-        # predict inverse temperature and scale it
-        tau_0 = self.temperature_max ** -1
-        return (self.hidden_to_inv_temperature(hidden) + tau_0) ** -1
+    def step_temperature(self, hidden):
+        if self.training or self.temperature_eval is None:
+            # predict inverse temperature and scale it
+            tau_0 = self.temperature_max ** -1
+            return (self.hidden_to_inv_temperature(hidden) + tau_0) ** -1
+        else:
+            return self.temperature_eval
 
-    def gumbel_softmax_sample(self, logits: torch.Tensor, temperature: float):
+    def gumbel_softmax_sample(self, logits, temperature):
         if self.training:
             sample = RelaxedOneHotCategorical(
                 logits=logits,
                 temperature=temperature,
             ).rsample()
+        elif temperature is None or (not isinstance(temperature, torch.Tensor) and temperature == 0):
+            # apply argmax and return a one hot tensor and original log-probs
+            # log-probs do not reflect the distribution of discrete symbols
+            # and hence cannot be used to compute entropy of resulting messages
+            size = logits.size()
+            indexes = logits.argmax(-1)
+            one_hots = torch.zeros_like(logits).view(-1, size[-1])
+            one_hots.scatter_(1, indexes.view(-1, 1), 1)
+            one_hots = one_hots.view(size)
+            return one_hots, logits
+            # elif temperature is not None and temperature > 0:
         else:
             # argmax of GS sample is equivalent to sampling from the original
             # distribution: Softmax(logits, temperature)
             sample = OneHotCategorical(logits=logits / temperature).sample()
 
-        logits = (logits.detach() / temperature.detach()).log_softmax(-1) \
-            if isinstance(temperature, torch.Tensor) \
-            else (logits.detach() / temperature).log_softmax(-1)
+        if isinstance(temperature, torch.Tensor):
+            logits = (logits.detach() / temperature.detach()).log_softmax(-1)
+        else:
+            logits = (logits.detach() / temperature).log_softmax(-1)
 
         return sample, logits
+
+        # logits = (logits.detach() / temperature.detach()).log_softmax(-1) \
+        #     if isinstance(temperature, torch.Tensor) \
+        #     else (logits.detach() / temperature).log_softmax(-1)
+        # return sample, logits
 
     def reset_parameters(self):
         nn.init.normal_(self.sos_embedding, 0.0, 0.01)
@@ -154,7 +175,7 @@ class RnnSenderGS(nn.Module):
                 h_t = self.cell(e_t, prev_hidden)
 
             step_logits = self.hidden_to_output(h_t)
-            step_temperature = self.hidden_to_temperature(h_t)
+            step_temperature = self.step_temperature(h_t)
 
             symbols, symbol_probs = self.gumbel_softmax_sample(
                 step_logits,
@@ -267,11 +288,11 @@ class SenderReceiverRnnGS(nn.Module):
         # append EOS to each message
         eos = torch.zeros_like(message[:, :1, :])
         eos[:, 0, 0] = 1
-        log_eos = torch.log(eos)#.log_softmax(0)#clamp(min=torch.finfo(eos.dtype).min)
+        # log_eos = torch.log(eos)  # .log_softmax(0)#clamp(min=torch.finfo(eos.dtype).min)
         message = torch.cat([message, eos], dim=1)
-        logits = torch.cat([logits, log_eos], dim=1)
+        logits = torch.cat([logits, torch.log(eos)], dim=1)
         message_nn = torch.cat([message_nn, eos], dim=1)  # no noise
-        logits_nn = torch.cat([logits_nn, log_eos], dim=1)
+        logits_nn = torch.cat([logits_nn, torch.log(eos)], dim=1)
 
         if isinstance(self.channel, NoChannel):
             receiver_output = self.receiver(message, receiver_input, aux_input)
@@ -327,7 +348,7 @@ class SenderReceiverRnnGS(nn.Module):
 
             z += add_mask
             loss += step_loss * add_mask
-            if warmup:
+            if not warmup:
                 loss += self.length_cost * step * add_mask
             length += add_mask.detach() * (1 + step)
             length_nn += add_mask_nn * (1 + step)
@@ -359,7 +380,7 @@ class SenderReceiverRnnGS(nn.Module):
         # the remainder of the probability mass
         z += not_eosed_before
         loss += step_loss * not_eosed_before
-        if warmup:
+        if not warmup:
             loss += self.length_cost * step * not_eosed_before
         length += (step + 1) * not_eosed_before.detach()
         length_nn += (step + 1) * not_eosed_before_nn

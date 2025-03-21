@@ -69,7 +69,7 @@ def get_params(params):
     parser.add_argument(
         "--embedding", type=int, default=12,
         help="Dimensionality of the embedding hidden layer for the agents "
-        "(default: 12)"
+        "(default: 12)",
     )
     parser.add_argument(
         "--sender_cell", type=str, default="lstm",
@@ -90,56 +90,63 @@ def get_params(params):
         help="Learning rate for Receiver's parameters (default: 1e-1)"
     )
     parser.add_argument(
-        "--length_cost", type=float, default=1e-2, help="Message length cost"
-    )
-    parser.add_argument(
-        "--mode", type=str, default="gs",
-        help="Selects whether Reinforce or GumbelSoftmax relaxation is used "
-        "for training (default: gs)"
+        "--length_cost", type=float, default=1e-2,
+        help="Message length cost (default: 1e-2)",
     )
     parser.add_argument(
         "--image_input", action="store_true", default=False,
-        help="Run the image data variant of the game"
+        help="Run the image data variant of the game (default: False)"
     )
     parser.add_argument(
         "--optim", type=str, default="rmsprop",
-        help="Optimizer to use {adam, rmsprop} (default: rmsprop)"
+        help="Optimizer to use {adam, rmsprop} (default: rmsprop)",
     )
     parser.add_argument(
         "--warmup_steps", type=int, default=0,
         help="Number of initial training steps, during which length cost is "
-        "not applied (default: 300)"
+        "not applied (default: 0)",
     )
     parser.add_argument(
         "--no_shuffle", action="store_false", default=True,
-        help="Do not shuffle train data before every epoch (default: False)"
+        help="Do not shuffle train data before every epoch (default: False)",
     )
     parser.add_argument(
         "--double_precision", action="store_true", default=False,
+        help="Use double predicion floating point numbers (default: False)",
     )
-
     parser.add_argument(
-        "--temperature_lr", type=float, default=None,
-        help="Temperature LR to be used with predicted/trainable temperature"
+        "--temperature_lr", type=float, default=1e-4,
+        help="Temperature LR to be used with the temperature module"
+        "(default: 1e-4)",
     )
     parser.add_argument(
         "--temperature_max", default=3, type=float,
         help="Maximum temperature value to be used with predicted "
-        "temperature (default: 3)"
+        "temperature (default: 3)",
+    )
+    parser.add_argument(
+        "--evaluation_temperature", default=None, type=float,
+        help="Temperature value to be applied on evaluation. "
+        "If None, the setting during training and evaluation is the same. "
+        "If the value is 0, argmax is applied on evaluation. (default: None)",
     )
 
     # W&B
     parser.add_argument(
-        "--wandb_entity", type=str, default=None, help="WandB entity name"
+        "--wandb_entity", type=str, default=None,
+        help="WandB entity name (default: None)",
     )
     parser.add_argument(
-        "--wandb_project", type=str, default=None, help="WandB project name"
+        "--wandb_project", type=str, default=None,
+        help="WandB project name (default: None)",
     )
     parser.add_argument(
-        "--wandb_run_id", type=str, default=None, help="WandB run id"
+        "--wandb_run_id", type=str, default=None,
+        help="WandB run id (default: None)",
     )
     parser.add_argument(
-        "--wandb_group", type=str, default=None, help="WandB group name"
+        "--wandb_group", type=str, default=None,
+        help="WandB group name (default: None)",
     )
 
     args = core.init(parser, params)

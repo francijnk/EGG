@@ -10,13 +10,16 @@ from typing import Optional
 
 from src.eval import (
     message_entropy,
+    message_entropy_mc,
     unique_samples,
     compute_max_rep,
     compute_symbol_removal_accuracy,
     compute_top_sim,
     compute_mi,
+    mutual_info_sent_received,
 )
 from src.interaction import Interaction
+from src.channels import ErasureChannel
 
 from egg.core.util import find_lengths, get_opts
 from egg.core.batch import Batch
@@ -468,9 +471,6 @@ class Dump:
                 'unique_samples_per_target_cat': None,
                 'unique_cats_per_msg': None,
                 'average_length': lengths.float().mean() - 1,
-                # (
-                #     torch.arange(logits.size(1)) * length_probs.cpu()
-                # ).sum(),  # does not include additional EOS
                 'actual_vocab_size': torch.unique(messages).numel(),
                 'accuracy': (r_outputs == labels).float().mean(),
                 'accuracy_symbol_removal': compute_symbol_removal_accuracy(
@@ -479,9 +479,20 @@ class Dump:
                 'redundancy': 1 - entropy / max_entropy,
                 'topsim': None,
                 'entropy_msg': entropy,
-                'entropy_msg_as_a_whole':
-                    intervention.entropy(categorized_messages),
+                'entropy_msg_mc': message_entropy_mc(
+                    logits,
+                    max_len=opts.max_len,
+                    vocab_size=opts.vocab_size,
+                    n_samples=500 if opts.image_input else 100,
+                    erasure_channel=isinstance(self.channel, ErasureChannel)),
                 'entropy_max': max_entropy,
+                'mutual_info_sent_received': mutual_info_sent_received(
+                    logits_sent=self.logits_nn,
+                    logits_received=self.logits,
+                    max_len=opts.max_len,
+                    vocab_size=opts.vocab_size,
+                    erasure_channel=isinstance(self.channel, ErasureChannel),
+                    n_samples=500 if opts.image_input else 100),
             }
 
             if opts.image_input:
@@ -490,7 +501,14 @@ class Dump:
                         del results[key][k]
 
                 results[key]['topsim'] = compute_top_sim(t_attributes, messages)
-                mi_attr = compute_mi(logits, t_attributes, entropy)
+                mi_attr = compute_mi(
+                    logits, t_attributes,
+                    max_len=opts.max_len,
+                    vocab_size=opts.vocab_size,
+                    erasure_channel=isinstance(self.channel, ErasureChannel),
+                    entropy_message=entropy,
+                    n_samples=200 if opts.image_input else 100,
+                )
                 results[key]['entropy_attr'] = mi_attr['entropy_attr']
                 for i, name in enumerate(attr_names):
                     results[key].update({
@@ -517,11 +535,24 @@ class Dump:
                 inp = inp.unsqueeze(-1).to(torch.float)
                 results[key].update({
                     k.replace('attr', 'input'): v for k, v
-                    in compute_mi(logits, inp, entropy).items()
+                    in compute_mi(
+                        logits, inp,
+                        max_len=opts.max_len,
+                        vocab_size=opts.vocab_size,
+                        erasure_channel=isinstance(self.channel, ErasureChannel),
+                        entropy_message=entropy,
+                        n_samples=200 if opts.image_input else 100,
+                    ).items()
                 })
                 results[key].update({
                     k.replace('attr', 'category'): v
-                    for k, v in compute_mi(logits, t_attributes, entropy).items()
+                    for k, v in compute_mi(
+                        logits, t_attributes,
+                        max_len=opts.max_len,
+                        vocab_size=opts.vocab_size,
+                        erasure_channel=isinstance(self.channel, ErasureChannel),
+                        entropy_message=entropy,
+                    ).items()
                 })
 
             # convert tensors to numeric
