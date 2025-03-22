@@ -1,10 +1,10 @@
 #!/bin/bash
-#SBATCH -J v5_2
+#SBATCH -J v5
 #SBATCH -N 1
 #SBATCH --mem=0
 #SBATCH --exclusive
 #SBATCH --cpus-per-task 6
-#SBATCH -t 12:00:00
+#SBATCH -t 16:00:00
 #SBATCH -p genoa
 #SBATCH --mail-type=BEGIN,END
 #SBATCH -o job_outputs/slurm-%A.out
@@ -15,9 +15,9 @@ module load 2024
 cd $HOME/EGG/
 pwd
 INPUT_FILE=$HOME/EGG/src/data/input_data/visa-5-256.npz
-HPARAMS_FILE=$HOME/EGG/src/jobs/params_visa5_2.txt
+HPARAMS_FILE=$HOME/EGG/src/jobs/params_visa5_all_filtered.txt
 JOB_FILE=$HOME/EGG/src/jobs/job_visa.sh
-OUTPUT_DIR=$HOME/EGG/src/runs/03_21/visa20/
+OUTPUT_DIR=$HOME/EGG/src/runs/03_21/visa_missing/
 CUBLAS_WORKSPACE_CONFIG=:4096:2
 
 cp $INPUT_FILE $TMPDIR/visa.npz
@@ -38,7 +38,7 @@ rsync $JOB_FILE $OUTPUT_DIR/job/
 # Execute a Python program located in $HOME, that takes an input file and output directory as arguments.
 for i in {0..16}; do
     for ((j=32*i+1; j<=32*(i+1); j++)); do
-        if ((j <= 190)); then
+        if ((j <= 173)); then
             srun --ntasks=1 --exclusive \
             python -m src.train \
             --data_path $TMPDIR/visa.npz \
