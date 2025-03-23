@@ -510,6 +510,7 @@ class Dump:
                     n_samples=200 if opts.image_input else 100,
                 )
                 results[key]['entropy_attr'] = mi_attr['entropy_attr']
+                results[key]['mutual_info_msg_attr'] = mi_attr['entropy_attr']
                 for i, name in enumerate(attr_names):
                     results[key].update({
                         k.replace('attr_dim', name): v[i]

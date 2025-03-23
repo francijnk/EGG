@@ -107,7 +107,9 @@ class CustomProgressBarLogger(Callback):
             'entropy_max', 'time',
             'entropy_inp', 'entropy_cat', 'entropy_shape', 'entropy_color',
             'entropy_xpos', 'entropy_ypos', 'entropy_rotation', 'entropy_attr',
-            'redundancy_', 'mutual_info', 'variation', 'proficiency_rotation',
+            'redundancy_',  # 'mutual_info',
+            'variation', 'proficiency_rotation',
+            'entropy_msg_1', 'entropy_msg_mc_mle',
         ]
 
         self.progress = CustomProgress(
@@ -181,8 +183,8 @@ class CustomProgressBarLogger(Callback):
                 od['messages'] = 'baseline'
                 continue
             elif colname == 'messages' and self.display_nn:
-                od['messages'] = 'sent' if noise else 'received'
-                row_values.append('sent' if noise else 'received')
+                od['messages'] = 'received' if noise else 'sent'
+                row_values.append('received' if noise else 'sent')
             else:
                 row_values.append(str(od[colname]))
             row.add_column(
@@ -209,7 +211,9 @@ class CustomProgressBarLogger(Callback):
                 .replace('proficiency', 'C')
                 .replace('msg_as_a_whole', 'whole_msg')
                 .replace('actual_', '')
-                .replace('_msg_', '_'))
+                .replace('_msg_', '_')
+                .replace('mutual_info', 'MI')
+            )
             row.add_column(
                 print_name,
                 justify='right',
@@ -446,14 +450,26 @@ class TrainingEvaluationCallback(Callback):
         logs.aux['entropy_msg'] = entropy
         logs.aux['entropy_max'] = max_entropy
         logs.aux['time_entropy_msg'] = entropy_time
-        logs.aux['entropy_msg_mc'], logs.aux['time_entropy_msg_mc'] = self.timer(
+        logs.aux['entropy_msg_mc_perks'], logs.aux['time_entropy_msg_mc_perks'] = self.timer(
             message_entropy_mc,
             trim(logs.logits),
-            max_len=self.max_len,
-            vocab_size=self.vocab_size,
-            n_samples=mc_samples,
-            erasure_channel=isinstance(self.channel, ErasureChannel),
-        )
+            max_len=self.max_len, vocab_size=self.vocab_size, n_samples=mc_samples,
+            erasure_channel=isinstance(self.channel, ErasureChannel))
+        logs.aux['entropy_msg_mc_mle'], logs.aux['time_entropy_msg_mc_mle'] = self.timer(
+            message_entropy_mc,
+            trim(logs.logits),
+            max_len=self.max_len, vocab_size=self.vocab_size, n_samples=mc_samples,
+            erasure_channel=isinstance(self.channel, ErasureChannel))
+        logs.aux['entropy_msg_1_perks'], logs.aux['time_entropy_msg_1_perks'] = self.timer(
+            message_entropy_mc,
+            trim(logs.logits),
+            max_len=self.max_len, vocab_size=self.vocab_size, n_samples=1,
+            erasure_channel=isinstance(self.channel, ErasureChannel))
+        logs.aux['entropy_msg_1_mle'], logs.aux['time_entropy_msg_1_mle'] = self.timer(
+            message_entropy_mc,
+            trim(logs.logits),
+            max_len=self.max_len, vocab_size=self.vocab_size, n_samples=1,
+            erasure_channel=isinstance(self.channel, ErasureChannel))
         logs.aux['max_rep'] = compute_max_rep(messages)
         logs.aux['redundancy'] = 1 - entropy / max_entropy
         if not training:
@@ -547,18 +563,29 @@ class TrainingEvaluationCallback(Callback):
             # logs.aux['expected_length_nn'] = torch.sum(
             #     torch.arange(logs.logits_nn.size(1)) * length_probs.cpu()))
             logs.aux['max_rep_nn'] = compute_max_rep(messages)
-            entropy_mc, entropy_mc_time = self.timer(
-                message_entropy_mc,
-                trim(logs.logits_nn),
-                max_len=self.max_len,
-                vocab_size=self.vocab_size,
-                n_samples=mc_samples,
-                erasure_channel=False)
             logs.aux['entropy_msg_nn'] = entropy
             logs.aux['entropy_max_nn'] = max_entropy
-            logs.aux['entropy_msg_mc_nn'] = entropy_mc
             logs.aux['time_entropy_msg_nn'] = entropy_time
-            logs.aux['time_entropy_msg_mc_nn'] = entropy_mc_time
+            logs.aux['entropy_msg_mc_perks_nn'], logs.aux['time_entropy_msg_mc_perks_nn'] = self.timer(
+                message_entropy_mc,
+                trim(logs.logits_nn),
+                max_len=self.max_len, vocab_size=self.vocab_size, n_samples=mc_samples,
+                erasure_channel=False)
+            logs.aux['entropy_msg_mc_mle_nn'], logs.aux['time_entropy_msg_mc_mle_nn'] = self.timer(
+                message_entropy_mc,
+                trim(logs.logits_nn),
+                max_len=self.max_len, vocab_size=self.vocab_size, n_samples=mc_samples,
+                erasure_channel=False)
+            logs.aux['entropy_msg_1_perks_nn'], logs.aux['time_entropy_msg_1_perks_nn'] = self.timer(
+                message_entropy_mc,
+                trim(logs.logits_nn),
+                max_len=self.max_len, vocab_size=self.vocab_size, n_samples=1,
+                erasure_channel=False)
+            logs.aux['entropy_msg_1_mle_nn'], logs.aux['time_entropy_msg_1_mle_nn'] = self.timer(
+                message_entropy_mc,
+                trim(logs.logits_nn),
+                max_len=self.max_len, vocab_size=self.vocab_size, n_samples=1,
+                erasure_channel=False)
             logs.aux['redundancy_nn'] = 1 - entropy / max_entropy
             if not training:
                 logs.aux['KLD_train_test_nn'] = relative_message_entropy(
