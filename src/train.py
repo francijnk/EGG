@@ -51,7 +51,7 @@ def get_params(params):
 
     parser.add_argument(
         "--channel", type=str, default=None,
-        help="Communication channel type {erasure, symmetric, deletion} "
+        help="Communication channel type {erasure, deletion} "
         "(default: None)"
     )
     parser.add_argument(
@@ -160,8 +160,8 @@ def check_args(args):
     args.channel = args.channel.lower() if args.channel else args.channel
     assert (
         args.channel is None
-        or args.channel in ("erasure", "symmetric", "deletion")
-    ), 'The only channels implemented are "erasure", "symmetric", "deletion"'
+        or args.channel in ("erasure", "deletion")
+    ), 'The only channels implemented are "erasure", "deletion"'
 
     if args.channel is None or args.error_prob == 0:
         args.error_prob = 0.0

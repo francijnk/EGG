@@ -9,7 +9,7 @@ from PIL import Image
 from tqdm import tqdm
 from sklearn.model_selection import train_test_split
 
-from ancm.data.obverter.render import (
+from src.data.obverter.render import (
     colors,
     object_types,
     render_scene,

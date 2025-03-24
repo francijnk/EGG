@@ -4,7 +4,6 @@ import numpy as np
 import torch.nn as nn
 from scipy.stats import binom
 from abc import ABCMeta, abstractmethod
-from torch.distributions.utils import logits_to_probs, probs_to_logits
 
 
 class Channel(nn.Module, metaclass=ABCMeta):
@@ -63,7 +62,9 @@ class Channel(nn.Module, metaclass=ABCMeta):
         # clamping log probabilities to (0, 1) prevents nan entropy values for
         # negative prob. values that may occasionally happen, for symbols that
         # are almost certainly eosed
-        length_log2_prob = torch.log2(length_probs.clamp(0, 1)).clamp(min=self.min_real)
+        length_log2_prob = torch.log2(
+            length_probs.clamp(0, 1)
+        ).clamp(min=self.min_real)
 
         max_entropy = (-length_probs.clamp(0, 1) * length_log2_prob).sum()  # H(L)
         for i in range(len(length_probs)):
@@ -155,7 +156,6 @@ class ErasureChannel(Channel):
             discrete_symbols = messages.argmax(-1)
             non_eos_mask = discrete_symbols != 0
             target_mask = self.sample_targets(non_eos_mask.sum())
-            # n_targets = target_mask.sum()
 
             # prepare the index and source of replacement
             target_messages = torch.zeros_like(messages).bool()
@@ -188,7 +188,6 @@ class DeletionChannel(Channel):
         self.all_combos = torch.cartesian_prod(*binary.expand(self.max_len, -1))
 
         n_deleted = self.all_combos.sum(-1)
-        # self.combo_probs = self.p ** n_deleted * (1 - self.p) ** (self.max_len - n_deleted)
         self.combo_logits = (
             np.log(self.p) * n_deleted
             + np.log(1 - self.p) * (self.max_len - n_deleted)
@@ -342,7 +341,6 @@ class DeletionChannel(Channel):
             size = messages.size()
             messages = messages.clone()
             target_mask = self.sample_targets(size[:-1])
-            # n_targets = target_mask.sum()
 
             # shift target symbols to the end of the message
             self.shift(messages, target_mask)
@@ -395,95 +393,3 @@ class DeletionChannel(Channel):
             messages[target_mask] = replacement_probs
 
             return messages, self.adjust_logits(logits)
-
-
-class SymmetricChannel(Channel):
-    """
-    Replaces each symbol with a different symbol with a given probability.
-    The replacement symbol is randomly sampled from a uniform distribution.
-    """
-
-    def process(self, messages, logits, apply_noise):
-        if not apply_noise:
-            return messages, logits.clone()
-
-        elif self.training:
-            # reshape & sample targets
-            size = messages.size()
-            messages = messages.clone().view(size[0] * size[1], size[-1])
-            target_mask = self.sample_targets(messages[:, 1:].size())
-            n_targets = target_mask.sum()
-
-            # get target positions & highest symbol probs
-            rows = torch.arange(len(target_mask)).to(self.device)
-            cols = torch.arange(size[-1] - 1).to(self.device)
-            target_rows = rows.expand(size[-1] - 1, -1).t()[target_mask]
-            target_cols = cols.expand(target_mask.size())[target_mask]
-
-            # compute probability adjustment for each symbol with a target
-            targets = messages.clone()[target_rows, target_cols]
-            adjustment = targets.expand(size[-1] - 1, -1).t() / (size[-1] - 2)
-            idx = (torch.arange(len(adjustment)).to(self.device), target_cols)
-            adjustment[torch.arange(len(adjustment)), target_cols] = -targets
-
-            # adjust relaxed symbols
-            messages[target_rows, 1:] += adjustment
-            messages = messages.view(size)
-
-            # adjust symbol log-probs
-            logits = logits.clone()
-            logp_replacement = torch.log(
-                (1 - logits[..., 1:].exp() - logits[..., :1].exp()).clamp(0, 1)
-            ) + np.log(self.p / (size[-1] - 2))
-            # logp_replacement += np.log(self.p / (size[-1] - 2))
-            logits[..., 1:] += np.log(1 - self.p)
-            logits[..., 1:] = torch.logaddexp(logits[..., 1:], logp_replacement)
-            return messages, logits
-            assert not torch.any(logits.isnan())
-            assert torch.allclose(logits.exp().sum(-1), torch.ones_like(logits[..., 0]))
-
-        else:
-            # reshape, apply argmax, exclude EOS, sample symbols to be replaced
-            size = messages.size()
-            messages = messages.clone().view(size[0] * size[1], size[-1])
-            discrete_symbols = messages.argmax(-1)
-            non_eos_ids = torch.arange(len(messages)).to(self.device)[discrete_symbols != 0]
-            target_mask = self.sample_targets(non_eos_ids.numel())
-            n_targets = target_mask.sum()
-
-            # get target positions & symbols
-            target_rows = non_eos_ids[target_mask]
-            target_symbols = discrete_symbols[target_rows]
-
-            # find candidate symbols different from target symbols
-            n_targets = target_symbols.numel()
-            symbols = torch.arange(1, messages.size(-1)).to(self.device).expand(n_targets, -1)
-            candidate_mask = symbols != target_symbols.unsqueeze(-1)
-            candidate_symbols = symbols[candidate_mask].view(-1, size[-1] - 2)
-
-            # sample replacement symbols
-            replacement_ids = torch.randint(
-                size=(n_targets,),
-                high=messages.size(-1) - 2,
-                generator=self.generator,
-                device=self.device,
-            )
-            idx = (torch.arange(n_targets).to(self.device), replacement_ids)
-            replacement_symbols = candidate_symbols[idx]
-
-            # replace probabilities
-            messages[target_rows] = 0
-            messages[target_rows, replacement_symbols] = 1
-            messages = messages.view(size)
-
-            # adjust symbol log-probs
-            logits = logits.clone()
-            logp_replacement = torch.log(
-                (1 - logits[..., 1:].exp() - logits[..., :1].exp()).clamp(0, 1)
-            ) + np.log(self.p / (size[-1] - 2))
-            # logp_replacement += np.log(self.p / (size[-1] - 2))
-            logits[..., 1:] += np.log(1 - self.p)
-            logits[..., 1:] = torch.logaddexp(logits[..., 1:], logp_replacement)
-            assert torch.allclose(logits.exp().sum(-1), torch.ones_like(logits[..., 0]))
-            assert not torch.any(logits.isnan())
-            return messages, logits

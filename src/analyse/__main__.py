@@ -6,8 +6,8 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import tabulate
 
-import ancm.analyse.style
-from ancm.analyse.util import load_data, get_long_data, close_plot
+import src.analyse.style
+from src.analyse.util import load_data, get_long_data, close_plot
 
 
 def parse_args():

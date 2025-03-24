@@ -1,8 +1,10 @@
-import time
 import torch
 import wandb
 import argparse
+import numpy as np
 import pandas as pd
+from torch.distributions.categorical import Categorical
+import pyitlib.discrete_random_variable as drv
 
 from collections import OrderedDict, defaultdict
 
@@ -19,7 +21,7 @@ from rich.text import Text
 
 from src.eval import (
     message_entropy,
-    message_entropy_mc,
+    # message_entropy_mc,
     relative_message_entropy,
     mutual_info_sent_received,
     compute_mi,
@@ -108,8 +110,11 @@ class CustomProgressBarLogger(Callback):
             'entropy_inp', 'entropy_cat', 'entropy_shape', 'entropy_color',
             'entropy_xpos', 'entropy_ypos', 'entropy_rotation', 'entropy_attr',
             'redundancy_',  # 'mutual_info',
-            'variation', 'proficiency_rotation',
+            'proficiency_msg_rotation',
             'entropy_msg_1', 'entropy_msg_mc_mle',
+            'mutual_info_msg_color', 'mutual_info_msg_shape', 'mutual_info_msg_xpos',
+            'mutual_info_msg_ypos', 'mutual_info_msg_rotation',
+            'proficiency_msg_attr'
         ]
 
         self.progress = CustomProgress(
@@ -209,7 +214,6 @@ class CustomProgressBarLogger(Callback):
                 .replace('entropy', 'H')
                 .replace('redundancy', 'R')
                 .replace('proficiency', 'C')
-                .replace('msg_as_a_whole', 'whole_msg')
                 .replace('actual_', '')
                 .replace('_msg_', '_')
                 .replace('mutual_info', 'MI')
@@ -387,17 +391,11 @@ class TrainingEvaluationCallback(Callback):
         # some metrics are computed only for the most recent samples
         # (10k or the number of samples in the eval set)
         self.trim_samples = 10000
+        self.trim_samples_strict = 500  # for top sim
         self.eval_samples = opts.eval_test_samples
 
         self.train_logits = None
         self.train_logits_nn = None
-
-    def timer(self, func, *args, **kwargs):
-        start = time.perf_counter()
-        output = func(*args, **kwargs)
-        end = time.perf_counter()
-        elapsed = end - start
-        return output, elapsed
 
     def on_epoch_end(self, loss: float, logs: Interaction, epoch: int):
         self.train_logits = logs.logits
@@ -424,52 +422,58 @@ class TrainingEvaluationCallback(Callback):
             # selects up to N most recent positions from the tensor
             # where N = trim_samples or N = min(trim_samples, eval_samples)
             max_size = self.trim_samples if not strict \
-                else min(self.eval_samples, self.trim_samples)
+                else self.trim_samples_strict
             return tensor if len(tensor) <= max_size else tensor[-max_size:]
+
+        mc_samples = 50 if training else 200
+        if self.image_input:
+            mc_samples *= 2
+
+        def entropy_benchmark(noise: bool):
+            logits = trim(logs.logits if noise else logs.logits_nn)
+            distr = Categorical(logits=logits)
+
+            sample_mc = distr.sample((mc_samples,))
+            size = sample_mc.size()
+            sample_mc = crop_messages(sample_mc.reshape(size[0] * size[1], size[2]))
+            _, sample_mc = torch.unique(sample_mc, return_inverse=True, dim=0)
+
+            sample_single = crop_messages(distr.sample())
+            _, sample_single = torch.unique(sample_single, return_inverse=True, dim=0)
+
+            vocab_size = self.vocab_size if isinstance(self.channel, ErasureChannel) \
+                else self.vocab_size - 1
+            n_messages = np.sum(vocab_size ** np.arange(self.max_len + 1))
+            for mc in (True, False):
+                for estimator in ('ML', 'PERKS', 'JAMES-STEIN', 'MINIMAX'):
+                    key = f'entropy_msg_{"mc" if mc else 1}_{estimator}'
+                    if not noise:
+                        key += '_nn'
+                    logs.aux[key] = drv.entropy(
+                        (sample_mc if mc else sample_single).cpu().numpy(),
+                        Alphabet_X=np.arange(n_messages),
+                        estimator=estimator,
+                    ).item()
 
         messages = crop_messages(logs.message.argmax(-1))
 
         attr_keys = [k for k in logs.aux_input if k.startswith('target')]
         attr = torch.cat([logs.aux_input[k] for k in attr_keys], dim=1)
 
-        if self.image_input:
-            mc_samples = 100 if training else 500
-        else:
-            mc_samples = 20 if training else 100
-
         unique_msg, categorized_msg = \
             torch.unique(messages, dim=0, return_inverse=True)
         logs.aux['lexicon_size'] = len(unique_msg)
         logs.aux['actual_vocab_size'] = torch.unique(messages).numel()
 
-        (entropy, length_probs), entropy_time = self.timer(
-            message_entropy, trim(logs.logits))
+        entropy, length_probs = message_entropy(trim(logs.logits))
         max_entropy = self.channel.max_message_entropy(length_probs, True)
         # logs.aux['expected_length'] = torch.sum(
         #     torch.arange(logs.logits.size(1) * length_probs.cpu()), dim=-1)
         logs.aux['entropy_msg'] = entropy
         logs.aux['entropy_max'] = max_entropy
-        logs.aux['time_entropy_msg'] = entropy_time
-        logs.aux['entropy_msg_mc_perks'], logs.aux['time_entropy_msg_mc_perks'] = self.timer(
-            message_entropy_mc,
-            trim(logs.logits),
-            max_len=self.max_len, vocab_size=self.vocab_size, n_samples=mc_samples,
-            erasure_channel=isinstance(self.channel, ErasureChannel))
-        logs.aux['entropy_msg_mc_mle'], logs.aux['time_entropy_msg_mc_mle'] = self.timer(
-            message_entropy_mc,
-            trim(logs.logits),
-            max_len=self.max_len, vocab_size=self.vocab_size, n_samples=mc_samples,
-            erasure_channel=isinstance(self.channel, ErasureChannel))
-        logs.aux['entropy_msg_1_perks'], logs.aux['time_entropy_msg_1_perks'] = self.timer(
-            message_entropy_mc,
-            trim(logs.logits),
-            max_len=self.max_len, vocab_size=self.vocab_size, n_samples=1,
-            erasure_channel=isinstance(self.channel, ErasureChannel))
-        logs.aux['entropy_msg_1_mle'], logs.aux['time_entropy_msg_1_mle'] = self.timer(
-            message_entropy_mc,
-            trim(logs.logits),
-            max_len=self.max_len, vocab_size=self.vocab_size, n_samples=1,
-            erasure_channel=isinstance(self.channel, ErasureChannel))
+
+        entropy_benchmark(True)
+
         logs.aux['max_rep'] = compute_max_rep(messages)
         logs.aux['redundancy'] = 1 - entropy / max_entropy
         if not training:
@@ -557,35 +561,16 @@ class TrainingEvaluationCallback(Callback):
             logs.aux['lexicon_size_nn'] = len(unique_msg)
             logs.aux['actual_vocab_size_nn'] = torch.unique(messages).numel()
 
-            (entropy, length_probs), entropy_time = self.timer(
-                message_entropy, trim(logs.logits_nn))
+            entropy, length_probs = message_entropy(trim(logs.logits_nn))
             max_entropy = self.channel.max_message_entropy(length_probs, False)
             # logs.aux['expected_length_nn'] = torch.sum(
             #     torch.arange(logs.logits_nn.size(1)) * length_probs.cpu()))
             logs.aux['max_rep_nn'] = compute_max_rep(messages)
             logs.aux['entropy_msg_nn'] = entropy
             logs.aux['entropy_max_nn'] = max_entropy
-            logs.aux['time_entropy_msg_nn'] = entropy_time
-            logs.aux['entropy_msg_mc_perks_nn'], logs.aux['time_entropy_msg_mc_perks_nn'] = self.timer(
-                message_entropy_mc,
-                trim(logs.logits_nn),
-                max_len=self.max_len, vocab_size=self.vocab_size, n_samples=mc_samples,
-                erasure_channel=False)
-            logs.aux['entropy_msg_mc_mle_nn'], logs.aux['time_entropy_msg_mc_mle_nn'] = self.timer(
-                message_entropy_mc,
-                trim(logs.logits_nn),
-                max_len=self.max_len, vocab_size=self.vocab_size, n_samples=mc_samples,
-                erasure_channel=False)
-            logs.aux['entropy_msg_1_perks_nn'], logs.aux['time_entropy_msg_1_perks_nn'] = self.timer(
-                message_entropy_mc,
-                trim(logs.logits_nn),
-                max_len=self.max_len, vocab_size=self.vocab_size, n_samples=1,
-                erasure_channel=False)
-            logs.aux['entropy_msg_1_mle_nn'], logs.aux['time_entropy_msg_1_mle_nn'] = self.timer(
-                message_entropy_mc,
-                trim(logs.logits_nn),
-                max_len=self.max_len, vocab_size=self.vocab_size, n_samples=1,
-                erasure_channel=False)
+
+            entropy_benchmark(False)
+
             logs.aux['redundancy_nn'] = 1 - entropy / max_entropy
             if not training:
                 logs.aux['KLD_train_test_nn'] = relative_message_entropy(
@@ -614,17 +599,6 @@ class TrainingEvaluationCallback(Callback):
                         k.replace('attr_dim', f'{key}_nn'): v[i]
                         for k, v in mi_attr.items() if 'attr_dim' in k
                     })
-                    # compute_mi(
-                    #     logs.logits_nn,
-                    #     attr,
-                    #     # trim(logs.logits_nn),
-                    #     # trim(attr),
-                    #     max_len=self.max_len,
-                    #     vocab_size=self.vocab_size,
-                    #     erasure_channel=False,
-                    #     entropy_message=entropy,
-                    # ).items() if 'attr_dim' in k
-                    # })
 
                 logs.aux['topsim_nn'] = compute_top_sim(
                     trim(attr, True),

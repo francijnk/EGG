@@ -42,7 +42,7 @@ def extract_visa(args):
             attribute_dict = defaultdict(int)
             for category in concept:
                 attributes = [a.strip() for a in category.text.split()
-                              if a.strip()]  # and not a.startswith('beh')]
+                              if a.strip()]
                 for a in attributes:
                     attribute_dict[a] = 1
             if concept.attrib['name'].find('_(') == -1:
@@ -143,13 +143,12 @@ def sample(data, n_distractors, n_samples):
 def _sample(data_concepts, n_distractors, n_samples):
     n_features = data_concepts.shape[1] - 1  # exclude the category column
 
-    data_categories = data_concepts.iloc[:, 0]  # .astype('category')
-    # data_categories = data_categories.cat.codes
+    data_categories = data_concepts.iloc[:, 0]
     data_concepts = np.array(data_concepts.iloc[:, 1:].values, dtype='int')
 
     sample_sets, labels, categories = [], [], defaultdict(list)
     for concept_i in range(len(data_concepts)):
-        target_category = data_categories.iloc[concept_i]  # data_concepts.iloc[concept_i,0]
+        target_category = data_categories.iloc[concept_i]
 
         distractor_ids = np.delete(np.arange(len(data_concepts)), concept_i, axis=0)
         assert concept_i not in distractor_ids
@@ -252,27 +251,17 @@ def export_visa(args, visa):
 
 
 def plot_visa(visa, fpath):
-    # fig = plt.figure(figsize=(7, 4))
     visa = visa.copy().sort_values(by=['category'])
     features = visa.values[:, 2:]
     categories = visa.values[:, 1]
     cat_labels, cat_ids = np.unique(categories, return_index=True)
-    # cat_ticks = cat_ids.tolist() + [len(visa)]
-    # cat_ticks = [
-    #     (cat_ticks[i] + cat_ticks[i + 1]) / 2
-    #     for i in range(len(cat_ids))
-    # ]
-    # print(features.shape, features[0])
-    # print(categories.shape, categories[:10])
-    # print(cat_ids.shape, cat_ids[:10])
-    # print(features, type(features), features.dtype)
 
-    fig, ax = plt.subplots(sharey=True)
+    fig, ax = plt.subplots(sharey=True, figsize=(6 / 2.54, 6 / 2.54), dpi=1200)
+    [ax.spines[s].set(linewidth=0.4) for s in ax.spines]
     ax.spy(features, aspect='equal', alpha=(features).astype(float))
     ax.set_facecolor('white')
     ax.tick_params(
         axis='both',
-        # left=True, right=True,
         left=False, right=False,
         bottom=False, top=False,
         labelleft=False,
@@ -280,13 +269,11 @@ def plot_visa(visa, fpath):
         labelbottom=False,
         labeltop=False,
     )
-    # ax.set_ylim(bottom=(len(visa) - 1), top=0)
-    # cat_sep = (cat_ids - 0.5).tolist() + [len(visa) - 0.5]
-    # ax.set_yticks(cat_sep)
+
     xmin, xmax = ax.get_xaxis().get_view_interval()
-    ax.hlines(cat_ids - 0.5, xmin=xmin, xmax=xmax, colors='grey', alpha=0.25, zorder=-1, linewidths=0.75)
+    ax.hlines(cat_ids[1:] - 0.5, xmin=xmin, xmax=xmax, colors='grey', alpha=0.25, zorder=-1, linewidths=0.4)
     plt.tight_layout()
-    plt.savefig(fpath, format='pdf', dpi=None, pad_inches=0.01, bbox_inches='tight')
+    plt.savefig(fpath, format='pdf', dpi=None, backend='pgf', pad_inches=0.2 / 72, bbox_inches='tight')
     plt.close()
 
 
@@ -296,7 +283,7 @@ def plot_pair_counts(pair_counts, fpath):
     data[data == -1] = 0
     ax.imshow(data)
     plt.tight_layout()
-    plt.savefig(fpath, format='pdf', dpi=None, pad_inches=0)
+    plt.savefig(fpath, format='pdf', dpi=72, pad_inches=0)
     plt.close()
 
 

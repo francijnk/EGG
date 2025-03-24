@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.distributions.utils import logits_to_probs
 from torch.distributions import RelaxedOneHotCategorical, OneHotCategorical
 from argparse import Namespace
 
@@ -9,11 +8,8 @@ from src.channels import (
     NoChannel,
     ErasureChannel,
     DeletionChannel,
-    SymmetricChannel,
 )
 from src.interaction import LoggingStrategy
-
-from typing import Optional
 
 
 class SeeingConvNet(nn.Module):
@@ -260,7 +256,6 @@ class SenderReceiverRnnGS(nn.Module):
             'none': NoChannel,
             'erasure': ErasureChannel,
             'deletion': DeletionChannel,
-            'symmetric': SymmetricChannel,
         }
 
         self.sender = RnnSenderGS(opts)
