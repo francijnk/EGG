@@ -24,14 +24,12 @@ from src.util import (
     print_training_results,
     is_jsonable,
 )
-from src.archs import (
-    RnnSenderGS,
-    RnnReceiverGS,
-    SenderReceiverRnnGS,
-)
+from src.archs import SenderReceiverRnnGS
 from src.callbacks import (
     CustomProgressBarLogger,
     TrainingEvaluationCallback,
+    ReceiverResetCallback,
+    TemperatureAnnealer,
 )
 from src.eval import relative_message_entropy
 
@@ -58,6 +56,7 @@ def get_params(params):
         "--error_prob", type=float, default=None, help="Probability of error "
         "per symbol (default: 0.0)"
     )
+    parser.add_argument('--hidden_size', type=int, default=64)
     parser.add_argument(
         "--sender_hidden", type=int, default=64, help="Size of the hidden "
         "layer of Sender (default: 64)"
@@ -94,20 +93,35 @@ def get_params(params):
         help="Message length cost (default: 1e-2)",
     )
     parser.add_argument(
+        "--kld_coeff", type=float, default=0.0,
+        help="KLD loss coefficient (default: 0.0)"
+    )
+    parser.add_argument(
         "--image_input", action="store_true", default=False,
         help="Run the image data variant of the game (default: False)"
     )
     parser.add_argument(
-        "--optim", type=str, default="rmsprop",
-        help="Optimizer to use {adam, rmsprop} (default: rmsprop)",
+        "--optim", type=str, default="adamw",
+        help="Optimizer to use {adam, adamw, rmsprop} (default: adamw)",
+    )
+    parser.add_argument(
+        "--weight_decay", type=float, default=0,
+        help="Weight decay coefficient (default: 0)"
     )
     parser.add_argument(
         "--warmup_steps", type=int, default=0,
         help="Number of initial training steps, during which length cost is "
         "not applied (default: 0)",
     )
+    parser.add_argument("--loss", type=str, default='weighted_attributes')
     parser.add_argument(
-        "--no_shuffle", action="store_false", default=True,
+        "--receiver_reset_freq", default=None,
+        type=lambda x: None if x == 'None' else int(x),
+        help="Number of epochs between receiver parameter resets "
+        "(default: None)"
+    )
+    parser.add_argument(
+        "--no_shuffle", action="store_true", default=False,
         help="Do not shuffle train data before every epoch (default: False)",
     )
     parser.add_argument(
@@ -115,20 +129,16 @@ def get_params(params):
         help="Use double predicion floating point numbers (default: False)",
     )
     parser.add_argument(
-        "--temperature_lr", type=float, default=1e-4,
-        help="Temperature LR to be used with the temperature module"
-        "(default: 1e-4)",
+        "--temperature", type=float, default=1.,
+        help="GS temperature (default: 1.0)",
     )
     parser.add_argument(
-        "--temperature_max", default=3, type=float,
-        help="Maximum temperature value to be used with predicted "
-        "temperature (default: 3)",
+        "--temperature_start", type=float, default=None,
+        help="Initial GS temperature (default: None)"
     )
     parser.add_argument(
-        "--evaluation_temperature", default=None, type=float,
-        help="Temperature value to be applied on evaluation. "
-        "If None, the setting during training and evaluation is the same. "
-        "If the value is 0, argmax is applied on evaluation. (default: None)",
+        "--temperature_end", type=float, default=None,
+        help="Final GS temperature (default: None)"
     )
 
     # W&B
@@ -156,16 +166,15 @@ def get_params(params):
 
 
 def check_args(args):
-
     args.channel = args.channel.lower() if args.channel else args.channel
-    assert (
-        args.channel is None
-        or args.channel in ("erasure", "deletion")
-    ), 'The only channels implemented are "erasure", "deletion"'
+
+    if args.channel is not None \
+            and args.channel.lower() not in ('erasure', 'deletion'):
+        raise ValueError(f"Unknown channel type: {args.channel}")
 
     if args.channel is None or args.error_prob == 0:
         args.error_prob = 0.0
-        args.channel = 'none'
+        args.channel = None
 
     if args.results_folder is not None:
         os.makedirs(os.path.dirname(args.results_folder), exist_ok=True)
@@ -185,7 +194,7 @@ def main(params):
     data_handler = DataHandler(opts)
     train_data, eval_train_data, eval_test_data = data_handler.load_data(opts)
 
-    game = SenderReceiverRnnGS(opts, device)
+    game = SenderReceiverRnnGS(opts, data_handler.n_attributes, device)
 
     optimizer = build_optimizer(game, opts)
     callbacks = [
@@ -195,7 +204,11 @@ def main(params):
             train_data_len=len(train_data),
             test_data_len=len(eval_test_data),
         ),
+        ReceiverResetCallback(game, opts),
     ]
+
+    if not (opts.temperature_start is None and opts.temperature_end is None):
+        callbacks.append(TemperatureAnnealer(game, opts))
 
     trainer = Trainer(
         game=game,
@@ -212,31 +225,34 @@ def main(params):
     dump_dict = {}
 
     # results on the eval subset of the training set
-    train_dump = Dump(game, eval_train_data, opts, device)
+    train_dump = Dump(
+        game, eval_train_data,
+        data_handler.eval_train_sample_types,
+        opts, device,
+    )
     train_mapping = data_handler.eval_train_mapping
     dump_dict['train'] = {
         'evaluation': train_dump.get_eval_dict(),
         'messages': train_dump.get_message_logs(train_mapping),
     }
 
-    test_dump = Dump(game, eval_test_data, opts, device)
+    test_dump = Dump(game, eval_test_data, data_handler.eval_test_sample_types, opts, device)
     test_mapping = data_handler.eval_train_mapping
     dump_dict['test'] = {
         'evaluation': test_dump.get_eval_dict(),
         'messages': test_dump.get_message_logs(test_mapping),
     }
 
-    # if we evaluated on the train set, compute KLD between the protocols
     for key in dump_dict['train']['evaluation']:
         logits_p, logits_q = (train_dump.logits_nn, test_dump.logits_nn) \
-            if key == 'no noise' else (train_dump.logits, test_dump.logits)
+            if key == 'sent' else (train_dump.logits, test_dump.logits)
 
         kld_train = relative_message_entropy(logits_p, logits_q).item()
         kld_test = relative_message_entropy(logits_q, logits_p).item()
-        dump_dict['train']['evaluation'][key]['KLD_train_test'] = kld_train
-        dump_dict['test']['evaluation'][key]['KLD_train_test'] = kld_train
-        dump_dict['train']['evaluation'][key]['KLD_test_train'] = kld_test
-        dump_dict['test']['evaluation'][key]['KLD_test_train'] = kld_test
+        dump_dict['train']['evaluation'][key]['kld_train_test'] = kld_train
+        dump_dict['test']['evaluation'][key]['kld_train_test'] = kld_train
+        dump_dict['train']['evaluation'][key]['kld_test_train'] = kld_test
+        dump_dict['test']['evaluation'][key]['kld_test_train'] = kld_test
 
     # save training time
     training_time = timedelta(seconds=t_end - t_start)

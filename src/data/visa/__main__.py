@@ -3,20 +3,22 @@ import argparse
 import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
+# from sklearn.metrics.pairwise import cosine_similarity
 from collections import defaultdict
 import xml.etree.ElementTree as ET
 import matplotlib.pyplot as plt
 
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
+# TODO check cosine one last time and probably remove
 
 
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--n_distractors', '-d', type=int, required=True)
     parser.add_argument('--n_samples_train', type=int, default=128)
-    parser.add_argument('--n_samples_train_eval', type=int, default=4)
-    parser.add_argument('--n_samples_test', type=int, default=16)
+    parser.add_argument('--n_samples_eval_train', type=int, default=4)
+    parser.add_argument('--n_samples_eval_test', type=int, default=16)
     parser.add_argument('--no_homonyms', action='store_true')
     parser.add_argument('--uk', action='store_true')
     parser.add_argument('--seed', type=int, default=42)
@@ -97,106 +99,76 @@ def extract_visa(args):
 def sample(data, n_distractors, n_samples):
     n_features = data.shape[1] - 1
 
-    concepts = np.array(data.iloc[:, 1:].values, dtype=np.int64)
-    categories, category_ids = np.unique(data.iloc[:, 0], return_inverse=True)
+    concepts = np.array(data.iloc[:, 1:].values, dtype=np.int8)
+    mapping, category_ids = np.unique(data.iloc[:, 0], return_inverse=True)
     positions = np.arange(n_distractors + 1)
 
-    sample_features = np.zeros(
+    input_features = np.zeros(
         (len(data) * n_samples, n_distractors + 1, n_features),
-        dtype=np.int64)
-    sample_categories = np.empty_like(sample_features[..., 0])
-    target_positions = np.empty_like(sample_features[:, 0, 0])
+        dtype=np.int8)
+    categories = np.empty_like(input_features[..., 0])
+    labels = np.empty_like(input_features[:, 0, 0])
+
+    # cos_sims = cosine_similarity(concepts)
 
     for concept_i in range(len(data)):
         candidate_ids = np.delete(np.arange(len(data)), concept_i, axis=0)
+        # candidate_probs = None
+        # candidate_probs = np.delete(cos_sims[concept_i], concept_i, axis=0)
+        # candidate_probs += np.clip(
+        #     np.quantile(candidate_probs, q=0.10),
+        #     a_min=1e-6, a_max=None,
+        # )
+        # candidate_pr^obs[candidate_probs > 0],
+        # q=0.,
+        # )  # to ensure all probabilities are positive
+        # candidate_probs **= 0.5
+        # candidate_probs /= candidate_probs.sum()
+        candidate_probs = None
+        # print(candidate_probs.max(), candidate_probs.min(), candidate_probs.mean())
+        # print(candidate_probs[:20])
+        # print(candidate_probs.shape, candidate_probs.sum())
         assert concept_i not in candidate_ids
 
         for sample_j in range(n_samples):
             idx = concept_i * n_samples + sample_j
-            sample = np.empty_like(sample_features[0])
+            sample = np.empty_like(input_features[0])
 
             sampled_ids = np.random.choice(
                 candidate_ids,
                 size=n_distractors,
-                replace=False)
+                p=candidate_probs,
+                replace=False,
+            )
             concept_pos = np.random.randint(0, n_distractors + 1)
             sampled_pos = positions[positions != concept_pos]
             sample[concept_pos] = concepts[concept_i]
             sample[sampled_pos] = concepts[sampled_ids]
 
-            sample_features[idx] = sample
-            target_positions[idx] = concept_pos
-            sample_categories[idx, concept_pos] = category_ids[concept_i]
-            sample_categories[idx, sampled_pos] = category_ids[sampled_ids]
+            input_features[idx] = sample
+            labels[idx] = concept_pos
+            categories[idx, concept_pos] = category_ids[concept_i]
+            categories[idx, sampled_pos] = category_ids[sampled_ids]
 
-    sample_categories = np.array(
-        (sample_categories,),
-        dtype=[('category', np.int64, sample_categories.shape)])
-    categories = np.char.array(categories, unicode=False)
+    size = input_features.shape
+    reshaped = input_features.reshape(size[0] * size[1], -1, order='C')
+    _, unique = np.unique(reshaped, axis=0, return_inverse=True)
+    _sorted = np.sort(unique.reshape(size[:2]))
+    print(
+        'Unique concept sets:',
+        np.unique(_sorted, axis=0).shape[0],
+        '/', input_features.shape[0])
+    mapping = mapping.astype('U')
     mapping = np.array(
-        (categories,),
-        dtype=[('category', categories.dtype, categories.shape)])
-
-    return sample_features, sample_categories, target_positions, mapping
-
-
-def _sample(data_concepts, n_distractors, n_samples):
-    n_features = data_concepts.shape[1] - 1  # exclude the category column
-
-    data_categories = data_concepts.iloc[:, 0]
-    data_concepts = np.array(data_concepts.iloc[:, 1:].values, dtype='int')
-
-    sample_sets, labels, categories = [], [], defaultdict(list)
-    for concept_i in range(len(data_concepts)):
-        target_category = data_categories.iloc[concept_i]
-
-        distractor_ids = np.delete(np.arange(len(data_concepts)), concept_i, axis=0)
-        assert concept_i not in distractor_ids
-
-        for sample_j in range(n_samples):
-            target_pos = np.random.randint(0, n_distractors + 1)
-            distractor_ind = np.random.choice(distractor_ids, size=n_distractors, replace=False)
-            distractor_pos = [i for i in range(n_distractors + 1) if i != target_pos]
-
-            sample_set = np.zeros((1, n_distractors + 1, n_features), dtype=np.int64)
-            sample_set[0, target_pos] = data_concepts[concept_i]
-            for distr_pos, distr_ind in zip(distractor_pos, distractor_ind):
-                sample_set[0, distr_pos] = data_concepts[distr_ind]
-
-            sample_sets.append(sample_set)
-            labels.append(target_pos)
-            # categories.append((category, *distractor_categories))
-
-            categories['target_category'].append(target_category)
-            for k, distr_ind in enumerate(distractor_ind):
-                distr_cat = data_categories.iloc[distr_ind]
-                categories[f'distr{k}_category'].append(distr_cat)
-
-    input_data = np.vstack(sample_sets)
-
-    labels = np.array(labels, dtype=np.int64)
-    # categories = np.array(
-    #    categories, dtype=np.dtype([('category', np.int64)]))
-
-    # create a DataFrame & code categories as integers
-    category_df = pd.DataFrame(categories, dtype='category')
-    new_categories = pd.unique(category_df.values.ravel('K'))
-    for col in category_df.columns:
-        category_df[col] = category_df[col].cat.set_categories(
-            new_categories=new_categories,
-            ordered=True)
-        category_df[col] = category_df[col].cat.codes
-
-    # export to Numpy
-    categories = np.array(category_df, dtype=np.int64)
-    categories = np.array(
-        list(map(tuple, categories)),
-        dtype=np.dtype([
-            (col, np.int64) for col in category_df.columns
-        ])
+        (mapping,),
+        dtype=[('category', mapping.dtype, mapping.shape)],
     )
 
-    return input_data, labels, categories
+    categories = np.stack([
+        np.array((sample,), dtype=[('category', np.int8, n_distractors + 1,)])
+        for sample in categories
+    ])
+    return input_features, labels, categories, mapping
 
 
 def export_visa(args, visa):
@@ -215,14 +187,14 @@ def export_visa(args, visa):
     print('Train concepts:', len(train_features))
     print('Test concepts:', len(test_features))
 
-    train, train_cat, train_targets, train_mapping = sample(
+    train, train_targets, train_cat, train_mapping = sample(
         train_features, args.n_distractors, args.n_samples_train,
     )
-    eval_train, eval_train_cat, eval_train_targets, eval_train_mapping = sample(
-        train_features, args.n_distractors, args.n_samples_train_eval,
+    eval_train, eval_train_targets, eval_train_cat, eval_train_mapping = sample(
+        train_features, args.n_distractors, args.n_samples_eval_train,
     )
-    eval_test, eval_test_cat, eval_test_targets, eval_test_mapping = sample(
-        test_features, args.n_distractors, args.n_samples_test,
+    eval_test, eval_test_targets, eval_test_cat, eval_test_mapping = sample(
+        test_features, args.n_distractors, args.n_samples_eval_test,
     )
 
     print('Training samples:', len(train))
@@ -256,7 +228,7 @@ def plot_visa(visa, fpath):
     categories = visa.values[:, 1]
     cat_labels, cat_ids = np.unique(categories, return_index=True)
 
-    fig, ax = plt.subplots(sharey=True, figsize=(6 / 2.54, 6 / 2.54), dpi=1200)
+    fig, ax = plt.subplots(sharey=True, figsize=(5 / 2.54, 5 / 2.54), dpi=3200)
     [ax.spines[s].set(linewidth=0.4) for s in ax.spines]
     ax.spy(features, aspect='equal', alpha=(features).astype(float))
     ax.set_facecolor('white')

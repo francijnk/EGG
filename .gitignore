@@ -1,6 +1,7 @@
 old_scripts/
-ancm/remove_later/
-ancm/jobs/job_outputs/
+misc/
+src/remove_later/
+src/jobs/job_outputs/
 local_runs/
 wandb/
 *.DS_Store

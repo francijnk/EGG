@@ -3,17 +3,38 @@ from __future__ import annotations
 import torch
 import argparse
 import numpy as np
+import torch.nn.functional as F
 from egg.core.util import find_lengths
-from sklearn.metrics.pairwise import cosine_similarity
-from Levenshtein import distance  # , ratio
-from scipy.stats import spearmanr  # pearsonr
+# from sklearn import preprocessing
+from scipy.stats import spearmanr
+# from scipy.sparse import csr_matrix
+from scipy.spatial.distance import pdist
 from torch.utils.data import Dataset
+from operator import attrgetter
 from itertools import combinations
+# from torch.nn.functional import one_hot
 from torch.distributions.utils import logits_to_probs
 from torch.distributions.categorical import Categorical
 import pyitlib.discrete_random_variable as drv
+from rapidfuzz.distance import Levenshtein, DamerauLevenshtein
+
+from src.channels import Channel
 
 from typing import Optional, Union, List, Tuple, Dict
+
+from functools import wraps
+from time import perf_counter
+
+
+def timer(f):
+    @wraps(f)
+    def wrap(*args, **kw):
+        ts = perf_counter()
+        result = f(*args, **kw)
+        te = perf_counter()
+        print('func:%r args:[%r, %r] took: %2.4f sec' % (f.__name__, args, kw, te - ts))
+        return result
+    return wrap
 
 
 min_real = torch.finfo(torch.get_default_dtype()).min
@@ -283,6 +304,39 @@ def joint_entropy(
     pass
 
 
+def crop_messages(
+    messages: torch.Tensor,
+    lengths: Optional[torch.Tensor] = None
+) -> torch.Tensor:
+    """
+    Removes non EOS symbols after the first EOS from the message tensor.
+    Message tensor may have 2 or 3 dimensions (if messages are one-hot
+    encoded).
+    """
+    symbols = messages if messages.dim() == 2 else messages.argmax(-1)
+    if lengths is None:
+        lengths = find_lengths(
+            symbols if torch.all(symbols[:, -1] == 0)
+            else torch.cat([symbols, torch.zeros_like(symbols[:, :1])], dim=-1)
+        )
+
+    not_eosed = (
+        torch.unsqueeze(
+            torch.arange(0, symbols.size(1)),
+            dim=0,
+        ).expand(symbols.size()[:2]).to(symbols.device)
+        < torch.unsqueeze(lengths - 1, dim=-1).expand(symbols.size()[:2])
+    )
+
+    cropped_symbols = torch.where(not_eosed, symbols, 0)
+    if messages.dim() == 2:
+        return cropped_symbols
+    else:  # convert to one-hot vectors
+        cropped_probs = torch.zeros_like(messages).view(-1, messages.size(2))
+        cropped_probs.scatter_(1, cropped_symbols.view(-1, 1), 1)
+        return cropped_probs.view(messages.size())
+
+
 def crop(sample):
     lengths = find_lengths(sample)
     not_eosed = (
@@ -297,27 +351,52 @@ def crop(sample):
 
 def mutual_info_sent_received(
     logits_sent: torch.Tensor,
-    logits_received: torch.Tensor,
+    channel: Channel,
+    entropy_sent: float,
+    entropy_received: float,
     max_len: int,
     vocab_size: int,
     erasure_channel: bool = False,
     n_samples: int = 100,
     estimator: str = 'PERKS',
-):
+) -> float:
     size = logits_sent.size()
     n_messages_sent = ((vocab_size - 1) ** np.arange(max_len + 1)).sum()
     n_messages_received = ((vocab_size) ** np.arange(max_len + 1)).sum() \
         if erasure_channel else n_messages_sent
 
     sample_sent = Categorical(logits=logits_sent).sample((n_samples,))
-    sample_received = Categorical(logits=logits_received).sample((n_samples,))
-    sample_sent = sample_sent.reshape(size[0] * n_samples, size[1])
-    sample_received = sample_received.reshape(size[0] * n_samples, size[1])
+    sample_sent = crop_messages(
+        sample_sent.reshape(size[0] * n_samples, size[1])
+    )
 
-    sample_sent, sample_received = crop(sample_sent), crop(sample_received)
+    one_hots_sent = torch.zeros(
+        size[0] * n_samples, *size[1:]
+    ).to(logits_sent).view(-1, size[2])
+    one_hots_sent.scatter_(1, sample_sent.view(-1, 1), 1)
+    one_hots_sent = one_hots_sent.view(size[0] * n_samples, *size[1:])
+
+    one_hots_received, _ = channel.process(
+        one_hots_sent[:, :-1],
+        logits_sent[:, :-1],
+        True)
+    sample_received = one_hots_received.argmax(-1)
+
     _, sent = torch.unique(sample_sent, return_inverse=True, dim=0)
     _, received = torch.unique(sample_received, return_inverse=True, dim=0)
 
+    alphabet_received = np.arange(n_messages_received)
+    alphabet_sent = alphabet_received.copy()
+    alphabet_sent[alphabet_sent >= n_messages_sent] = -1
+    alphabet = np.hstack([alphabet_sent, alphabet_received])
+
+    entropy_joint = drv.entropy_joint(
+        torch.cat([sent, received]).cpu().numpy(),
+        Alphabet_X=alphabet,
+        estimator=estimator,
+    ).item()
+
+    return entropy_sent + entropy_received - entropy_joint
     return drv.information_mutual(
         sent.cpu().numpy(), received.cpu().numpy(),
         estimator=estimator,
@@ -331,7 +410,6 @@ def mutual_info_message_attributes(
     attributes: torch.Tensor,
     max_len: int,
     vocab_size: int,
-    # n_samples: int = 100,
     erasure_channel: bool,
     n_samples: int = 100,
     estimator: str = 'PERKS',
@@ -399,7 +477,11 @@ def compute_mi(
         )
 
     _, attr = torch.unique(attributes, return_inverse=True, dim=0)
-    entropy_attr = drv.entropy(attr.cpu().numpy(), estimator=estimator).item()
+    entropy_attr = drv.entropy(
+        attr.cpu().numpy(),
+        estimator=estimator,
+        fill_value=-9,
+    ).item()
     mi_msg_attr = mutual_info_message_attributes(
         logits=logits, attributes=attributes, max_len=max_len,
         vocab_size=vocab_size, n_samples=n_samples,
@@ -418,7 +500,9 @@ def compute_mi(
     if attributes.size(1) > 1:
         entropy_attr_dim = [
             drv.entropy(
-                attributes[:, i].cpu().numpy(), estimator=estimator,
+                attributes[:, i].cpu().numpy(),
+                estimator=estimator,
+                fill_value=-10,
             ).item()
             for i in range(attributes.size(-1))]
         mi_msg_attr_dim = [
@@ -497,12 +581,11 @@ def truncate_messages(
 
 
 class MessageDataset(Dataset):
-    def __init__(self, messages: torch.Tensor, receiver_inputs: torch.Tensor):
-        """
-        Args:
-            messages (torch.Tensor): Tensor of shape (N, 5), where N is the number of samples.
-            receiver_inputs (torch.Tensor): Tensor of shape (N, 5, 8).
-        """
+    def __init__(
+        self,
+        messages: torch.Tensor,
+        receiver_inputs: torch.Tensor,
+    ):
         assert len(messages) == len(receiver_inputs), \
             "Messages and receiver_inputs must have the same number of samples."
         self.messages = messages
@@ -547,42 +630,209 @@ def compute_symbol_removal_accuracy(
     return (predictions == labels).float().mean().item()
 
 
+class MessageDataset2(Dataset):
+    def __init__(
+        self,
+        messages: torch.Tensor,
+        receiver_inputs: torch.Tensor,
+        labels: torch.Tensor,
+        disruption_fn: callable,
+        n_symbols: int,
+        lengths: Optional[torch.Tensor] = None,
+        n_samples: int = 5,
+    ):
+
+        rng = np.random.default_rng()
+        if lengths is None:
+            lengths = find_lengths(messages.argmax(-1))
+
+        assert (
+            len(messages) == len(receiver_inputs) == len(lengths) == len(labels)
+        )
+
+        count = 0
+        self.messages, self.r_inputs, self.labels = [], [], []
+        for message, r_input, label, length in zip(
+            messages, receiver_inputs, labels, lengths
+        ):
+            # get all possible non-EOS symbol combinations
+            available_indices = range(length.item() - 1)
+            r = n_symbols if n_symbols == 1 \
+                else max(min(n_symbols, length.item() - 1), 2)
+            all_combos = list(combinations(available_indices, r))
+
+            # sample: if message is to short, save undisrupted message
+            combos = rng.choice(all_combos, n_samples, replace=True).tolist() \
+                if len(all_combos) > 0 else [None for _ in range(n_samples)]
+
+            for combo in combos:
+                disrupted = disruption_fn(message, combo) \
+                    if combo is not None else message
+                self.messages.append(disrupted)
+                self.r_inputs.append(r_input)
+                self.labels.append(label)
+                if len(disrupted) == len(message):
+                    count += torch.any(disrupted != message).int().item()
+
+        print('different message after disruption:', count , '/', len(self.messages), disruption_fn, n_symbols)
+
+        self.labels = torch.stack(self.labels)
+
+        assert (
+            len(self.messages)
+            == len(self.r_inputs)
+            == len(self.labels)
+        ), "Messages and receiver_inputs must have the same number of samples."
+
+    def __len__(self):
+        return len(self.messages)
+
+    def __getitem__(self, idx):
+        return self.messages[idx], self.r_inputs[idx]
+
+
+def compute_disruption_accuracy(
+    messages: torch.Tensor,
+    receiver_inputs: torch.Tensor,
+    labels: torch.Tensor,
+    receiver: torch.nn.Module,
+    opts: argparse.Namespace,
+):
+
+    rng = np.random.default_rng()
+    eos = torch.zeros_like(messages[0, :1])
+    eos[..., 0] = 1
+
+    # def erase(message, combo):
+    #     message = message.clone()
+    #     message[list(combo)] = 0
+    #     message[list(combo), opts.vocab_size] = 1
+    #     return message
+
+    def delete(message, combo):
+        mask = torch.ones(len(message), device=message.device).bool()
+        mask[list(combo)] = False
+        return torch.cat([message[mask], eos])
+
+    def replace(message, combo):
+        actual_symbol = message[combo[0]].argmax(-1).item()
+        candidates = np.arange(1, opts.vocab_size)
+        candidates = candidates[candidates != actual_symbol]
+        message = message.clone()
+        replacement = torch.zeros_like(message[0])
+        replacement[rng.choice(candidates)] = 1
+        message[combo[0]] = replacement
+        return message
+
+    def permute(message, combo):
+        message = message.clone()
+        perm = np.arange(len(combo), dtype=np.int32)
+        while np.any(perm == np.arange(len(combo))):
+            perm = rng.permutation(perm)
+
+        message[combo] = message[[combo[p] for p in perm]]
+        return message
+
+    output = {}
+    disruptions = {  # (callable, number of symbols in a combination)
+        'deletion': (delete, 1),
+        'replacement': (replace, 1),
+    }
+    for n in range(2, opts.max_len + 1):
+        disruptions[f'permutation_{n}'] = (permute, n)
+
+    lengths = find_lengths(messages.argmax(-1))
+    for key, val in disruptions.items():
+        dataset = MessageDataset2(messages, receiver_inputs, labels, *val, lengths)
+        dataloader = torch.utils.data.DataLoader(
+            dataset,
+            batch_size=opts.batch_size,
+            shuffle=False,
+            drop_last=False)
+
+        predictions = []
+        check = False
+        for b_messages, b_inputs in dataloader:
+            with torch.no_grad():
+                outputs = receiver(b_messages, b_inputs)
+
+            b_lengths = find_lengths(b_messages.argmax(-1))
+            idx = (torch.arange(len(b_messages)), b_lengths - 1)
+            if check:
+                print('b msg shape', b_messages.shape, key)
+                print('b msg idx', b_messages[idx].argmax(-1), b_lengths)
+                print(b_messages[:3].argmax(-1))
+                print('')
+                check = False
+                print(outputs[idx].shape, outputs[idx][0])
+            predictions.extend(outputs[idx].argmax(-1))
+
+        predictions = torch.stack(predictions)
+        output[f'accuracy_{key}'] = torch.mean(
+            (predictions == dataset.labels).float()
+        ).item()
+
+    return output
+
+
 # Compositionality
-def compute_top_sim(attributes: torch.Tensor, messages: torch.Tensor) -> float:
+def compute_topsim(
+    meanings: torch.Tensor,
+    messages: torch.Tensor,
+    meaning_distance: str = 'hamming',
+    message_distance: str = 'levenshtein',
+    norm: Optional[str] = None,
+) -> float:
     """
-    Computes topographic rho.
+    Computes topographic similarity.
+    Optionally uses Damerau-Levenshtein edit distance for messages.
     """
+    assert meaning_distance in ('cosine', 'hamming', 'euclidean')
+    assert message_distance in ('levenshtein', 'damerau_levenshtein')
+    assert norm in ('mean', 'max', None)
 
-    attributes = attributes.long()
+    i, j = torch.combinations(
+        torch.arange(len(messages), device=messages.device)
+    ).unbind(-1)
+    messages = [
+        ''.join([chr(s.item() + 65) for s in m[:l].int()])
+        for m, l in zip(messages.int(), find_lengths(messages))
+    ]
 
-    # if attribute tensor contains categorical variables,
-    # apply one-hot encoding before computing cosine similarity
-    one_hots = []
-    for i in range(attributes.size(1)):
-        if len(torch.unique(attributes[:, i])) <= 2:
-            one_hots.append(attributes[:, i].reshape(-1, 1))
-        else:
-            one_hot = torch.nn.functional.one_hot(attributes[:, i])
-            one_hots.append(one_hot)
-    attributes = torch.cat(one_hots, dim=-1).cpu().numpy()
+    def cosine_distance(x):
+        normalized = F.normalize(x.double(), dim=1)
+        dists = 1 - (normalized @ normalized.t())
+        return dists[i, j].cpu().numpy()
 
-    # pairwise cosine similarity between object vectors
-    cos_sims = cosine_similarity(attributes)
+    def hamming_distance(x):
+        return (F.pdist(x.double(), p=0) / meanings.size(1)).cpu().numpy()
 
-    messages = [[s.int().item() for s in m if s > 0] + [0] for m in messages]
+    def euclidean_distance(x):
+        return F.pdist(x.double(), p=2).cpu().numpy()
 
-    # pairwise Levenshtein distance between messages
-    lev_dists = np.ones((len(messages), len(messages)), dtype='int')
-    for i, msg_i in enumerate(messages):
-        for j, msg_j in enumerate(messages):
-            if i > j:
-                continue
-            elif i == j:
-                lev_dists[i][j] = 1
-            else:
-                dist = distance(msg_i, msg_j) * -1
-                # dist = ratio(msg_i, msg_j)  # normalized
-                lev_dists[i][j] = dist
-                lev_dists[j][i] = dist
+    # def jaccard_distance(x):
+    #     return pdist(x.cpu().numpy(), metric='jaccard')
+    #     # return 1 - binary_jaccard_index(x[i], x[j]).cpu().numpy()
 
-    return spearmanr(cos_sims, lev_dists, axis=None).statistic
+    meth = attrgetter('normalized_distance' if norm == 'max' else 'distance')
+    distances = {
+        'cosine': cosine_distance,
+        'hamming': lambda x: (F.pdist(x.double(), p=0) / len(meanings)).cpu().numpy(),
+        'euclidean': lambda x: F.pdist(x.double(), p=2).cpu().numpy(),
+        # 'jaccard': jaccard_distance,
+        'levenshtein': meth(Levenshtein),
+        'damerau_levenshtein': meth(DamerauLevenshtein),
+    }
+
+    meaning_dist_fn = distances[meaning_distance]
+    message_dist_fn = distances[message_distance] if norm != 'mean' else \
+        lambda x, y: distances[message_distance](x, y) / (len(x) + len(y)) / 2
+
+    meaning_dists = meaning_dist_fn(meanings)
+    message_dists = [
+        message_dist_fn(messages[i], messages[j])
+        for i, j in combinations(range(len(messages)), 2)
+    ]
+
+    topsim = spearmanr(meaning_dists, message_dists).statistic
+    return topsim if not np.isnan(topsim) else 0.

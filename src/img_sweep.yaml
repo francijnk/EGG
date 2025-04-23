@@ -1,47 +1,56 @@
 # wandb sweep --project cezary_test IMG_SWEEP.YAML
 program: train.py
-name: img
+name: img_acc_topsim_final
 method: bayes
 metric:
   goal: maximize
-  name: test/accuracy
+  name: test/sweep_target
 parameters:
+  embedding:
+    values: [8, 16]
+  hidden_size:
+    values: [64, 128]
   sender_lr:
-    min: !!float 1e-4
-    max: !!float 1e-2
+    values: [0.005, 0.001, 0.0005]
   receiver_lr:
-    min: !!float 1e-4
-    max: !!float 1e-2
-  temperature_lr:
-    min: !!float 1e-6
-    max: !!float 1e-3
-
+    values: [0.001, 0.0005, 0.0001]
+  temperature_start:
+    values: [1.0, 1.5, 2.0] 
+  weight_decay:
+    values: [0.0, 0.01, 0.005, 0.001]
+  receiver_reset_freq:
+    values: [5, 8, 10, ~]
+  loss:
+    values: ['labels', 'attributes', 'weighted_attributes']
+  data_path:
+    values:
+      - 'src/data/input_data/obverter-5-256-64-2x2-simple.npz'
+      - 'src/data/input_data/obverter-5-256-64-2x2-original.npz'
+      - 'src/data/input_data/obverter-5-256-64-2x2-finegrained.npz'
+      - 'src/data/input_data/obverter-5-256-64-2x2-v2-simple.npz'
+      - 'src/data/input_data/obverter-5-256-64-2x2-v2-original.npz'
+      - 'src/data/input_data/obverter-5-256-64-2x2-v2-finegrained.npz'
 early_terminate:
   type: hyperband
-  eta: 3
+  max_iter: 36
   s: 3
-  min_iter: 3
-
+  eta: 2
 command:  
 - python3
 - -m 
-- ancm.train
-- --embedding=16
+- src.train
+- --temperature_end=1
+- --error_prob=0.00
 - --image_input
-- --temperature_max=3
 - --results_folder=runs/
-- --data_path=ancm/data/input_data/obverter-5-160-64.npz
-- --warmup_steps=64
 - --wandb_entity=koala_lab
 - --wandb_project=cezary_test
-- --random_seed=44
-- --sender_hidden=128
-- --receiver_hidden=128
 - --filename=sweep
-- --max_len=5
-- --n_epochs=30
-- --warmup_steps=64
+- --optim=adamw
+- --max_len=4
+- --n_epochs=40
 - --length_cost=0.01
-- --optim=rmsprop
+- --warmup_steps=250
+- --vocab_size=10
 - --batch_size=32
 - ${args_no_boolean_flags}

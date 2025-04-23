@@ -4,7 +4,6 @@ import argparse
 import numpy as np
 from tabulate import tabulate, SEPARATING_LINE
 from torch.utils.data import Dataset, DataLoader
-from egg.zoo.language_bottleneck import intervention
 
 from typing import Optional
 
@@ -12,9 +11,8 @@ from src.eval import (
     message_entropy,
     message_entropy_mc,
     unique_samples,
-    compute_max_rep,
-    compute_symbol_removal_accuracy,
-    compute_top_sim,
+    compute_disruption_accuracy,
+    compute_topsim,
     compute_mi,
     mutual_info_sent_received,
 )
@@ -30,51 +28,27 @@ common_opts = get_opts()
 
 class ObjectDataset(Dataset):
     def __init__(
-        self,
-        obj_sets: np.ndarray,
-        targets: np.ndarray,
-        attributes: np.ndarray,
-        seed: int = 42
+        self, obj_sets: np.ndarray, targets: np.ndarray, attributes: np.ndarray
     ):
-        n_objects = obj_sets.shape[1]
-
         self.receiver_input = obj_sets
         self.labels = targets
-
-        # reformat aux attributes
-        obj_set = np.arange(len(obj_sets))
-        distr_pos = np.tile(
-            np.arange(n_objects),
-            (len(obj_sets), 1),
-        )
-        distr_pos = distr_pos[distr_pos != targets.reshape(-1, 1)]
-        distr_pos = distr_pos.reshape(len(targets), -1)
-        col = np.hstack([targets.reshape(-1, 1), distr_pos])
-        row = np.tile(np.arange(len(col)), (col.shape[1], 1)).T
-        attr_array = np.hstack([
-            attributes[name][obj_set][row, col]
-            for name in attributes.dtype.names
-        ])
-        dtype = [
-            item
-            for name in attributes.dtype.names
-            for item in [(f'target_{name}', np.int64)]
-            + [(f'distr{i}_{name}', np.int64) for i in range(n_objects - 1)]
-        ]
-        self.aux_input = np.array(list(map(tuple, attr_array)), dtype=dtype)
+        self.sender_input = obj_sets[np.arange(targets.shape[0]), targets]
+        self.attributes = attributes
 
     def __len__(self):
         return len(self.labels)
 
     def __getitem__(self, key):
-        return self.receiver_input[key], self.labels[key], self.aux_input[key]
+        return (
+            self.sender_input[key], self.receiver_input[key],
+            self.labels[key], self.attributes[key],
+        )
 
 
 class DataHandler:
     def __init__(self, opts):
-        self.data_path = opts.data_path
         self.batch_size = opts.batch_size
-        self.shuffle_train_data = opts.no_shuffle
+        self.shuffle_train_data = not opts.no_shuffle
         self.float_dtype = torch.get_default_dtype()
 
         self._n_features = None
@@ -89,7 +63,8 @@ class DataHandler:
         self._n_features = n_features
 
     def load_data(self, opts):
-        data = np.load(self.data_path)
+        data = np.load(opts.data_path)
+
         train = data["train"], data["train_targets"], data["train_attributes"]
         eval_train = data["eval_train"], \
             data["eval_train_targets"], data["eval_train_attributes"]
@@ -99,11 +74,22 @@ class DataHandler:
         self.eval_train_mapping = data["eval_train_attribute_mapping"]
         self.eval_test_mapping = data["eval_test_attribute_mapping"]
 
+        if opts.image_input:
+            self.eval_train_sample_types = data["eval_train_sample_modes"]
+            self.eval_test_sample_types = data["eval_test_sample_modes"]
+        else:
+            self.eval_train_sample_types = None
+            self.eval_test_sample_types = None
+
         self._n_features = train[0].shape[-1]
         self.train_samples = len(train[0])
         self.eval_train_samples = len(eval_train[0])
         self.eval_test_samples = len(eval_test[0])
         self.n_distractors = train[0].shape[1] - 1
+        self.n_attributes = [
+            dtype[0].shape[0] for dtype
+            in self.eval_train_mapping.dtype.fields.values()
+        ]
 
         opts.train_samples = self.train_samples
         opts.eval_train_samples = self.eval_train_samples
@@ -115,45 +101,37 @@ class DataHandler:
         eval_train_dataset = ObjectDataset(*eval_train)
         eval_test_dataset = ObjectDataset(*eval_test)
 
-        def _collate(batch):
-            obj_sets, target_ids, aux_attributes = zip(*batch)
-
-            r_inputs = np.vstack(np.expand_dims(obj_sets, 0))
-            labels = np.array(target_ids)
-            targets = r_inputs[np.arange(labels.shape[0]), labels]
-            aux_attributes = np.vstack(aux_attributes)
-
-            aux = {}
-            for attr_name in aux_attributes.dtype.names:
-                aux[attr_name] = torch.from_numpy(
-                    aux_attributes[attr_name]
-                ).to(self.float_dtype)
-
+        def collate(batch):
+            s_input, r_input, labels, attributes = zip(*batch)
+            aux_input = np.stack(attributes)
             return (
-                torch.from_numpy(targets).to(self.float_dtype),
-                torch.from_numpy(labels).long(),
-                torch.from_numpy(r_inputs).to(self.float_dtype),
-                aux,
+                torch.from_numpy(np.stack(s_input)).to(self.float_dtype),
+                torch.from_numpy(np.array(labels)).long(),
+                torch.from_numpy(np.stack(r_input)).to(self.float_dtype),
+                {
+                    name: torch.from_numpy(aux_input[name]).long()
+                    for name in aux_input.dtype.names
+                },
             )
 
         train_dataloader = DataLoader(
             train_dataset,
             batch_size=self.batch_size,
-            collate_fn=_collate,
+            collate_fn=collate,
             drop_last=True,
             shuffle=self.shuffle_train_data,
         )
         eval_train_dataloader = DataLoader(
             eval_train_dataset,
             batch_size=self.batch_size,
-            collate_fn=_collate,
+            collate_fn=collate,
             drop_last=False,
             shuffle=False,
         )
         eval_test_dataloader = DataLoader(
             eval_test_dataset,
             batch_size=self.batch_size,
-            collate_fn=_collate,
+            collate_fn=collate,
             drop_last=False,
             shuffle=False,
         )
@@ -174,29 +152,15 @@ def build_optimizer(game, opts):
         optimizer = torch.optim.RMSprop
     elif opts.optim.lower() == 'adam':
         optimizer = torch.optim.Adam
+    elif opts.optim.lower() == 'adamw':
+        optimizer = torch.optim.AdamW
     else:
-        raise ValueError('Optimizer must be either RMSprop or Adam')
+        raise ValueError('Optimizer must be RMSprop, Adamor AdamW')
 
-    if opts.temperature_lr is None:
-        return optimizer([
-            {"params": game.sender.parameters(), "lr": opts.sender_lr},
-            {"params": game.receiver.parameters(), "lr": opts.receiver_lr},
-        ])
-    else:
-        sender_params = [
-            param for name, param in game.sender.named_parameters()
-            if 'temperature' not in name  # and 'sos_embedding' not in name
-        ]
-        temperature_params = [
-            param for name, param in game.sender.named_parameters()
-            if 'temperature' in name # or 'sos_embedding' in name
-        ]
-
-        return optimizer([
-            {"params": temperature_params, "lr": opts.temperature_lr},
-            {"params": sender_params, "lr": opts.sender_lr},
-            {"params": game.receiver.parameters(), "lr": opts.receiver_lr},
-        ])
+    return optimizer([
+        {"params": game.sender.parameters(), "lr": opts.sender_lr},
+        {"params": game.receiver.parameters(), "lr": opts.receiver_lr},
+    ], weight_decay=opts.weight_decay)
 
 
 def crop_messages(
@@ -232,10 +196,10 @@ class Dump:
         self,
         game: torch.nn.Module,
         dataset: torch.utils.data.DataLoader,
+        sample_types: Optional[np.ndarray],
         opts: argparse.Namespace,
         device: Optional[torch.device] = None
     ):
-
         train_state = game.training
         game.eval()
         device = device if device is not None else common_opts.device
@@ -264,9 +228,11 @@ class Dump:
         self.message_inputs = crop_messages(logs.message, lengths)
         self.logits = logs.logits
         self.lengths = lengths
+        self.sample_types = sample_types if sample_types is not None else []
 
         # select receiver output at 1st EOS
         idx = (torch.arange(len(messages), device=device), lengths - 1)
+        # self.receiver_outputs = logs.receiver_output[idx]
         self.receiver_outputs = logs.receiver_output.argmax(-1)[idx]
 
         if opts.channel != 'none':
@@ -278,6 +244,7 @@ class Dump:
             self.lengths_nn = lengths
 
             idx = (torch.arange(len(messages)), lengths - 1)
+            # self.receiver_outputs_nn = logs.receiver_output_nn[idx]
             self.receiver_outputs_nn = logs.receiver_output_nn.argmax(-1)[idx]
         else:
             self.messages_nn = self.messages
@@ -285,24 +252,23 @@ class Dump:
             self.lengths_nn = self.lengths
             self.receiver_outputs_nn = self.receiver_outputs
 
-        distr_prefixes = {
-            k[:k.index('_')]: None
-            for k in logs.aux_input if k.startswith('distr')
-        }.keys()
+        self.attribute_names = list(logs.aux_input.keys())
+        idx = torch.arange(len(messages)).to(messages.device)
 
-        self.attribute_names = [
-            k.replace('target_', '') for k in logs.aux_input.keys()
-            if not k.startswith('distr')]
-        self.target_attributes = torch.cat([
-            tensor for k, tensor in logs.aux_input.items()
-            if not k.startswith('distr')
-        ], dim=-1)
+        self.target_attributes = torch.stack(
+            [attr[idx, logs.labels] for attr in logs.aux_input.values()],
+            dim=-1,
+        )
+        self.attributes = torch.stack(list(logs.aux_input.values()), dim=1)
+
+        n_distr = self.receiver_inputs.size(1) - 1
+        distr_pos = torch.arange(n_distr + 1).to(messages.device).expand(len(messages), -1)
+        distr_pos = distr_pos[distr_pos != logs.labels.view(-1, 1)].view(-1, 4)
         self.distractor_attributes = [
-            torch.cat([
-                tensor for k, tensor in logs.aux_input.items()
-                if k.startswith(prefix)
+            torch.stack([
+                attr[idx, distr_pos[:, i]] for attr in logs.aux_input.values()
             ], dim=-1)
-            for prefix in distr_prefixes
+            for i in range(n_distr)
         ]
 
     def __len__(self):
@@ -315,6 +281,8 @@ class Dump:
                 self.messages[i, :self.lengths[i]].int(),
                 self.messages_nn[i, :self.lengths_nn[i]].int(),
                 self.receiver_inputs[i].int(),
+                # self.receiver_outputs[i].argmax(-1).item(),
+                # self.receiver_outputs_nn[i].argmax(-1).item(),
                 self.receiver_outputs[i].int().item(),
                 self.receiver_outputs_nn[i].int().item(),
                 self.labels[i].int().item(),
@@ -329,6 +297,7 @@ class Dump:
                     }
                     for attribute_tensor in self.distractor_attributes
                 ],
+                self.sample_types[i] if i < len(self.sample_types) else None,
             )
 
     def get_tensors(self, noise: bool):
@@ -337,7 +306,7 @@ class Dump:
                 self.sender_inputs, self.messages, self.logits,
                 self.lengths, self.message_inputs, self.receiver_inputs,
                 self.receiver_outputs, self.labels,
-                self.target_attributes, self.distractor_attributes,
+                self.target_attributes, self.attributes,
                 self.attribute_names
             )
 
@@ -346,7 +315,7 @@ class Dump:
                 self.sender_inputs, self.messages_nn, self.logits_nn,
                 self.lengths_nn, self.message_inputs_nn, self.receiver_inputs,
                 self.receiver_outputs_nn, self.labels,
-                self.target_attributes, self.distractor_attributes,
+                self.target_attributes, self.attribute,
                 self.attribute_names
             )
 
@@ -359,8 +328,8 @@ class Dump:
                 return np.str_(mapped.astype('U'))
             return mapped
 
-        for s_input, msg, msg_nn, r_input, r_output, \
-                r_output_nn, label, target_attr, distr_attr in self:
+        for s_input, msg, msg_nn, r_input, r_output, r_output_nn, label, \
+                target_attr, distr_attr, sample_type in self:
 
             if self.opts.image_input:
                 # For the Obverter dataset, we save object features rather than
@@ -393,16 +362,18 @@ class Dump:
                 'prediction': r_output,
             }
 
-            if self.opts.channel != 'none':
+            if self.opts.channel is not None:
                 message_nn = ','.join([str(x) for x in msg_nn.tolist()])
                 message_log.update({
                     'message_no_noise': message_nn,
                     'prediction_no_noise': r_output_nn,
                 })
 
-            if not self.opts.image_input:
+            if self.opts.image_input:
+                message_log['sample_type'] = sample_type
+            else:
                 message_log.update({
-                    'target_cat': map('category', target_attr['category']),
+                    'target_category': map('category', target_attr['category']),
                     'distractor_cats':
                         [map('category', x['category']) for x in distr_attr],
                 })
@@ -411,46 +382,41 @@ class Dump:
 
         return message_logs
 
-    @staticmethod
-    def get_attribute(attribute_dict, key):
-        keys = [
-            k.replace('target_', '') for k in attribute_dict
-            if k.startswith('target_')]
-        n_distractors = len(attribute_dict) // len(keys) - 1
-        prefixes = ['target_'] + [f'distr{i}_' for i in range(n_distractors)]
-        values = [attribute_dict[prefix + key] for prefix in prefixes]
-        return torch.cat(values, dim=1)
-
     def get_eval_dict(self):
         opts = self.opts
 
         results = {}
-        keys = ('received', 'sent') if opts.channel != 'none' else ('baseline',)
+        keys = ('baseline',) if opts.channel is None else ('received', 'sent')
+
+        entropy_sent, length_probs_sent = message_entropy(self.logits)
+        (entropy_received, length_probs_received) = \
+            message_entropy(self.logits_nn) if opts.channel is not None \
+            else (entropy_sent, length_probs_sent)
+
+        max_entropy_sent = self.channel.max_message_entropy(
+            length_probs_sent, noise=False)
+        max_entropy_received = self.channel.max_message_entropy(
+            length_probs_received, noise=True)
+
         for key in keys:
             (s_inputs, messages, logits, lengths, m_inputs, r_inputs,
-             r_outputs, labels, t_attributes, d_attributes, attr_names) \
+             r_outputs, labels, t_attributes, attributes, attr_names) \
                 = self.get_tensors(key != 'sent')
 
-            entropy, length_probs = message_entropy(logits)
-            max_entropy = self.channel.max_message_entropy(
-                length_probs, noise=(key != 'sent'))
+            idx = torch.arange(len(messages), device=messages.device).long()
+            s_attributes = attributes[idx, :, r_outputs]
 
+            entropy, max_entropy = (entropy_received, max_entropy_received) \
+                if key != 'sent' else (entropy_sent, max_entropy_sent)
             if opts.image_input:
-                idx = torch.tensor(
-                    [attr_names.index('shape'), attr_names.index('color')]
-                )
-                obj_repr = torch.stack(
-                    [t_attributes[:, idx]] + [a[:, idx] for a in d_attributes],
-                    dim=1,
-                )
-                n_uniq_samples = unique_samples(r_inputs, obj_repr)
+                idx = torch.arange(len(attr_names)).to(t_attributes.device)
+                n_uniq_samples = unique_samples(r_inputs, attributes)
             else:
                 n_uniq_samples = unique_samples(r_inputs)
 
             unique_messages, categorized_messages = \
                 torch.unique(messages, dim=0, return_inverse=True)
             if opts.image_input:
-                pass
                 n_uniq_targets = len(torch.unique(t_attributes, dim=0))
             else:
                 n_uniq_targets = len(torch.unique(s_inputs, dim=0))
@@ -473,53 +439,83 @@ class Dump:
                 'average_length': lengths.float().mean() - 1,
                 'actual_vocab_size': torch.unique(messages).numel(),
                 'accuracy': (r_outputs == labels).float().mean(),
-                'accuracy_symbol_removal': compute_symbol_removal_accuracy(
-                    m_inputs, r_inputs, labels, self.receiver, opts),
-                'max_rep': compute_max_rep(messages).mean().item(),
+            }
+            results[key].update(compute_disruption_accuracy(
+                m_inputs, r_inputs, labels, self.receiver, opts
+            ))
+
+            topsim_args = (t_attributes, messages) if opts.image_input \
+                else (s_inputs, messages)
+            mi_kwargs = {
+                'max_len': opts.max_len,
+                'vocab_size': opts.vocab_size,
+                'erasure_channel': (
+                    isinstance(self.channel, ErasureChannel)
+                    and key == 'received'),
+                'n_samples': 400 if opts.image_input else 100,
+            }
+
+            results[key].update({
                 'redundancy': 1 - entropy / max_entropy,
-                'topsim': None,
+                'topsim': compute_topsim(*topsim_args, norm=None),
+                'topsim_norm_max': compute_topsim(*topsim_args, norm='max'),
+                'topsim_norm_mean': compute_topsim(*topsim_args, norm='mean'),
+                'topsim_cosine': None,
+                'topsim_cosine_norm_max': None,
+                'topsim_cosine_norm_mean': None,
                 'entropy_msg': entropy,
-                'entropy_msg_mc': message_entropy_mc(
-                    logits,
-                    max_len=opts.max_len,
-                    vocab_size=opts.vocab_size,
-                    n_samples=500 if opts.image_input else 100,
-                    erasure_channel=isinstance(self.channel, ErasureChannel)),
+                'entropy_msg_mc': message_entropy_mc(logits, **mi_kwargs),
                 'entropy_max': max_entropy,
                 'mutual_info_sent_received': mutual_info_sent_received(
                     logits_sent=self.logits_nn,
-                    logits_received=self.logits,
-                    max_len=opts.max_len,
-                    vocab_size=opts.vocab_size,
-                    erasure_channel=isinstance(self.channel, ErasureChannel),
-                    n_samples=500 if opts.image_input else 100),
-            }
+                    channel=self.channel,
+                    entropy_sent=entropy_sent,
+                    entropy_received=entropy_received,
+                    **mi_kwargs),
+            })
+            mi_kwargs['entropy_message'] = entropy
 
             if opts.image_input:
                 for k in list(results[key]):
-                    if 'cat' in k:
+                    if 'cat' in k or 'cosine' in k:
                         del results[key][k]
 
-                results[key]['topsim'] = compute_top_sim(t_attributes, messages)
-                mi_attr = compute_mi(
-                    logits, t_attributes,
-                    max_len=opts.max_len,
-                    vocab_size=opts.vocab_size,
-                    erasure_channel=isinstance(self.channel, ErasureChannel),
-                    entropy_message=entropy,
-                    n_samples=200 if opts.image_input else 100,
+                mi_target = compute_mi(logits, t_attributes, **mi_kwargs)
+                results[key].update(
+                    entropy_target=mi_target['entropy_attr'],
+                    mutual_info_msg_target=mi_target['mutual_info_msg_attr'],
+                    proficiency_msg_target=mi_target['proficiency_msg_attr'],
+                    redundancy_msg_target=mi_target['proficiency_msg_attr'],
                 )
-                results[key]['entropy_attr'] = mi_attr['entropy_attr']
-                results[key]['mutual_info_msg_attr'] = mi_attr['entropy_attr']
                 for i, name in enumerate(attr_names):
                     results[key].update({
-                        k.replace('attr_dim', name): v[i]
-                        for k, v in mi_attr.items() if 'attr_dim' in k
+                        k.replace('attr_dim', f'target_{name}'): v[i]
+                        for k, v in mi_target.items() if 'attr_dim' in k
                     })
+
+                mi_selected = compute_mi(logits, s_attributes, **mi_kwargs)
+                results[key].update(
+                    entropy_selected=mi_selected['entropy_attr'],
+                    mutual_info_msg_selected=mi_selected['mutual_info_msg_attr'],
+                    proficiency_msg_selected=mi_selected['proficiency_msg_attr'],
+                    redundancy_msg_selected=mi_selected['proficiency_msg_attr'],
+                )
+                for i, name in enumerate(attr_names):
+                    results[key].update({
+                        k.replace('attr_dim', f'selected_{name}'): v[i]
+                        for k, v in mi_selected.items() if 'attr_dim' in k
+                    })
+
+                for sample_type in np.unique(self.sample_types):
+                    idx = torch.tensor(self.sample_types == sample_type)
+                    results[key][f'accuracy_{sample_type}'] = (
+                        r_outputs[idx] == labels[idx]
+                    ).float().mean()
             else:
-                category = torch.cat([t_attributes] + d_attributes, dim=-1)
-                n_uniq_samples_cat = unique_samples(r_inputs, category)
-                n_uniq_cat = len(torch.unique(category))
+                # category = torch.cat([t_attributes] + d_attributes, dim=-1)
+                # category = attributes
+                n_uniq_samples_cat = unique_samples(r_inputs, attributes)
+                n_uniq_cat = len(torch.unique(attributes))
                 results[key].update({
                     'unique_samples_cat': n_uniq_samples_cat,
                     'unique_cat': n_uniq_cat,
@@ -527,7 +523,12 @@ class Dump:
                     'unique_cats_per_msg': n_uniq_cat / n_uniq_messages,
                     'unique_samples_per_target_cat':
                         n_uniq_samples_cat / n_uniq_cat,
-                    'topsim': compute_top_sim(s_inputs, messages),
+                    'topsim_cosine': compute_topsim(
+                        *topsim_args, meaning_distance='cosine', norm='mean'),
+                    'topsim_cosine_norm_max': compute_topsim(
+                        *topsim_args, meaning_distance='cosine', norm='mean'),
+                    'topsim_cosine_norm_mean': compute_topsim(
+                        *topsim_args, meaning_distance='cosine', norm='mean'),
                 })
 
                 # assign a different number to every input vector
@@ -535,25 +536,19 @@ class Dump:
                     s_inputs, return_inverse=True, dim=0)
                 inp = inp.unsqueeze(-1).to(torch.float)
                 results[key].update({
-                    k.replace('attr', 'input'): v for k, v
-                    in compute_mi(
-                        logits, inp,
-                        max_len=opts.max_len,
-                        vocab_size=opts.vocab_size,
-                        erasure_channel=isinstance(self.channel, ErasureChannel),
-                        entropy_message=entropy,
-                        n_samples=200 if opts.image_input else 100,
-                    ).items()
+                    k.replace('attr', 'target'): v for k, v
+                    in compute_mi(logits, inp, **mi_kwargs).items()
+                })
+                _, selected = torch.unique(
+                    r_inputs[idx, labels], return_inverse=True, dim=0)
+                selected = selected.unsqueeze(-1).to(torch.float)
+                results[key].update({
+                    k.replace('attr', 'selected'): v for k, v
+                    in compute_mi(logits, selected, **mi_kwargs).items()
                 })
                 results[key].update({
-                    k.replace('attr', 'category'): v
-                    for k, v in compute_mi(
-                        logits, t_attributes,
-                        max_len=opts.max_len,
-                        vocab_size=opts.vocab_size,
-                        erasure_channel=isinstance(self.channel, ErasureChannel),
-                        entropy_message=entropy,
-                    ).items()
+                    k.replace('attr', 'target_category'): v for k, v
+                    in compute_mi(logits, t_attributes, **mi_kwargs).items()
                 })
 
             # convert tensors to numeric

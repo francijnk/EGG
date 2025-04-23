@@ -1,302 +1,402 @@
 import os
+import gc
 import random
 import argparse
-import itertools
 import numpy as np
-from collections import defaultdict
-from torchvision import transforms
 from PIL import Image
 from tqdm import tqdm
-from sklearn.model_selection import train_test_split
+from pprint import pprint
+from itertools import product, cycle
+from collections import defaultdict
+from torchvision import transforms
 
-from src.data.obverter.render import (
+from .render import (
     colors,
-    object_types,
-    render_scene,
+    shapes,
     render_scenes,
     get_object_fname,
 )
 
-
-np.set_printoptions(suppress=True, precision=5)
-current_dir = os.path.dirname(os.path.abspath(__file__))
+attribute_keys = ('shape', 'color', 'x', 'y')
+sample_mode_probs = {
+    # 'unique_shape_color': 0.5,
+    # 'common_location': 0.25,
+    'common_shape': 0.10,
+    'common_color': 0.10,
+    'common_x': 0.05,
+    'common_y': 0.05,
+    'common_x_color': 0.05,
+    'common_y_color': 0.05,
+    'common_x_shape': 0.05,
+    'common_y_shape': 0.05,
+    'common_location': 0.10,
+    'common_location_color': 0.1,
+    'common_location_shape': 0.1,
+    # 'unique_shape': 0.10,
+    # 'unique_color': 0.10,
+    # 'unique_location': 0.10,
+    'unique_shape_color': 0.10,
+}
 
 
 def path(*paths):
+    current_dir = os.path.dirname(os.path.abspath(__file__))
     return os.path.join(current_dir, *paths)
 
 
 def parse_args():
     parser = argparse.ArgumentParser()
+    parser.add_argument('--render', action='store_true', default=False)
     parser.add_argument('--n_distractors', '-d', type=int, required=True)
-    parser.add_argument('--n_samples_train', type=int, default=100)
-    parser.add_argument('--n_samples_train_eval', type=int, default=10)
-    parser.add_argument('--n_samples_test', type=int, default=30)
-    parser.add_argument('--n_img', type=int, default=100)
-    parser.add_argument('--resolution', type=int, default=64)
-    parser.add_argument('--p_same_shape', type=float, default=0)
-    parser.add_argument('--p_same_color', type=float, default=0)
-    parser.add_argument('--p_same_location', type=float, default=0)
+    parser.add_argument('--n_samples_train', type=int, default=256)
+    parser.add_argument('--n_samples_eval_train', type=int, default=12)
+    parser.add_argument('--n_samples_eval_test', type=int, default=36)
+    parser.add_argument('--n_images', type=int, default=20)
+    parser.add_argument('--resolution', type=int, default=128)
     parser.add_argument('--seed', type=int, default=42)
     return parser.parse_args()
 
 
-def load_image(shape, color, x=None, y=None, rotation=None, idx=None, resolution=128):
+def load_image(shape, color, x=None, y=None, resolution=128):
+    fname = get_object_fname(shape, color, x, y)
+    if fname is None:
+        print(shape, color, x, y, 'not found!')
+    assert fname is not None
+
+    shape, color, x, y, _, _ = fname.split('.')[0].split('_')
+
     transform = transforms.Compose([
         transforms.Resize((resolution, resolution)),
         transforms.ToTensor(),
     ])
-    assets_dir = os.path.join(current_dir, 'assets')
-
-    fname = get_object_fname(color, shape, x, y, rotation, idx)
-    if fname is not None:
-        color, obj_type, _, xpos, ypos, rotation = \
-            fname.split('.')[0].split('_')
-    else:
-        idx = 0
-        while get_object_fname(color, shape, idx=idx) is not None:
-            idx += 1
-
-        if rotation is None:
-            rotation = random.uniform(0, 360)
-        else:
-            if shape in 'sphere cylinder ellipsoid cone'.split() and rotation != 0:
-                raise ValueError
-            if shape == 'box' and rotation not in (0, 1):
-                raise ValueError
-            _rotation = None
-            while _rotation is None:
-                r = random.uniform(0, 360)
-                r = render_scene.rotation_to_categorical(r, shape)
-                if r == rotation:
-                    _rotation = r
-
-        bounds = {
-            -2: (-3., -1.8),
-            -1: (-1.8, -0.6),
-            0: (-0.6, 0.6),
-            1: (0.6, 1.8),
-            2: (1.8, 3.),
-        }
-        if x is None:
-            _xcat = random.randint(-2, 2)
-            x = random.uniform(*bounds[_xcat])
-        if y is None:
-            _ycat = random.randint(-2, 2)
-            y = random.uniform(*bounds[_ycat])
-        location = [x, y]
-        print(
-            'Rendering a missing scene...'
-            f'({shape}, {color}, {location}, {rotation})'
-        )
-        render_scene(idx, shape, color, location, rotation, resolution)
-
-        # fname = get_object_fname(color, shape, location[0], location[1], None, None)
-        fname = get_object_fname(color, shape, idx=idx)
-        color, obj_type, _, xpos, ypos, rotation = \
-            fname.split('.')[0].split('_')
-
-    image = Image.open(os.path.join(assets_dir, fname)).convert("RGB")
+    image = Image.open(path('assets_128', fname)).convert("RGB")
     image = transform(image)
     image = image.numpy()
 
-    return image, (obj_type, color, int(xpos), int(ypos), int(rotation))
+    return image, (shape, color, int(x), int(y))
 
 
-def get_select_random(p_same_shape=0, p_same_color=0, p_same_location=0):
+def get_select_random(args):
+    # print sample mode probs
+    cum = 0.
+    print(f'\n{"MODE":<30} {"%":>5} {"CUM":>5}')
+    for k, p in sample_mode_probs.items():
+        print(f'{k:<30} {100 * p:>5.1f} {100 * p + cum:>5.1f}')
+        cum += 100 * p
+    p, cum = 100 - cum, 100
+    print(f'{"random":<30} {p:>5.1f} {cum:>5.1f}')
+    sample_mode_probs['random'] = p / 100
 
-    def select_random(used_combos, object_tuples, aux_tuples, mode=None):
-        # aux attributes are only used if there are not enough object tuples
-        # that satisfy the criteria
-        # shape, color, xpos, ypos, rotation = attributes
+    def sample_mode():
+        r, q = random.uniform(0, 1), 0
+        for key, prob in sample_mode_probs.items():
+            if prob + q >= r:
+                return key
+            q += prob
+        return 'random'
 
-        if p_same_color + p_same_shape + p_same_location > 0 and mode is None:
-            r = random.uniform(0, 1)
-            if r < p_same_shape:
-                mode = 'same_shape'
-            elif r < p_same_shape + p_same_color:
-                mode = 'same_color'
-            elif r < p_same_shape + p_same_color + p_same_location:
-                mode = 'same_location'
-            else:
-                mode = 'random'
+    def select_random(used_combos, object_tuples, mode=None):
+        mode = mode if mode is not None else sample_mode()
 
-        exclude = [x[:2] for x in used_combos]
-
-        if mode == 'same_shape':
-            d_shape = used_combos[0][0]
-            available_colors = [
-                x[1] for x in object_tuples
-                if x not in exclude and x[0] == d_shape
+        exclude = [tup[:2] for tup in used_combos]
+        t_shape, t_color, t_x, t_y = used_combos[0]
+        if mode == 'common_shape':
+            available = [
+                (*tup, x, y) for tup, x, y
+                # in product(object_tuples, [-1, 0, 1], [-1, 0, 1])
+                in product(object_tuples, [0, 1], [0, 1])
+                if tup[0] == t_shape and (*tup, x, y) not in used_combos
             ]
-            if not available_colors:
-                available_colors = [
-                    x for x in colors if (d_shape, x) not in exclude
+        elif mode == 'common_color':
+            available = [
+                (*tup, x, y) for tup, x, y
+                # in product(object_tuples, [-1, 0, 1], [-1, 0, 1])
+                in product(object_tuples, [0, 1], [0, 1])
+                if tup[1] == t_color  # tup not in exclude
+                and (*tup, x, y) not in used_combos
+            ]
+            if not available:  # and False:
+                available = [
+                    (*tup, x, y) for tup, x, y
+                    # in product(object_tuples, [-1, 0, 1], [-1, 0, 1])
+                    in product(object_tuples, [0, 1], [0, 1])
+                    if (*tup, x, y) not in used_combos
                 ]
-            d_color = random.choice(available_colors)
-        elif mode == 'same_color':
-            d_color = used_combos[0][1]
-            available_shapes = [
-                x[0] for x in object_tuples
-                if x not in exclude and x[1] == d_color
+        elif mode == 'common_x':
+            available = [
+                (*tup, t_x, y) for tup, y
+                # in product(object_tuples, [-1, 0, 1]) if tup not in exclude
+                in product(object_tuples, [0, 1]) if tup not in exclude
             ]
-            if not available_shapes:
-                available_shapes = [
-                    x for x in object_types if (x, d_color) not in exclude
+        elif mode == 'common_y':
+            available = [
+                (*tup, x, t_y) for tup, x
+                # in product(object_tuples, [-1, 0, 1]) if tup not in exclude
+                in product(object_tuples, [0, 1]) if tup not in exclude
+            ]
+        elif mode == 'common_x_shape':
+            available = [
+                (*tup, t_x, y) for tup, y
+                # in product(object_tuples, [-1, 0, 1])
+                in product(object_tuples, [0, 1])
+                if tup[0] == t_shape and (*tup, t_x, y) not in used_combos
+            ]
+            if not available:
+                available = [
+                    (*tup, t_x, y) for tup, y
+                    in product(object_tuples, [0, 1])
+                    # in product(object_tuples, [-1, 0, 1])
+                    if (*tup, t_x, y) not in used_combos
                 ]
-            d_shape = random.choice(available_shapes)
-        else:
-            available_shapes = [
-                x[0] for x in object_tuples if x not in exclude]
-            d_shape = random.choice(available_shapes)
-            available_colors = [
-                x[1] for x in object_tuples
-                if x not in exclude and x[0] == d_shape
+        elif mode == 'common_y_shape':
+            available = [
+                (*tup, x, t_y) for tup, x
+                in product(object_tuples, [0, 1])
+                # in product(object_tuples, [-1, 0, 1])
+                if tup[0] == t_shape and (*tup, x, t_y) not in used_combos
             ]
-            d_color = random.choice(available_colors)
+            if not available:
+                available = [
+                    (*tup, x, t_y) for tup, x
+                    in product(object_tuples, [0, 1])
+                    # in product(object_tuples, [-1, 0, 1])
+                    if (*tup, x, t_y) not in used_combos
+                ]
+        elif mode == 'common_x_color':
+            available = [
+                (*tup, t_x, y) for tup, y
+                in product(object_tuples, [0, 1])
+                # in product(object_tuples, [-1, 0, 1])
+                if tup[1] == t_color and (*tup, t_x, y) not in used_combos
+            ]
+            if not available:
+                available = [
+                    (*tup, t_x, y) for tup, y
+                    in product(object_tuples, [0, 1])
+                    # in product(object_tuples, [-1, 0, 1])
+                    if (*tup, t_x, y) not in used_combos
+                ]
+        elif mode == 'common_y_color':
+            available = [
+                (*tup, x, t_y) for tup, x
+                in product(object_tuples, [0, 1])
+                # in product(object_tuples, [-1, 0, 1])
+                if tup[1] == t_color and (*tup, x, t_y) not in used_combos
+            ]
+            if not available:
+                available = [
+                    (*tup, x, t_y) for tup, x
+                    in product(object_tuples, [0, 1])
+                    # in product(object_tuples, [-1, 0, 1])
+                    if (*tup, t_y) not in used_combos
+                ]
+        elif mode == 'common_location':
+            available = [
+                (*tup, t_x, t_y) for tup in object_tuples
+                if tup not in exclude
+            ]
+        elif mode == 'common_location_shape':
+            available = [
+                (*tup, t_x, t_y) for tup in object_tuples if tup not in exclude
+            ]
+            if not available:
+                available = [
+                    (*tup, x, y) for tup, x, y
+                    # in product(object_tuples, [-1, 0, 1], [-1, 0, 1])
+                    in product(object_tuples, [0, 1], [0, 1])
+                    if tup[0] == t_shape and (x == t_x or y == t_y)
+                ]
+        elif mode == 'common_location_color':
+            available = [
+                (*tup, t_x, t_y) for tup in object_tuples if tup not in exclude
+            ]
+            if not available:
+                available = [
+                    (*tup, x, y) for tup, x, y
+                    # in product(object_tuples, [-1, 0, 1], [-1, 0, 1])
+                    in product(object_tuples, [0, 1], [0, 1])
+                    if tup[1] == t_color and (x == t_x or y == t_y)
+                ]
+        elif mode == 'unique_shape':
+            exclude = [tup[0] for tup in used_combos]
+            available = [
+                (*tup, x, y) for tup, x, y
+                # in product(object_tuples, [-1, 0, 1], [-1, 0, 1])
+                in product(object_tuples, [0, 1], [0, 1])
+                if tup[0] not in exclude
+            ]
+        elif mode == 'unique_color':
+            exclude = [tup[1] for tup in used_combos]
+            available = [
+                (*tup, x, y) for tup, x, y
+                in product(object_tuples, [0, 1], [0, 1])
+                # in product(object_tuples, [-1, 0, 1], [-1, 0, 1])
+                if tup[1] not in exclude
+            ]
+        elif mode == 'unique_shape_color':
+            exclude = [tup[:2] for tup in used_combos]
+            available = [
+                (*tup, x, y) for tup, x, y
+                # in product(object_tuples, [-1, 0, 1], [-1, 0, 1])
+                in product(object_tuples, [0, 1], [0, 1])
+                if tup[:2] not in exclude
+            ]
+        elif mode == 'unique_location':
+            exclude = [tup[-2:] for tup in used_combos]
+            available = [
+                (*tup, x, y) for tup, x, y
+                in product(object_tuples, [0, 1], [0, 1])
+                # in product(object_tuples, [-1, 0, 1], [-1, 0, 1])
+                if tup[-2:] not in exclude
+            ]
+        else:  # no constraints: shape, color and shade not necessarily unique
+            available = [
+                (*tup, x, y) for tup, x, y
+                # in product(object_tuples, [-1, 0, 1], [-1, 0, 1])
+                in product(object_tuples, [0, 1], [0, 1])
+                if (*tup, x, y) not in used_combos
+            ]
 
-        if mode == 'same_location':
-            d_xpos, d_ypos = used_combos[0][2:4]
-        else:
-            d_xpos, d_ypos = None, None
-
-        d_rotation = None
-
-        combination = (d_shape, d_color, d_xpos, d_ypos, d_rotation)
-
-        return combination, used_combos, mode, None
+        if not available:
+            print(mode)
+        assert len(available) > 0
+        return random.choice(available), mode
 
     return select_random
 
 
-def export_input_data(object_tuples, args, select_fn, n_samples, aux_tuples=None):
+def export_input_data(object_tuples, args, select, n_samples):
     n_distractors = args.n_distractors
-    size = (len(object_tuples) * n_samples, n_distractors + 1)
     positions = np.arange(n_distractors + 1)
-    _colors = list(colors)
-    keys = ('shape', 'color', 'xpos', 'ypos', 'rotation')
 
-    target_positions = np.empty(size[0], dtype=np.int64)
-    target_positions[:] = -1
-    attributes = defaultdict(lambda: np.empty(size, dtype=np.int64))
-    sample_features = []
+    resolution = args.resolution
+    size = (len(object_tuples) * n_samples, n_distractors + 1)
+    target_positions = np.empty(size[0], dtype=np.int8)
 
-    entropy_distr_targets = defaultdict(list)
-    shared_attributes = {k: [] for k in keys}
+    attributes = np.empty((*size, len(attribute_keys)), dtype=np.int8)
+    shared_attributes = {k: [] for k in attribute_keys}
+    sampling_mode = []
+    input_features = np.empty(
+        (*size, 3, resolution, resolution),
+        dtype=np.float16,
+    )
 
-    def map_shape_color(attr, key):
-        if key == 'shape':
-            return object_types.index(attr)
-        elif key == 'color':
-            return _colors.index(attr)
-        else:
-            return attr
+    mapping = defaultdict(lambda: (lambda x: x))
+    # mapping = defaultdict(lambda: (lambda x: x + 1))
+    mapping.update({
+        'shape': lambda x: shapes.index(x),
+        'color': lambda x: colors.index(x),
+    })
 
-    for tuple_i, (shape, color) in tqdm(enumerate(object_tuples), total=len(object_tuples)):
-        for sample_j in range(n_samples):
-            idx = tuple_i * n_samples + sample_j
-            image_idx = sample_j % args.n_img
+    pbar = tqdm(total=size[0], desc='Sampling distractors')
+    for t, t_tuple in enumerate(object_tuples):
+        for s in range(n_samples):
+            idx = t * n_samples + s
+            t_image, t_attributes = load_image(
+                *t_tuple,
+                random.choice([0, 1]),
+                random.choice([0, 1]),
+                # random.choice([-1, 0, 1]),
+                # random.choice([-1, 0, 1]),
+                resolution=resolution,
+            )
 
-            target_image, target_attributes = load_image(
-                shape, color, idx=image_idx, resolution=args.resolution)
+            t_pos = np.random.randint(0, n_distractors + 1)
+            d_pos = positions[positions != t_pos]
 
-            target_pos = np.random.randint(0, n_distractors + 1)
-            distractor_pos = positions[positions != target_pos]
+            target_positions[idx] = t_pos
+            input_features[idx, t_pos] = t_image
+            attributes[idx, t_pos] = [
+                mapping[k](v) for k, v in zip(attribute_keys, t_attributes)
+            ]
 
-            sample = np.empty((size[1], *target_image.shape), dtype=np.int64)
-            sample[target_pos] = target_image
-
-            target_positions[idx] = target_pos
-            for k, key in enumerate(keys):
-                attributes[key][idx, target_pos] = \
-                    map_shape_color(target_attributes[k], key)
-
-            used_combos, mode, entropy_distr = [target_attributes], None, 0
-            for distr_k in range(n_distractors):
-                d_attributes, used_combos, mode, d_entropy = \
-                    select_fn(used_combos, object_tuples, aux_tuples, mode)
-                d_image, d_attributes = \
-                    load_image(*d_attributes, resolution=args.resolution)
+            used_combos, mode = [t_attributes], None
+            for d in range(n_distractors):
+                d_attributes, mode = select(used_combos, object_tuples, mode)
+                d_image, d_attributes = load_image(
+                    *d_attributes,
+                    resolution=resolution)
                 used_combos.append(d_attributes)
-                d_pos = distractor_pos[distr_k]
 
-                sample[d_pos] = d_image
-                for key_k, key in enumerate(keys):
-                    attributes[key][idx, d_pos] = \
-                        map_shape_color(d_attributes[key_k], key)
+                input_features[idx, d_pos[d]] = d_image
+                attributes[idx, d_pos[d]] = [mapping[k](v) for k, v in zip(attribute_keys, d_attributes)]
 
-            sample_features.append(sample.reshape(1, *sample.shape))
-            entropy_distr_targets[target_attributes[:2]].append(entropy_distr)
-            for k, key in enumerate(keys):
-                shared_attributes[key].append(sum(
-                    1 for c in used_combos[1:] if c[k] == target_attributes[k]
-                ))
+            for k, key in enumerate(attribute_keys):
+                shared_attributes[key].append(
+                    sum(1 for c in used_combos[1:] if c[k] == t_attributes[k])
+                )
 
-    for k, v in shared_attributes.items():
+            if input_features.shape[0] < 2000:
+                sampling_mode.append(mode)
+
+            pbar.update(1)
+            gc.collect()
+
+    pbar.close()
+
+    for attribute, counts in shared_attributes.items():
         print(
-            f'Avg number of distractors sharing {k} with '
-            'the target: ', np.round(np.mean(v), 2)
+            f'Avg number of distractors sharing {attribute} with '
+            'the target:', np.round(np.mean(counts), 2)
         )
 
-    input_data = np.vstack(sample_features)
-    attributes = np.array(
-        tuple(array for array in attributes.values()),
-        dtype=[(key, np.int64, size) for key in keys],
-    )
+    attributes = np.stack([
+        np.array(
+            tuple(np.moveaxis(sample, 1, 0)),
+            dtype=[(k, np.int8, (n_distractors + 1,)) for k in attribute_keys],
+        ) for sample in attributes
+    ])
 
-    # map remaining attributes and save mappings
-    mappings = [
-        np.char.array(object_types, unicode=False),
-        np.char.array(_colors, unicode=False),
-    ]
-    for key in keys[2:]:
-        mapping, mapped = np.unique(attributes[key], return_inverse=True)
-        mappings.append(mapping)
-        attributes[key] = mapped.reshape(attributes[key].shape)
+    # save attribute mapping
+    maps = (
+        np.array(shapes),
+        np.array(colors),
+        # np.array([-1, 0, 1], dtype=np.int8),
+        # np.array([-1, 0, 1], dtype=np.int8),
+        np.array([0, 1], dtype=np.int8),
+        np.array([0, 1], dtype=np.int8),
+    )
     mapping = np.array(
-        tuple(mappings),
-        dtype=[
-            (key, mapping.dtype, mapping.shape)
-            for key, mapping in zip(keys, mappings)
-        ],
+        maps,
+        dtype=[(k, m.dtype, m.shape) for k, m in zip(attribute_keys, maps)],
     )
+    sample_modes = np.array(sampling_mode) if sampling_mode else None
 
-    return input_data, attributes, target_positions, mapping
+    return input_features, target_positions, attributes, mapping, sample_modes
 
 
 if __name__ == '__main__':
     args = parse_args()
+
+    if args.render:
+        render_scenes(args)
+
     np.random.seed(args.seed)
     random.seed(args.seed)
 
-    render_scenes(args)
+    all_objects = list(product(shapes, colors))
+    test_objects = [(s, c) for s, c in zip(shapes * 2, cycle(colors))]
+    train_objects = [t for t in all_objects if t not in test_objects]
 
-    all_objects = list(itertools.product(object_types, colors))
-    train_objects, test_objects = train_test_split(all_objects, test_size=0.25)
-    select_fn = get_select_random(
-        args.p_same_shape,
-        args.p_same_color,
-        args.p_same_location,
-    )
+    print('\ntest objects:')
+    pprint(test_objects)
 
-    print('\nTrain')
-    train, train_attr, train_targets, train_mapping = \
-        export_input_data(train_objects, args, select_fn, args.n_samples_train, None)
+    select_fn = get_select_random(args)
 
-    print('\nEval (train)')
-    eval_train, eval_train_attr, eval_train_targets, eval_train_mapping = \
-        export_input_data(train_objects, args, select_fn, args.n_samples_train_eval, None)
-
-    print('\nEval (test)')
-    eval_test, eval_test_attr, eval_test_targets, eval_test_mapping = \
-        export_input_data(test_objects, args, select_fn, args.n_samples_test, None)
+    train, train_targets, train_attr, train_mapping, _ = \
+        export_input_data(train_objects, args, select_fn, args.n_samples_train)
+    eval_train, eval_train_targets, eval_train_attr, \
+        eval_train_mapping, eval_train_sample_modes = export_input_data(
+            train_objects, args, select_fn, args.n_samples_eval_train)
+    eval_test, eval_test_targets, eval_test_attr, eval_test_mapping, \
+        eval_test_sample_modes = export_input_data(
+            test_objects, args, select_fn, args.n_samples_eval_test)
 
     train_shapes = len({t[0] for t in train_objects})
     train_colors = len({t[1] for t in train_objects})
 
-    print('')
-    print('Number of shapes:', len(object_types))
-    print('Number of colors:', len(colors.keys()), '\n')
+    print('\nNumber of shapes:', len(shapes))
+    print('Number of colors:', len(colors), '\n')
     print('Number of shapes in the train set:', train_shapes)
     print('Number of colors in the train set:', train_colors, '\n')
     print('Unique tuples in the train set:', len(train_objects))
@@ -308,10 +408,6 @@ if __name__ == '__main__':
     os.makedirs(path('../input_data/'), exist_ok=True)
     fname = f'obverter-{args.n_distractors + 1}-' \
         f'{args.n_samples_train}-{args.resolution}.npz'
-    npz_fpath = os.path.join(
-        current_dir, '..', 'input_data', fname)
-
-    print(f'data saved to .../data/input_data/{fname}')
 
     np.savez_compressed(
         path('..', 'input_data', fname),
@@ -323,9 +419,18 @@ if __name__ == '__main__':
         eval_train_targets=eval_train_targets,
         eval_train_attributes=eval_train_attr,
         eval_train_attribute_mapping=eval_train_mapping,
+        eval_train_sample_modes=eval_train_sample_modes,
         eval_test=eval_test,
         eval_test_targets=eval_test_targets,
         eval_test_attributes=eval_test_attr,
         eval_test_attribute_mapping=eval_test_mapping,
-        allow_pickle=False,
+        eval_test_sample_modes=eval_test_sample_modes,
+        sample_mode_probs=np.array(
+            tuple(sample_mode_probs.values()),
+            dtype=[(k, np.float32) for k in sample_mode_probs],
+        ),
+        train_objects=np.array(train_objects),
+        test_objects=np.array(test_objects),
     )
+
+    print(f'data saved to .../data/input_data/{fname}')

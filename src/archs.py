@@ -1,8 +1,10 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import numpy as np
 from torch.distributions import RelaxedOneHotCategorical, OneHotCategorical
 from argparse import Namespace
+from collections import defaultdict
 
 from src.channels import (
     NoChannel,
@@ -10,6 +12,22 @@ from src.channels import (
     DeletionChannel,
 )
 from src.interaction import LoggingStrategy
+from typing import List
+
+
+# torch.autograd.set_detect_anomaly(True)
+
+channels = {
+    None: NoChannel,
+    'erasure': ErasureChannel,
+    'deletion': DeletionChannel,
+}
+
+rnn_cells = {
+    'rnn': nn.RNNCell,
+    'gru': nn.GRUCell,
+    'lstm': nn.LSTMCell,
+}
 
 
 class SeeingConvNet(nn.Module):
@@ -44,18 +62,49 @@ class SeeingConvNet(nn.Module):
             nn.BatchNorm2d(n_filters * 2),
             nn.ReLU(),
         )
+        # print('n params denobv', sum(p.numel() for p in self.convnet.parameters()))
 
+        # self.convnet = nn.Sequential(
+        #    nn.Conv2d(3, n_filters, **kwargs),
+        #    nn.BatchNorm2d(n_filters),
+        #    nn.ReLU(),
+
+        #    nn.Conv2d(n_filters, n_filters, **kwargs),
+        #    nn.BatchNorm2d(n_filters),
+        #    nn.ReLU(),
+
+        #    nn.Conv2d(n_filters, n_filters, **kwargs),
+        #    nn.BatchNorm2d(n_filters),
+        #    nn.ReLU(),
+
+        #    nn.Conv2d(n_filters, n_filters, **kwargs),
+        #    nn.BatchNorm2d(n_filters),
+        #    nn.ReLU(),
+
+        #    nn.Conv2d(n_filters, n_filters, **kwargs),
+        #    nn.BatchNorm2d(n_filters),
+        #    nn.ReLU(),
+        # )
+        # print('n params obv', sum(p.numel() for p in self.convnet.parameters()))
         self.out_features = (
             (
-                input_shape + 2 * kwargs['padding'] - 1
+                input_shape - 1
+                + 2 * kwargs['padding']
                 - kwargs['dilation'] * (kwargs['kernel_size'] - 1)
             ) // kwargs['stride'] + 1
-        ) ** 2
+        ) ** 2  # // 8
+        # self.out_features = 512
+        # print(self.out_features, print(input_shape))
 
         self.fc = nn.Sequential(
             nn.Linear(self.out_features, n_hidden),
             nn.ReLU(),
         )
+
+    def reset_parameters(self):
+        for layer in self.children():
+            if hasattr(layer, 'reset_parameters'):
+                layer.reset_parameters()
 
     def forward(self, x):
         if x.dim() == 5:
@@ -83,6 +132,10 @@ class RnnSenderGS(nn.Module):
         assert opts.max_len >= 1, "Cannot have a max_len below 1"
         super(RnnSenderGS, self).__init__()
         self.max_len = opts.max_len
+        self.temperature = opts.temperature
+
+        if opts.sender_cell not in rnn_cells:
+            raise ValueError(f"Unknown RNN cell: {opts.sender_cell}")
 
         input_encoder = SeeingConvNet if opts.image_input else nn.Linear
         self.encoder = input_encoder(opts.n_features, opts.sender_hidden)
@@ -90,69 +143,28 @@ class RnnSenderGS(nn.Module):
         self.embedding = nn.Linear(opts.vocab_size, opts.embedding)
         self.sos_embedding = nn.Parameter(torch.zeros(opts.embedding))
         self.vocab_size = opts.vocab_size
-
-        self.temperature_eval = opts.evaluation_temperature
-        self.temperature_max = opts.temperature_max
-        self.hidden_to_inv_temperature = nn.Sequential(
-            nn.Linear(opts.sender_hidden, 1, bias=False),
-            nn.Softplus(1),
-        )
-
-        cells = {
-            'rnn': nn.RNNCell,
-            'gru': nn.GRUCell,
-            'lstm': nn.LSTMCell,
-        }
-        if opts.sender_cell not in cells:
-            raise ValueError(f"Unknown RNN Cell: {opts.sender_cell}")
-
-        self.cell = cells[opts.sender_cell](
+        self.cell = rnn_cells[opts.sender_cell](
             input_size=opts.embedding,
-            hidden_size=opts.sender_hidden,
+            hidden_size=opts.hidden_size,
+            # hidden_size=opts.sender_hidden,
         )
+
         self.reset_parameters()
 
-    def step_temperature(self, hidden):
-        if self.training or self.temperature_eval is None:
-            # predict inverse temperature and scale it
-            tau_0 = self.temperature_max ** -1
-            return (self.hidden_to_inv_temperature(hidden) + tau_0) ** -1
-        else:
-            return self.temperature_eval
-
-    def gumbel_softmax_sample(self, logits, temperature):
+    def gs_sample(self, logits):
         if self.training:
             sample = RelaxedOneHotCategorical(
                 logits=logits,
-                temperature=temperature,
+                temperature=self.temperature,
             ).rsample()
-        elif temperature is None or (not isinstance(temperature, torch.Tensor) and temperature == 0):
-            # apply argmax and return a one hot tensor and original log-probs
-            # log-probs do not reflect the distribution of discrete symbols
-            # and hence cannot be used to compute entropy of resulting messages
-            size = logits.size()
-            indexes = logits.argmax(-1)
-            one_hots = torch.zeros_like(logits).view(-1, size[-1])
-            one_hots.scatter_(1, indexes.view(-1, 1), 1)
-            one_hots = one_hots.view(size)
-            return one_hots, logits
-            # elif temperature is not None and temperature > 0:
         else:
             # argmax of GS sample is equivalent to sampling from the original
             # distribution: Softmax(logits, temperature)
-            sample = OneHotCategorical(logits=logits / temperature).sample()
+            sample = OneHotCategorical(
+                logits=(logits / self.temperature)
+            ).sample()
 
-        if isinstance(temperature, torch.Tensor):
-            logits = (logits.detach() / temperature.detach()).log_softmax(-1)
-        else:
-            logits = (logits.detach() / temperature).log_softmax(-1)
-
-        return sample, logits
-
-        # logits = (logits.detach() / temperature.detach()).log_softmax(-1) \
-        #     if isinstance(temperature, torch.Tensor) \
-        #     else (logits.detach() / temperature).log_softmax(-1)
-        # return sample, logits
+        return sample, (logits.detach() / self.temperature).log_softmax(-1)
 
     def reset_parameters(self):
         nn.init.normal_(self.sos_embedding, 0.0, 0.01)
@@ -163,7 +175,7 @@ class RnnSenderGS(nn.Module):
 
         e_t = torch.stack([self.sos_embedding] * prev_hidden.size(0))
 
-        sequence, probs, temperature = [], [], []
+        sequence, logits = [], []
         for step in range(self.max_len):
             if isinstance(self.cell, nn.LSTMCell):
                 h_t, prev_c = self.cell(e_t, (prev_hidden, prev_c))
@@ -171,51 +183,38 @@ class RnnSenderGS(nn.Module):
                 h_t = self.cell(e_t, prev_hidden)
 
             step_logits = self.hidden_to_output(h_t)
-            step_temperature = self.step_temperature(h_t)
-
-            symbols, symbol_probs = self.gumbel_softmax_sample(
-                step_logits,
-                step_temperature,
-            )
+            symbol_sample, symbol_logits = self.gs_sample(step_logits)
 
             prev_hidden = h_t
-            e_t = self.embedding(symbols)
+            e_t = self.embedding(symbol_sample)
+            sequence.append(symbol_sample)
+            logits.append(symbol_logits)
 
-            sequence.append(symbols)
-            probs.append(symbol_probs)
-            temperature.append(step_temperature)
-
-        sequence = torch.stack(sequence, dim=1)
-        probs = torch.stack(probs, dim=1)
-        temperature = torch.cat(temperature, dim=-1)
-
-        return sequence, probs, temperature
+        return torch.stack(sequence, dim=1), torch.stack(logits, dim=1)
 
 
 class RnnReceiverGS(nn.Module):
     def __init__(self, opts):
         super(RnnReceiverGS, self).__init__()
 
-        cells = {
-            'rnn': nn.RNNCell,
-            'gru': nn.GRUCell,
-            'lstm': nn.LSTMCell,
-        }
-
-        if opts.receiver_cell not in cells:
+        if opts.receiver_cell not in rnn_cells:
             raise ValueError(f"Unknown RNN Cell: {opts.receiver_cell}")
 
         input_encoder = SeeingConvNet if opts.image_input else nn.Linear
         vocab_size = opts.vocab_size + 1 \
             if opts.channel == 'erasure' else opts.vocab_size
 
-        self.cell = cells[opts.receiver_cell](
-            input_size=opts.embedding,
-            hidden_size=opts.receiver_hidden)
         self.message_encoder = nn.Linear(vocab_size, opts.embedding)
         self.input_encoder = input_encoder(
             opts.n_features,
-            opts.receiver_hidden)
+            opts.hidden_size,
+            # opts.receiver_hidden,
+        )
+        self.cell = rnn_cells[opts.receiver_cell](
+            input_size=opts.embedding,
+            hidden_size=opts.hidden_size,
+            # hidden_size=opts.receiver_hidden,
+        )
         self.logsoft = nn.LogSoftmax(dim=1)
 
     def forward(self, message, _input=None, aux_input=None):
@@ -237,7 +236,6 @@ class RnnReceiverGS(nn.Module):
             else:
                 h_t = self.cell(e_t, prev_hidden)
 
-            # h_t: message embedding
             energies = torch.matmul(embedded_input, h_t.unsqueeze(-1))
             outputs.append(self.logsoft(energies.squeeze()))
             prev_hidden = h_t
@@ -249,79 +247,152 @@ class SenderReceiverRnnGS(nn.Module):
     def __init__(
         self,
         opts: Namespace,
+        n_attributes: List[int],
         device: torch.device = torch.device("cpu"),
     ):
         super(SenderReceiverRnnGS, self).__init__()
-        channel_types = {
-            'none': NoChannel,
-            'erasure': ErasureChannel,
-            'deletion': DeletionChannel,
-        }
 
         self.sender = RnnSenderGS(opts)
         self.receiver = RnnReceiverGS(opts)
-        self.channel = channel_types[opts.channel](opts, device)
+        self.channel = channels[opts.channel](opts, device)
+        self.image_input = opts.image_input
 
         self.length_cost = opts.length_cost
         self.warmup = iter(True for _ in range(opts.warmup_steps))
+        self.relu = nn.ReLU()
+        self.softplus = nn.Softplus()
 
-    @staticmethod
-    def loss(s_input, message, r_input, r_output, labels, aux_input):
-        cross_entropy = F.cross_entropy(r_output, labels, reduction="none")
-        accuracy = (r_output.detach().argmax(dim=-1) == labels).float()
-        return cross_entropy, {'accuracy': accuracy * 100}
+        if 'attributes' in opts.loss:
+            self.loss = self.loss_obverter if opts.image_input else self.loss_visa
+            if opts.loss == 'weighted_attributes':
+                n_attributes = torch.tensor(n_attributes).to(device)
+                self.loss_weights = n_attributes.log().pow(-1).unsqueeze(-1)
+            else:
+                self.loss_weights = None
+        else:
+            self.loss = self.loss_receiver
+
+        self.logging_strategy_train = LoggingStrategy(
+            store_sender_input=(not opts.image_input),
+            store_receiver_input=(not opts.image_input),
+        )
+        self.logging_strategy_eval = LoggingStrategy()
+
+        self.kld_coeff = opts.kld_coeff
+        # Kucinski2021, Nguyen Le Hoang1∗ Tadahiro Taniguchi2 Fang Tianwei3 Akira Taniguchi (KLD)
+
+        self.uniform = (opts.vocab_size - 1) ** -1
+        self.log_uniform = -np.log(opts.vocab_size - 1)
+        self.kld_slice = slice(1, -1) \
+            if isinstance(self.channel, ErasureChannel) else slice(1, None)
+        # self.receiver_vocab_size = opts.vocab_size \
+        #     if opts.channel != 'erasure' else opts.vocab_size + 1
+        # self.log_uniform = -np.log(self.receiver_vocab_size - 1)
+        self.min = torch.finfo(torch.get_default_dtype()).min
+        self.max = torch.finfo(torch.get_default_dtype()).max
+
+    def loss_receiver(self, s_input, r_input, symbol, r_output, labels, aux_input):
+        ce = F.cross_entropy(r_output, labels, reduction='none')
+        accuracy = (r_output.detach().argmax(dim=-1) == labels).float() * 100
+        return ce, {'accuracy': accuracy}
+
+    def loss_visa(self, s_input, r_input, symbol, r_output, labels, aux_input):
+        # selected = torch.matmul(r_output.softmax(-1).unsqueeze(1), r_input).squeeze(1)  # .clamp(0, 1) uncommnet?
+        # idx = torch.arange(r_output.size(0)).to(labels.device)
+        # targets = r_input[idx, labels]
+        # ce = F.binary_cross_entropy(selected, targets, reduction='none')
+        # print(r_output.softmax(-1).unsqueeze(1).shape, r_input.unsqueeze(-1).shape)
+        ce = F.binary_cross_entropy(
+            torch.matmul(
+                r_output.softmax(-1).unsqueeze(1), r_input
+            ).squeeze(1).clamp(0, 1),
+            r_input[torch.arange(r_output.size(0)).to(labels.device), labels],
+            reduction='none',
+        ).sum(-1)
+        accuracy = (r_output.detach().argmax(dim=-1) == labels).float() * 100
+        return ce, {'accuracy': accuracy}
+
+    def loss_obverter(
+        self, s_input, r_input, symbol, r_output, labels, aux_input
+    ):
+        features = torch.stack(list(aux_input.values()), dim=1)
+        idx = torch.arange(r_output.size(0)).to(labels.device)
+        targets = features[idx, :, labels]
+        idx = (
+            idx.unsqueeze(-1).expand(targets.size()),
+            torch.arange(targets.size(1)).to(idx.device).expand(targets.shape),
+            targets,
+        )
+        one_hots = F.one_hot(features).to(r_output.dtype)
+        # selected = torch.matmul(
+        #     one_hots.transpose(2, 3).unsqueeze(-2),  # (32, 4, 8, 1, 5)
+        #     r_output.exp().view(r_output.size(0), 1, 1, r_output.size(1), 1),  # (32, 1, 1, 5, 1)
+        # ).view(*features.size()[:2], -1)
+        selected = (
+            r_output.unsqueeze(2).unsqueeze(3) + one_hots.transpose(1, 2).log()
+        ).clamp(min=self.min).logsumexp(1)
+
+        # cross_entropies = -selected[idx]
+        if self.loss_weights is not None:
+            ce = torch.matmul(-selected[idx], self.loss_weights).squeeze()
+            # print('unaggregated0', -selected[idx][0])
+            # print('unweighted', -selected[idx].sum(-1))
+            # print('weighted', ce)
+            # print('weights', self.loss_weights, self.loss_weights.exp())
+        else:
+            ce = -selected[idx].sum(-1)
+        # ce = -selected[idx].sum(-1)
+        # ce = -torch.log(selected[idx]).sum(-1)
+        # ce = F.cross_entropy(r_output, labels, reduction='none')
+        accuracy = (r_output.detach().argmax(dim=-1) == labels).float() * 100
+        if not self.training and torch.any(ce.isnan()):
+            print('XENT')
+            print(ce)
+            print(selected)
+            print('')
+        return ce, {'accuracy': accuracy}
 
     def forward(self, sender_input, labels, receiver_input, aux_input):
         warmup = next(self.warmup, False)
 
         sender_output = self.sender(sender_input, aux_input)
-        temperatures = sender_output[-1]
 
-        # pass messages and symbol probabilities through the channel
+        # pass messages and symbol log-probs through the channel
         message, logits, message_nn, logits_nn = self.channel(*sender_output)
 
         # append EOS to each message
         eos = torch.zeros_like(message[:, :1, :])
         eos[:, 0, 0] = 1
-        # log_eos = torch.log(eos)  # .log_softmax(0)#clamp(min=torch.finfo(eos.dtype).min)
+        log_eos = torch.log(eos)
+
         message = torch.cat([message, eos], dim=1)
-        logits = torch.cat([logits, torch.log(eos)], dim=1)
+        logits = torch.cat([logits, log_eos], dim=1)
         message_nn = torch.cat([message_nn, eos], dim=1)  # no noise
-        logits_nn = torch.cat([logits_nn, torch.log(eos)], dim=1)
+        logits_nn = torch.cat([logits_nn, log_eos], dim=1)
 
         if isinstance(self.channel, NoChannel):
             receiver_output = self.receiver(message, receiver_input, aux_input)
             receiver_output_nn = receiver_output.detach()
-        else:
-            # compute receiver outputs for messages without noise as well
-            message_joined = torch.cat([
-                message,
-                message_nn.detach(),
-            ], dim=0)
-            receiver_input_joined = torch.cat([
-                receiver_input,
-                receiver_input.detach(),
-            ], dim=0)
+        else:  # compute receiver outputs also for messages without noise
+            # message_joined = torch.cat([message, message_nn])
+            # receiver_input_joined = torch.cat([receiver_input] * 2)
             aux_input_joined = {
-                key: torch.cat([
-                    vals,
-                    vals.detach(),
-                ], dim=0)
-                for key, vals in aux_input.items()
+                key: torch.cat([vals, vals]) for key, vals in aux_input.items()
             }
 
             receiver_output_joined = self.receiver(
-                message_joined,
-                receiver_input_joined,
-                aux_input_joined)
+                torch.cat([message, message_nn.detach()]),
+                torch.cat([receiver_input, receiver_input]),
+                aux_input_joined,
+            )
+            section = len(message)
+            receiver_output = receiver_output_joined[:section]
+            receiver_output_nn = receiver_output_joined[section:].detach()
 
-            receiver_output = receiver_output_joined[:len(message)]
-            receiver_output_nn = receiver_output_joined[len(message):]
-
-        loss, z, length, length_nn = 0, 0, 0, 0
+        loss, kld_loss, z, length, length_nn, kld_weight_sum = 0, 0, 0, 0, 0, 0
         not_eosed_before = torch.ones(message.size(0)).to(message.device)
-        not_eosed_before_nn = not_eosed_before.detach().clone()
-        aux_info = {}
+        not_eosed_before_nn = not_eosed_before.clone()
+        aux_info = defaultdict(float)
 
         # compute aux info values without noise
         accuracy_nn = (
@@ -329,71 +400,92 @@ class SenderReceiverRnnGS(nn.Module):
         ).float() * 100
 
         for step in range(receiver_output.size(1)):
+            symbol, symbol_nn = message[:, step], message_nn[:, step]
             step_loss, step_aux = self.loss(
                 sender_input,
-                message[:, step, ...],
                 receiver_input,
-                receiver_output[:, step, ...],
+                symbol,
+                receiver_output[:, step],
                 labels,
                 aux_input,
             )
 
-            add_mask = message[:, step, 0] * not_eosed_before
-            add_mask_nn = message_nn[:, step, 0] * not_eosed_before_nn
+            add_mask = symbol[:, 0] * not_eosed_before
+            add_mask_nn = symbol_nn[:, 0].detach() * not_eosed_before_nn.detach()
 
             z += add_mask
             loss += step_loss * add_mask
+
+            if self.kld_coeff > 0 and step + 1 < message.size(1):
+                non_eos = symbol[:, self.kld_slice].clone()
+                non_eos /= non_eos.sum(-1, keepdim=True)
+                log_uniform = torch.empty_like(non_eos)
+                log_uniform[:] = self.log_uniform
+                step_kld = F.kl_div(
+                    log_uniform,
+                    torch.where(non_eos.isnan(), self.uniform, non_eos),
+                    log_target=False,
+                    reduction='none',
+                ).sum(-1).clamp(max=self.max)  # KLD = 0 for P(eos) = 1
+                nan_mask = step_kld.isnan()
+                weight = not_eosed_before * symbol[:, self.kld_slice].sum(-1)
+                kld_loss += torch.where(nan_mask, 0, step_kld * weight)
+                kld_weight_sum += torch.where(nan_mask.any(-1), 0, weight)
+                # kld_weight_sum += (~nan_mask * weight.unsqueeze(-1)).mean(-1)
+                assert torch.all(kld_loss >= 0)
+                if torch.any(kld_loss.isnan()) or torch.any(kld_loss.isinf()):
+                    print('KLD', kld_loss)
+                    print('step kld', step_kld)
+                    print('probs before', non_eos)
+                    print('probs after', torch.where(non_eos.isnan(), self.uniform, non_eos))
+                    print('slice, weight', self.kld_slice, weight)
+                    print('')
+
             if not warmup:
                 loss += self.length_cost * step * add_mask
-            length += add_mask.detach() * (1 + step)
-            length_nn += add_mask_nn * (1 + step)
 
             # aggregate aux info
+            length += add_mask.detach() * step
+            length_nn += add_mask_nn * step
+
             for name, value in step_aux.items():
-                aux_info[name] = (
-                    value * add_mask.detach() + aux_info.get(name, 0)
-                )
-            aux_info['accuracy_nn'] = (
-                accuracy_nn[:, step] * add_mask_nn.detach()
-                + aux_info.get('accuracy_nn', 0)
-            )
+                aux_info[name] += value * add_mask.detach()
+            aux_info['accuracy_nn'] += accuracy_nn[:, step] * add_mask_nn
 
-            # aggregate temperature weighted by eos probs without noise
-            # (this only matters for the deletion channel)
-            step_temperature = (
-                temperatures[:, step] if step < temperatures.size(1)
-                else temperatures[:, -1]
-            ).detach()
-            aux_info['temperature'] = (
-                step_temperature * add_mask_nn.detach()
-                + aux_info.get('temperature', 0)
-            )
-
-            not_eosed_before = not_eosed_before * (1 - message[:, step, 0])
-            not_eosed_before_nn *= 1 - message_nn[:, step, 0].detach()
+            not_eosed_before = not_eosed_before * (1 - symbol[:, 0])
+            not_eosed_before_nn = not_eosed_before_nn * (1 - symbol_nn[:, 0])
 
         # the remainder of the probability mass
         z += not_eosed_before
-        loss += step_loss * not_eosed_before
-        if not warmup:
-            loss += self.length_cost * step * not_eosed_before
-        length += (step + 1) * not_eosed_before.detach()
-        length_nn += (step + 1) * not_eosed_before_nn
-
         assert z.allclose(
             torch.ones_like(z)
         ), f"lost probability mass, {z.min()}, {z.max()}"
 
+        loss += step_loss * not_eosed_before
+        if not warmup:
+            loss += self.length_cost * step * not_eosed_before
+        if self.kld_coeff > 0:
+            kld_loss = torch.where(kld_weight_sum > 1e-8, kld_loss / kld_weight_sum, 0)
+            loss += kld_loss * self.kld_coeff
+            aux_info['kld_loss'] = kld_loss.detach()
+            assert not torch.any(kld_loss.isnan())  # remove
+
+        aux_info['accuracy_nn'] += accuracy_nn[:, step] * not_eosed_before_nn
         for name, value in step_aux.items():
-            aux_info[name] = (
-                value * not_eosed_before.detach() + aux_info.get(name, 0.0)
-            )
-        aux_info["temperature"] += step_temperature * not_eosed_before_nn
+            aux_info[name] += value * not_eosed_before.detach()
 
-        aux_info["length"] = (length - 1).detach()
-        aux_info["length_nn"] = (length_nn - 1).detach()
+        length += step * not_eosed_before.detach()
+        length_nn += step * not_eosed_before_nn.detach()
+        aux_info['temperature'] = torch.tensor([self.sender.temperature])
+        aux_info['length'] = length
+        aux_info['length_nn'] = length_nn
 
-        interaction = LoggingStrategy().filtered_interaction(
+        logging_strategy = (
+            self.logging_strategy_train if self.training
+            else self.logging_strategy_eval
+        )
+
+        interaction = logging_strategy.filtered_interaction(
             sender_input=sender_input,
             receiver_input=receiver_input,
             labels=labels,

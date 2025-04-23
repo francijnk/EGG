@@ -6,6 +6,9 @@ from scipy.stats import binom
 from abc import ABCMeta, abstractmethod
 
 
+# TODO clean up
+
+
 class Channel(nn.Module, metaclass=ABCMeta):
     def __init__(
         self,
@@ -84,7 +87,11 @@ class Channel(nn.Module, metaclass=ABCMeta):
 
 class NoChannel(Channel):
     def process(self, messages, logits, apply_noise):
-        return messages, logits
+        if apply_noise:
+            return messages.clone(), logits
+        else:
+            return messages.detach(), logits
+            # return messages.clone(), logits
 
 
 class ErasureChannel(Channel):
@@ -114,15 +121,18 @@ class ErasureChannel(Channel):
             return np.log2(self.vocab_size - 1)
 
     def process(self, messages, logits, apply_noise):
-        if len(messages) != len(self.placeholder_probs):
+        # adjust placeholder probs and logits
+        if len(messages) != len(self.placeholder_probs) \
+                or len(logits) != len(self.placeholder_logits):
             self.placeholder_probs = torch.zeros_like(messages[..., :1])
-            self.placeholder_logits = torch.ones_like(messages[..., :1])
+            self.placeholder_logits = torch.ones_like(logits[..., :1])
             self.placeholder_logits[:] = self.min_real
 
         if not apply_noise:
             messages = torch.cat([messages, self.placeholder_probs], dim=-1)
             logits = torch.cat([logits, self.placeholder_logits], dim=-1)
-            return messages, logits
+            return messages.detach(), logits
+            # return messages, logits
 
         elif self.training:
             # append a column for erased symbols (creates new tensors)
@@ -291,50 +301,51 @@ class DeletionChannel(Channel):
 
         return adjusted_logits
 
-    def adjust_probs(self, probs):
-        # compute expected probabilities for non-EOS symbols at each position
-        non_eos_probs = probs.clone()
-        non_eos_probs[..., 0] = 0
-        non_eos_probs /= non_eos_probs.sum(-1, keepdim=True)
-        symbol_combos = non_eos_probs.expand(
-            len(self.all_combos), *probs.size()
-        ).clone()
-        self.shift_combos(symbol_combos)
-        expected_probs = torch.matmul(
-            symbol_combos.permute(1, 2, 3, 0),
-            self.symbol_combo_probs,
-        ).squeeze()
+    # def adjust_probs(self, probs):
+    #     # compute expected probabilities for non-EOS symbols at each position
+    #     non_eos_probs = probs.clone()
+    #     non_eos_probs[..., 0] = 0
+    #     non_eos_probs /= non_eos_probs.sum(-1, keepdim=True)
+    #     symbol_combos = non_eos_probs.expand(
+    #         len(self.all_combos), *probs.size()
+    #     ).clone()
+    #     self.shift_combos(symbol_combos)
+    #     expected_probs = torch.matmul(
+    #         symbol_combos.permute(1, 2, 3, 0),
+    #         self.symbol_combo_probs,
+    #     ).squeeze()
 
-        # compute adjusted EOS probabilities at each position
-        length_probs = torch.cat([
-            probs[:, :1, 0],
-            probs[:, 1:, 0] * torch.cumprod(1 - probs[:, :-1, 0], dim=-1),
-            torch.prod(1 - probs[:, :, 0], dim=-1).unsqueeze(-1),
-        ], dim=-1)
-        adjusted_length_probs = torch.matmul(length_probs, self.n_deleted_probs)
+    #     # compute adjusted EOS probabilities at each position
+    #     length_probs = torch.cat([
+    #         probs[:, :1, 0],
+    #         probs[:, 1:, 0] * torch.cumprod(1 - probs[:, :-1, 0], dim=-1),
+    #         torch.prod(1 - probs[:, :, 0], dim=-1).unsqueeze(-1),
+    #     ], dim=-1)
+    #     adjusted_length_probs = torch.matmul(length_probs, self.n_deleted_probs)
 
-        adjusted_probs = torch.zeros_like(probs)
-        adjusted_probs[..., 0] = adjusted_length_probs[:, :-1]
-        for i in range(1, self.max_len):
-            adjusted_probs[:, i, 0] /= \
-                torch.prod(1 - adjusted_probs[:, :i, 0], dim=-1)
+    #    adjusted_probs = torch.zeros_like(probs)
+    #     adjusted_probs[..., 0] = adjusted_length_probs[:, :-1]
+    #     for i in range(1, self.max_len):
+    #         adjusted_probs[:, i, 0] /= \
+    #             torch.prod(1 - adjusted_probs[:, :i, 0], dim=-1)
 
-        adjusted_probs[..., 1:] = (
-            expected_probs[..., 1:]
-            * (1 - adjusted_probs[..., :1])
-            / expected_probs[..., 1:].sum(-1, keepdim=True)
-        )
+    #     adjusted_probs[..., 1:] = (
+    #         expected_probs[..., 1:]
+    #         * (1 - adjusted_probs[..., :1])
+    #         / expected_probs[..., 1:].sum(-1, keepdim=True)
+    #     )
 
-        return adjusted_probs
+    #     return adjusted_probs
 
     def process(self, messages, logits, apply_noise):
-        assert messages.size(1) == self.max_len
+        # assert messages.size(1) == self.max_len
         if messages.is_cuda:
             self.shift = torch.compile(self.shift)
             self.shift_combos = torch.compile(self.shift_combos)
 
         if not apply_noise:
-            return messages, logits.clone()
+            return messages.detach(), logits
+            # return messages, logits
 
         elif self.training:
             # sample target symbols
