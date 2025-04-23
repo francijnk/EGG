@@ -4,7 +4,7 @@ import torch.nn.functional as F
 import numpy as np
 from torch.distributions import RelaxedOneHotCategorical, OneHotCategorical
 from argparse import Namespace
-from collections import defaultdict
+from collections import defaultdict, OrderedDict
 
 from src.channels import (
     NoChannel,
@@ -45,23 +45,23 @@ class SeeingConvNet(nn.Module):
         )
 
         # Define the sequence of convolutional layers, same as Lazaridou paper 2018
-        self.convnet = nn.Sequential(
-            nn.Conv2d(3, n_filters, **kwargs),
-            nn.BatchNorm2d(n_filters),
-            nn.ReLU(),
+        self.convnet = nn.Sequential(OrderedDict([
+            ('conv1', nn.Conv2d(3, n_filters, **kwargs)),
+            ('norm1', nn.BatchNorm2d(n_filters)),
+            ('relu1',nn.ReLU()),
 
-            nn.Conv2d(n_filters, n_filters, **kwargs),
-            nn.BatchNorm2d(n_filters),
-            nn.ReLU(),
+            ('conv2', nn.Conv2d(n_filters, n_filters, **kwargs)),
+            ('norm2', nn.BatchNorm2d(n_filters)),
+            ('relu2', nn.ReLU()),
 
-            nn.Conv2d(n_filters, n_filters * 2, **kwargs),
-            nn.BatchNorm2d(n_filters * 2),
-            nn.ReLU(),
+            ('conv3', nn.Conv2d(n_filters, n_filters * 2, **kwargs)),
+            ('norm3', nn.BatchNorm2d(n_filters * 2)),
+            ('relu3', nn.ReLU()),
 
-            nn.Conv2d(n_filters * 2, n_filters * 2, **kwargs),
-            nn.BatchNorm2d(n_filters * 2),
-            nn.ReLU(),
-        )
+            ('conv4', nn.Conv2d(n_filters * 2, n_filters * 2, **kwargs)),
+            ('norm4', nn.BatchNorm2d(n_filters * 2)),
+            ('relu4', nn.ReLU()),
+        ]))
         # print('n params denobv', sum(p.numel() for p in self.convnet.parameters()))
 
         # self.convnet = nn.Sequential(
