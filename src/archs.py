@@ -138,8 +138,10 @@ class RnnSenderGS(nn.Module):
             raise ValueError(f"Unknown RNN cell: {opts.sender_cell}")
 
         input_encoder = SeeingConvNet if opts.image_input else nn.Linear
-        self.encoder = input_encoder(opts.n_features, opts.sender_hidden)
-        self.hidden_to_output = nn.Linear(opts.sender_hidden, opts.vocab_size)
+        self.encoder = input_encoder(opts.n_features, opts.hidden_size)
+        self.hidden_to_output = nn.Linear(opts.hidden_size, opts.vocab_size)
+        #self.encoder = input_encoder(opts.n_features, opts.sender_hidden)
+        # self.hidden_to_output = nn.Linear(opts.sender_hidden, opts.vocab_size)
         self.embedding = nn.Linear(opts.vocab_size, opts.embedding)
         self.sos_embedding = nn.Parameter(torch.zeros(opts.embedding))
         self.vocab_size = opts.vocab_size
