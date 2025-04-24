@@ -157,10 +157,20 @@ def build_optimizer(game, opts):
     else:
         raise ValueError('Optimizer must be RMSprop, Adamor AdamW')
 
+    wd = opts.weight_decay
+    s_params = list(game.sender.named_parameters())
+    r_params = list(game.receiver.named_parameters())
+    s_decay = [p for n, p in s_params if 'convnet' not in n]
+    s_no_decay = [p for n, p in s_params if 'convnet' in n]
+    r_decay = [p for n, p in r_params if 'convnet' not in n]
+    r_no_decay = [p for n, p in r_params if 'convnet' in n]
+
     return optimizer([
-        {"params": game.sender.parameters(), "lr": opts.sender_lr},
-        {"params": game.receiver.parameters(), "lr": opts.receiver_lr},
-    ], weight_decay=opts.weight_decay)
+        {'params': s_decay, 'lr': opts.sender_lr, 'weight_decay': wd},
+        {'params': s_no_decay, 'lr': opts.sender_lr, 'weight_decay': 0},
+        {'params': r_decay, 'lr': opts.receiver_lr, 'weight_decay': wd},
+        {'params': r_no_decay, 'lr': opts.receiver_lr, 'weight_decay': 0}
+    ])
 
 
 def crop_messages(

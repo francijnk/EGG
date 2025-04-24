@@ -7,9 +7,7 @@ metric:
   name: test/sweep_target
 parameters:
   embedding:
-    values: [8, 16]
-  hidden_size:
-    values: [64, 128]
+    values: [8, 12, 16]
   sender_lr:
     values: [0.005, 0.001, 0.0005]
   receiver_lr:
@@ -32,7 +30,7 @@ parameters:
       - 'src/data/input_data/obverter-5-256-64-2x2-v2-finegrained.npz'
 early_terminate:
   type: hyperband
-  max_iter: 36
+  max_iter: 40
   s: 3
   eta: 2
 command:  
@@ -51,6 +49,7 @@ command:
 - --n_epochs=40
 - --length_cost=0.01
 - --warmup_steps=250
+- --hidden_size=128
 - --vocab_size=10
 - --batch_size=32
 - ${args_no_boolean_flags}
