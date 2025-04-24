@@ -251,7 +251,7 @@ class SenderReceiverRnnGS(nn.Module):
 
         self.sender = RnnSenderGS(opts)
         self.receiver = RnnReceiverGS(opts)
-        self.channel = channels[opts.channel](opts)  # , device)
+        self.channel = channels[opts.channel](opts)
         self.image_input = opts.image_input
 
         self.length_cost = opts.length_cost
@@ -259,16 +259,27 @@ class SenderReceiverRnnGS(nn.Module):
         self.relu = nn.ReLU()
         self.softplus = nn.Softplus()
 
-        if 'attributes' in opts.loss:
-            self.loss = self.loss_obverter if opts.image_input else self.loss_visa
-            if opts.loss == 'weighted_attributes':
-                device = torch.device("cuda" if opts.cuda else "cpu")
-                n_attributes = torch.tensor(opts.n_attributes).to(device)
-                self.loss_weights = n_attributes.log().pow(-1).unsqueeze(-1)
-            else:
-                self.loss_weights = None
+        if opts.image_input:
+            opts.label_coeff = 1
+            device = torch.device("cuda" if opts.cuda else "cpu")
+            n_candidates = opts.n_distractors + 1
+            n_attributes = torch.tensor(opts.n_attributes + [n_candidates]).to(device)
+            self.loss = self.loss_obverter
+            self.positions = torch.arange(
+                n_candidates, dtype=torch.long, device=device
+            )
+            self.loss_weights = n_attributes.log().pow(-1).unsqueeze(-1)
+            self.loss_weights[:-1] *= opts.features_coeff
+            self.loss_weights[-1] *= (
+                opts.label_coeff * (len(self.loss_weights) - 1)
+            )
+            # adjust loss weights so that the computed loss is equivalent to
+            # label_coeff * H(r_output, labels)
+            # + features_coeff * Sum [H(target_attr, selected_attr)]
         else:
-            self.loss = self.loss_receiver
+            self.loss = self.loss_visa
+            self.labels_coeff = opts.label_coeff
+            self.features_coeff = opts.features_coeff
 
         self.logging_strategy_train = LoggingStrategy(
             store_sender_input=(not opts.image_input),
@@ -276,18 +287,18 @@ class SenderReceiverRnnGS(nn.Module):
         )
         self.logging_strategy_eval = LoggingStrategy()
 
-        self.kld_coeff = opts.kld_coeff
+        # self.kld_coeff = opts.kld_coeff
         # Kucinski2021, Nguyen Le Hoang1∗ Tadahiro Taniguchi2 Fang Tianwei3 Akira Taniguchi (KLD)
 
-        self.uniform = (opts.vocab_size - 1) ** -1
-        self.log_uniform = -np.log(opts.vocab_size - 1)
-        self.kld_slice = slice(1, -1) \
-            if isinstance(self.channel, ErasureChannel) else slice(1, None)
+        # self.uniform = (opts.vocab_size - 1) ** -1
+        # self.log_uniform = -np.log(opts.vocab_size - 1)
+        # self.kld_slice = slice(1, -1) \
+        #     if isinstance(self.channel, ErasureChannel) else slice(1, None)
         # self.receiver_vocab_size = opts.vocab_size \
         #     if opts.channel != 'erasure' else opts.vocab_size + 1
         # self.log_uniform = -np.log(self.receiver_vocab_size - 1)
-        self.min = torch.finfo(torch.get_default_dtype()).min
-        self.max = torch.finfo(torch.get_default_dtype()).max
+        self.min_real = torch.finfo(torch.get_default_dtype()).min
+        # self.max = torch.finfo(torch.get_default_dtype()).max
 
     def loss_receiver(self, s_input, r_input, symbol, r_output, labels, aux_input):
         ce = F.cross_entropy(r_output, labels, reduction='none')
@@ -300,20 +311,35 @@ class SenderReceiverRnnGS(nn.Module):
         # targets = r_input[idx, labels]
         # ce = F.binary_cross_entropy(selected, targets, reduction='none')
         # print(r_output.softmax(-1).unsqueeze(1).shape, r_input.unsqueeze(-1).shape)
-        ce = F.binary_cross_entropy(
-            torch.matmul(
-                r_output.softmax(-1).unsqueeze(1), r_input
-            ).squeeze(1).clamp(0, 1),
-            r_input[torch.arange(r_output.size(0)).to(labels.device), labels],
-            reduction='none',
-        ).sum(-1)
+
+        loss = 0
+
+        if self.labels_coeff > 0:
+            ce_labels = F.cross_entropy(r_output, labels)
+            loss += self.labels_coeff * ce_labels
+
+        if self.features_coeff > 0:
+            ce_features = F.binary_cross_entropy(
+                torch.matmul(
+                    r_output.softmax(-1).unsqueeze(1), r_input
+                ).squeeze(1).clamp(0, 1),
+                r_input[torch.arange(r_output.size(0)).to(labels.device), labels],
+                reduction='none',
+            ).sum(-1)
+            loss += self.features_coeff * ce_features
+
         accuracy = (r_output.detach().argmax(dim=-1) == labels).float() * 100
-        return ce, {'accuracy': accuracy}
+
+        return loss, {'accuracy': accuracy}
 
     def loss_obverter(
         self, s_input, r_input, symbol, r_output, labels, aux_input
     ):
-        features = torch.stack(list(aux_input.values()), dim=1)
+        features = torch.stack(
+            list(aux_input.values())
+            + [self.positions.expand(len(s_input), -1)],
+            dim=1,
+        )
         idx = torch.arange(r_output.size(0)).to(labels.device)
         targets = features[idx, :, labels]
         idx = (
@@ -328,20 +354,14 @@ class SenderReceiverRnnGS(nn.Module):
         # ).view(*features.size()[:2], -1)
         selected = (
             r_output.unsqueeze(2).unsqueeze(3) + one_hots.transpose(1, 2).log()
-        ).clamp(min=self.min).logsumexp(1)
+        ).clamp(min=self.min_real).logsumexp(1)
 
-        # cross_entropies = -selected[idx]
-        if self.loss_weights is not None:
-            ce = torch.matmul(-selected[idx], self.loss_weights).squeeze()
-            # print('unaggregated0', -selected[idx][0])
-            # print('unweighted', -selected[idx].sum(-1))
-            # print('weighted', ce)
-            # print('weights', self.loss_weights, self.loss_weights.exp())
-        else:
-            ce = -selected[idx].sum(-1)
-        # ce = -selected[idx].sum(-1)
-        # ce = -torch.log(selected[idx]).sum(-1)
-        # ce = F.cross_entropy(r_output, labels, reduction='none')
+        ce = torch.matmul(-selected[idx], self.loss_weights).squeeze()
+        # print('unaggregated0', -selected[idx][0])
+        # print('unweighted', -selected[idx].sum(-1))
+        # print('weighted', ce)
+        # print('weights', self.loss_weights, self.loss_weights.exp())
+        # print('')
         accuracy = (r_output.detach().argmax(dim=-1) == labels).float() * 100
         if not self.training and torch.any(ce.isnan()):
             print('XENT')
@@ -387,7 +407,8 @@ class SenderReceiverRnnGS(nn.Module):
             receiver_output = receiver_output_joined[:section]
             receiver_output_nn = receiver_output_joined[section:].detach()
 
-        loss, kld_loss, z, length, length_nn, kld_weight_sum = 0, 0, 0, 0, 0, 0
+        loss, z, length, length_nn = 0, 0, 0, 0
+        # loss, kld_loss, z, length, length_nn, kld_weight_sum = 0, 0, 0, 0, 0, 0
         not_eosed_before = torch.ones(message.size(0)).to(message.device)
         not_eosed_before_nn = not_eosed_before.clone()
         aux_info = defaultdict(float)
@@ -414,31 +435,31 @@ class SenderReceiverRnnGS(nn.Module):
             z += add_mask
             loss += step_loss * add_mask
 
-            if self.kld_coeff > 0 and step + 1 < message.size(1):
-                non_eos = symbol[:, self.kld_slice].clone()
-                non_eos /= non_eos.sum(-1, keepdim=True)
-                log_uniform = torch.empty_like(non_eos)
-                log_uniform[:] = self.log_uniform
-                step_kld = F.kl_div(
-                    log_uniform,
-                    torch.where(non_eos.isnan(), self.uniform, non_eos),
-                    log_target=False,
-                    reduction='none',
-                ).sum(-1).clamp(max=self.max)  # KLD = 0 for P(eos) = 1
-                nan_mask = step_kld.isnan()
-                weight = not_eosed_before * symbol[:, self.kld_slice].sum(-1)
-                # weight = not_eosed_before * symbol[:, 1:].sum(-1)
-                kld_loss += torch.where(nan_mask, 0, step_kld * weight)
-                # kld_weight_sum += torch.where(nan_mask.any(-1), 0, weight)
-                kld_weight_sum += (~nan_mask * weight.unsqueeze(-1)).mean(-1)
-                assert torch.all(kld_loss >= 0)
-                if torch.any(kld_loss.isnan()) or torch.any(kld_loss.isinf()):
-                    print('KLD', kld_loss)
-                    print('step kld', step_kld)
-                    print('probs before', non_eos)
-                    print('probs after', torch.where(non_eos.isnan(), self.uniform, non_eos))
-                    print('slice, weight', self.kld_slice, weight)
-                    print('')
+            # if self.kld_coeff > 0 and step + 1 < message.size(1):
+            #     non_eos = symbol[:, self.kld_slice].clone()
+            #     non_eos /= non_eos.sum(-1, keepdim=True)
+            #     log_uniform = torch.empty_like(non_eos)
+            #     log_uniform[:] = self.log_uniform
+            #     step_kld = F.kl_div(
+            #        log_uniform,
+            #         torch.where(non_eos.isnan(), self.uniform, non_eos),
+            #         log_target=False,
+            #         reduction='none',
+            #     ).sum(-1).clamp(max=self.max)  # KLD = 0 for P(eos) = 1
+            #     nan_mask = step_kld.isnan()
+            #     weight = not_eosed_before * symbol[:, self.kld_slice].sum(-1)
+            #     # weight = not_eosed_before * symbol[:, 1:].sum(-1)
+            #     kld_loss += torch.where(nan_mask, 0, step_kld * weight)
+            #     # kld_weight_sum += torch.where(nan_mask.any(-1), 0, weight)
+            #     kld_weight_sum += (~nan_mask * weight.unsqueeze(-1)).mean(-1)
+            #     assert torch.all(kld_loss >= 0)
+            #     if torch.any(kld_loss.isnan()) or torch.any(kld_loss.isinf()):
+            #         print('KLD', kld_loss)
+            #         print('step kld', step_kld)
+            #         print('probs before', non_eos)
+            #         print('probs after', torch.where(non_eos.isnan(), self.uniform, non_eos))
+            #         print('slice, weight', self.kld_slice, weight)
+            #         print('')
 
             if not warmup:
                 loss += self.length_cost * step * add_mask
@@ -463,13 +484,13 @@ class SenderReceiverRnnGS(nn.Module):
         loss += step_loss * not_eosed_before
         if not warmup:
             loss += self.length_cost * step * not_eosed_before
-        if self.kld_coeff > 0:
-            kld_loss = torch.where(kld_weight_sum > 1e-8, kld_loss / kld_weight_sum, 0)
-            loss += kld_loss.clamp(max=self.max) * self.kld_coeff
-            aux_info['kld_loss'] = kld_loss.detach()
-            if torch.any(kld_loss.isnan()) or torch.any(kld_loss.isinf()):
-                print(kld_loss, kld_weight_sum)
-            assert not torch.any(kld_loss.isnan()) or not torch.any(kld_loss.isinf())  # remove
+        # if self.kld_coeff > 0:
+        #     kld_loss = torch.where(kld_weight_sum > 1e-8, kld_loss / kld_weight_sum, 0)
+        #     loss += kld_loss.clamp(max=self.max) * self.kld_coeff
+        #     aux_info['kld_loss'] = kld_loss.detach()
+        #     if torch.any(kld_loss.isnan()) or torch.any(kld_loss.isinf()):
+        #         print(kld_loss, kld_weight_sum)
+        #     assert not torch.any(kld_loss.isnan()) or not torch.any(kld_loss.isinf())  # remove
 
         aux_info['accuracy_nn'] += accuracy_nn[:, step] * not_eosed_before_nn
         for name, value in step_aux.items():

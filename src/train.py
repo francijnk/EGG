@@ -97,6 +97,12 @@ def get_params(params):
         help="KLD loss coefficient (default: 0.0)"
     )
     parser.add_argument(
+        "--labels_coeff", type=float, default=1.0,
+    )
+    parser.add_argument(
+        "--features_coeff", type=float, default=1.0,
+    )
+    parser.add_argument(
         "--image_input", action="store_true", default=False,
         help="Run the image data variant of the game (default: False)"
     )
