@@ -224,13 +224,10 @@ class Dump:
     ):
         train_state = game.training
         game.eval()
-        # device = torch.device("cuda" if opts.cuda else "cpu")
-        # device = device if device is not None else common_opts.device
-        device = common_opts.device
 
         logs = []
         for i, batch in enumerate(dataset):
-            batch = Batch(*batch).to(device)
+            batch = Batch(*batch).to(opts.device)
             with torch.no_grad():
                 _, interaction = game(*batch)
                 logs.append(interaction)
@@ -255,7 +252,7 @@ class Dump:
         self.sample_types = sample_types if sample_types is not None else []
 
         # select receiver output at 1st EOS
-        idx = (torch.arange(len(messages), device=device), lengths - 1)
+        idx = (torch.arange(len(messages), device=opts.device), lengths - 1)
         # self.receiver_outputs = logs.receiver_output[idx]
         self.receiver_outputs = logs.receiver_output.argmax(-1)[idx]
 
