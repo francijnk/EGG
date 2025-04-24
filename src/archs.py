@@ -208,13 +208,10 @@ class RnnReceiverGS(nn.Module):
 
         self.message_encoder = nn.Linear(vocab_size, opts.embedding)
         self.input_encoder = input_encoder(
-            opts.n_features,
-            opts.hidden_size,
-            # opts.receiver_hidden,
+            opts.n_features, opts.hidden_size,  # opts.receiver_hidden,
         )
         self.cell = rnn_cells[opts.receiver_cell](
-            input_size=opts.embedding,
-            hidden_size=opts.hidden_size,
+            input_size=opts.embedding, hidden_size=opts.hidden_size,
             # hidden_size=opts.receiver_hidden,
         )
         self.logsoft = nn.LogSoftmax(dim=1)
@@ -249,14 +246,12 @@ class SenderReceiverRnnGS(nn.Module):
     def __init__(
         self,
         opts: Namespace,
-        n_attributes: List[int],
-        device: torch.device = torch.device("cpu"),
     ):
         super(SenderReceiverRnnGS, self).__init__()
 
         self.sender = RnnSenderGS(opts)
         self.receiver = RnnReceiverGS(opts)
-        self.channel = channels[opts.channel](opts, device)
+        self.channel = channels[opts.channel](opts)  # , device)
         self.image_input = opts.image_input
 
         self.length_cost = opts.length_cost
@@ -267,7 +262,8 @@ class SenderReceiverRnnGS(nn.Module):
         if 'attributes' in opts.loss:
             self.loss = self.loss_obverter if opts.image_input else self.loss_visa
             if opts.loss == 'weighted_attributes':
-                n_attributes = torch.tensor(n_attributes).to(device)
+                device = torch.device("cuda" if opts.cuda else "cpu")
+                n_attributes = torch.tensor(opts.n_attributes).to(device)
                 self.loss_weights = n_attributes.log().pow(-1).unsqueeze(-1)
             else:
                 self.loss_weights = None
@@ -431,9 +427,10 @@ class SenderReceiverRnnGS(nn.Module):
                 ).sum(-1).clamp(max=self.max)  # KLD = 0 for P(eos) = 1
                 nan_mask = step_kld.isnan()
                 weight = not_eosed_before * symbol[:, self.kld_slice].sum(-1)
+                # weight = not_eosed_before * symbol[:, 1:].sum(-1)
                 kld_loss += torch.where(nan_mask, 0, step_kld * weight)
-                kld_weight_sum += torch.where(nan_mask.any(-1), 0, weight)
-                # kld_weight_sum += (~nan_mask * weight.unsqueeze(-1)).mean(-1)
+                # kld_weight_sum += torch.where(nan_mask.any(-1), 0, weight)
+                kld_weight_sum += (~nan_mask * weight.unsqueeze(-1)).mean(-1)
                 assert torch.all(kld_loss >= 0)
                 if torch.any(kld_loss.isnan()) or torch.any(kld_loss.isinf()):
                     print('KLD', kld_loss)
@@ -468,9 +465,11 @@ class SenderReceiverRnnGS(nn.Module):
             loss += self.length_cost * step * not_eosed_before
         if self.kld_coeff > 0:
             kld_loss = torch.where(kld_weight_sum > 1e-8, kld_loss / kld_weight_sum, 0)
-            loss += kld_loss * self.kld_coeff
+            loss += kld_loss.clamp(max=self.max) * self.kld_coeff
             aux_info['kld_loss'] = kld_loss.detach()
-            assert not torch.any(kld_loss.isnan())  # remove
+            if torch.any(kld_loss.isnan()) or torch.any(kld_loss.isinf()):
+                print(kld_loss, kld_weight_sum)
+            assert not torch.any(kld_loss.isnan()) or not torch.any(kld_loss.isinf())  # remove
 
         aux_info['accuracy_nn'] += accuracy_nn[:, step] * not_eosed_before_nn
         for name, value in step_aux.items():

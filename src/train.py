@@ -189,12 +189,10 @@ def main(params):
     if opts.double_precision:
         torch.set_default_dtype(torch.float64)
 
-    device = torch.device("cuda" if opts.cuda else "cpu")
-
     data_handler = DataHandler(opts)
     train_data, eval_train_data, eval_test_data = data_handler.load_data(opts)
 
-    game = SenderReceiverRnnGS(opts, data_handler.n_attributes, device)
+    game = SenderReceiverRnnGS(opts)
 
     optimizer = build_optimizer(game, opts)
     callbacks = [
@@ -226,9 +224,7 @@ def main(params):
 
     # results on the eval subset of the training set
     train_dump = Dump(
-        game, eval_train_data,
-        data_handler.eval_train_sample_types,
-        opts, device,
+        game, eval_train_data, data_handler.eval_train_sample_types, opts
     )
     train_mapping = data_handler.eval_train_mapping
     dump_dict['train'] = {
@@ -236,7 +232,9 @@ def main(params):
         'messages': train_dump.get_message_logs(train_mapping),
     }
 
-    test_dump = Dump(game, eval_test_data, data_handler.eval_test_sample_types, opts, device)
+    test_dump = Dump(
+        game, eval_test_data, data_handler.eval_test_sample_types, opts
+    )
     test_mapping = data_handler.eval_train_mapping
     dump_dict['test'] = {
         'evaluation': test_dump.get_eval_dict(),

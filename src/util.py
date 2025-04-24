@@ -51,8 +51,9 @@ class DataHandler:
         self.shuffle_train_data = not opts.no_shuffle
         self.float_dtype = torch.get_default_dtype()
 
-        self._n_features = None
         self.n_distractors = None
+        self._n_features = None
+        self._n_attributes = None
 
     @property
     def n_features(self):
@@ -61,6 +62,14 @@ class DataHandler:
     @n_features.setter
     def n_features(self, n_features):
         self._n_features = n_features
+
+    @property
+    def n_attributes(self):
+        return self._n_attributes
+
+    @n_attributes.setter
+    def n_attributes(self, n_attributes):
+        self._n_attributes = n_attributes
 
     def load_data(self, opts):
         data = np.load(opts.data_path)
@@ -81,11 +90,13 @@ class DataHandler:
             self.eval_train_sample_types = None
             self.eval_test_sample_types = None
 
-        self._n_features = train[0].shape[-1]
         self.train_samples = len(train[0])
         self.eval_train_samples = len(eval_train[0])
         self.eval_test_samples = len(eval_test[0])
         self.n_distractors = train[0].shape[1] - 1
+
+        # self._n_features = train[0].shape[-1]
+        self.n_features = train[0].shape[-1]
         self.n_attributes = [
             dtype[0].shape[0] for dtype
             in self.eval_train_mapping.dtype.fields.values()
@@ -96,6 +107,7 @@ class DataHandler:
         opts.eval_test_samples = self.eval_test_samples
         opts.n_distractors = self.n_distractors
         opts.n_features = self.n_features
+        opts.n_attributes = self.n_attributes
 
         train_dataset = ObjectDataset(*train)
         eval_train_dataset = ObjectDataset(*eval_train)
@@ -208,11 +220,13 @@ class Dump:
         dataset: torch.utils.data.DataLoader,
         sample_types: Optional[np.ndarray],
         opts: argparse.Namespace,
-        device: Optional[torch.device] = None
+        # device: Optional[torch.device] = None
     ):
         train_state = game.training
         game.eval()
-        device = device if device is not None else common_opts.device
+        # device = torch.device("cuda" if opts.cuda else "cpu")
+        # device = device if device is not None else common_opts.device
+        device = common_opts.device
 
         logs = []
         for i, batch in enumerate(dataset):

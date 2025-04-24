@@ -13,8 +13,10 @@ class Channel(nn.Module, metaclass=ABCMeta):
     def __init__(
         self,
         opts: Namespace,
-        device: torch.device = torch.device("cpu")
+        # device: torch.device = torch.device("cpu")
     ):
+        device = torch.device("cuda" if opts.cuda else "cpu")
+
         super().__init__()
         self.p = opts.error_prob
         self.vocab_size = opts.vocab_size
