@@ -12,12 +12,14 @@ parameters:
     values: [0.001, 0.0005, 0.0001]
   temperature_start:
     values: [1.0, 1.5, 2.0] 
-  labels_coeff:
+  label_coeff:
     values: [0, 0.25, 0.50, 1, 2]
   weight_decay:
     values: [0.0, 0.01, 0.005, 0.001]
   receiver_reset_freq:
     values: [5, 10, ~]
+  random_seed:
+    values: [0, 1]
   data_path:
     values:
       - 'original.npz'
@@ -49,6 +51,5 @@ command:
 - --length_cost=0.01
 - --batch_size=32
 - --embedding=16
-- --random_seed=42
 - --kld_coeff=0.0
 - ${args_no_boolean_flags}

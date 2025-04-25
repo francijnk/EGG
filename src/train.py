@@ -97,7 +97,7 @@ def get_params(params):
         help="KLD loss coefficient (default: 0.0)"
     )
     parser.add_argument(
-        "--labels_coeff", type=float, default=1.0,
+        "--label_coeff", type=float, default=1.0,
     )
     parser.add_argument(
         "--features_coeff", type=float, default=1.0,

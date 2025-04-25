@@ -260,7 +260,6 @@ class SenderReceiverRnnGS(nn.Module):
         self.softplus = nn.Softplus()
 
         if opts.image_input:
-            opts.label_coeff = 1
             device = torch.device("cuda" if opts.cuda else "cpu")
             n_candidates = opts.n_distractors + 1
             n_attributes = torch.tensor(opts.n_attributes + [n_candidates]).to(device)
@@ -278,7 +277,7 @@ class SenderReceiverRnnGS(nn.Module):
             # + features_coeff * Sum [H(target_attr, selected_attr)]
         else:
             self.loss = self.loss_visa
-            self.labels_coeff = opts.label_coeff
+            self.label_coeff = opts.label_coeff
             self.features_coeff = opts.features_coeff
 
         self.logging_strategy_train = LoggingStrategy(
@@ -316,7 +315,7 @@ class SenderReceiverRnnGS(nn.Module):
 
         if self.labels_coeff > 0:
             ce_labels = F.cross_entropy(r_output, labels)
-            loss += self.labels_coeff * ce_labels
+            loss += self.label_coeff * ce_labels
 
         if self.features_coeff > 0:
             ce_features = F.binary_cross_entropy(
