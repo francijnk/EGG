@@ -9,7 +9,6 @@ from typing import Optional
 
 from src.eval import (
     message_entropy,
-    message_entropy_mc,
     unique_samples,
     compute_disruption_accuracy,
     compute_topsim,
@@ -95,7 +94,6 @@ class DataHandler:
         self.eval_test_samples = len(eval_test[0])
         self.n_distractors = train[0].shape[1] - 1
 
-        # self._n_features = train[0].shape[-1]
         self.n_features = train[0].shape[-1]
         self.n_attributes = [
             dtype[0].shape[0] for dtype
@@ -485,7 +483,6 @@ class Dump:
                 'topsim_cosine_norm_max': None,
                 'topsim_cosine_norm_mean': None,
                 'entropy_msg': entropy,
-                'entropy_msg_mc': message_entropy_mc(logits, **mi_kwargs),
                 'entropy_max': max_entropy,
                 'mutual_info_sent_received': mutual_info_sent_received(
                     logits_sent=self.logits_nn,

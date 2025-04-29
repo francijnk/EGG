@@ -44,7 +44,8 @@ def get_params(params):
         "--results_folder", type=str, default='runs', help="Output folder"
     )
     parser.add_argument(
-        "--filename", type=str, default=None, help="Output file name (no extension)"
+        "--filename", type=str, default=None,
+        help="Output filename (without extension)"
     )
 
     parser.add_argument(
@@ -53,22 +54,21 @@ def get_params(params):
         "(default: None)"
     )
     parser.add_argument(
-        "--error_prob", type=float, default=None, help="Probability of error "
-        "per symbol (default: 0.0)"
+        "--error_prob", type=float, default=None,
+        help="Probability of error per symbol (default: 0.0)"
     )
-    parser.add_argument('--hidden_size', type=int, default=64)
     parser.add_argument(
-        "--sender_hidden", type=int, default=64, help="Size of the hidden "
-        "layer of Sender (default: 64)"
+        "--sender_hidden", type=int, default=64,
+        help="Size of the hidden layer of Sender (default: 64)"
     )
     parser.add_argument(
         "--receiver_hidden", type=int, default=64,
         help="Size of the hidden layer of Receiver (default: 64)"
     )
     parser.add_argument(
-        "--embedding", type=int, default=12,
+        "--embedding", type=int, default=16,
         help="Dimensionality of the embedding hidden layer for the agents "
-        "(default: 12)",
+        "(default: 16)",
     )
     parser.add_argument(
         "--sender_cell", type=str, default="lstm",
@@ -93,14 +93,16 @@ def get_params(params):
         help="Message length cost (default: 1e-2)",
     )
     parser.add_argument(
-        "--kld_coeff", type=float, default=0.0,
-        help="KLD loss coefficient (default: 0.0)"
-    )
-    parser.add_argument(
         "--label_coeff", type=float, default=1.0,
     )
     parser.add_argument(
         "--features_coeff", type=float, default=1.0,
+    )
+    parser.add_argument(
+        "--receiver_reset_freq",
+        type=lambda x: int(x) if x.lower() != 'none' else None, default=None,
+        help="Number of epochs between receiver parameter resets "
+        "(default: None)",
     )
     parser.add_argument(
         "--image_input", action="store_true", default=False,
@@ -119,20 +121,9 @@ def get_params(params):
         help="Number of initial training steps, during which length cost is "
         "not applied (default: 0)",
     )
-    parser.add_argument("--loss", type=str, default='weighted_attributes')
-    parser.add_argument(
-        "--receiver_reset_freq", default=None,
-        type=lambda x: None if x == 'None' else int(x),
-        help="Number of epochs between receiver parameter resets "
-        "(default: None)"
-    )
     parser.add_argument(
         "--no_shuffle", action="store_true", default=False,
         help="Do not shuffle train data before every epoch (default: False)",
-    )
-    parser.add_argument(
-        "--double_precision", action="store_true", default=False,
-        help="Use double predicion floating point numbers (default: False)",
     )
     parser.add_argument(
         "--temperature", type=float, default=1.,
@@ -191,9 +182,6 @@ def check_args(args):
 
 def main(params):
     opts = get_params(params)
-
-    if opts.double_precision:
-        torch.set_default_dtype(torch.float64)
 
     data_handler = DataHandler(opts)
     train_data, eval_train_data, eval_test_data = data_handler.load_data(opts)

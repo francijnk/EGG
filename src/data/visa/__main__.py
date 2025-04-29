@@ -3,22 +3,20 @@ import argparse
 import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
-# from sklearn.metrics.pairwise import cosine_similarity
 from collections import defaultdict
 import xml.etree.ElementTree as ET
 import matplotlib.pyplot as plt
 
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
-# TODO check cosine one last time and probably remove
 
 
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--n_distractors', '-d', type=int, required=True)
     parser.add_argument('--n_samples_train', type=int, default=128)
-    parser.add_argument('--n_samples_eval_train', type=int, default=4)
-    parser.add_argument('--n_samples_eval_test', type=int, default=16)
+    parser.add_argument('--n_samples_eval_train', type=int, default=2)
+    parser.add_argument('--n_samples_eval_test', type=int, default=8)
     parser.add_argument('--no_homonyms', action='store_true')
     parser.add_argument('--uk', action='store_true')
     parser.add_argument('--seed', type=int, default=42)
@@ -109,25 +107,9 @@ def sample(data, n_distractors, n_samples):
     categories = np.empty_like(input_features[..., 0])
     labels = np.empty_like(input_features[:, 0, 0])
 
-    # cos_sims = cosine_similarity(concepts)
-
     for concept_i in range(len(data)):
         candidate_ids = np.delete(np.arange(len(data)), concept_i, axis=0)
-        # candidate_probs = None
-        # candidate_probs = np.delete(cos_sims[concept_i], concept_i, axis=0)
-        # candidate_probs += np.clip(
-        #     np.quantile(candidate_probs, q=0.10),
-        #     a_min=1e-6, a_max=None,
-        # )
-        # candidate_pr^obs[candidate_probs > 0],
-        # q=0.,
-        # )  # to ensure all probabilities are positive
-        # candidate_probs **= 0.5
-        # candidate_probs /= candidate_probs.sum()
         candidate_probs = None
-        # print(candidate_probs.max(), candidate_probs.min(), candidate_probs.mean())
-        # print(candidate_probs[:20])
-        # print(candidate_probs.shape, candidate_probs.sum())
         assert concept_i not in candidate_ids
 
         for sample_j in range(n_samples):
@@ -150,14 +132,6 @@ def sample(data, n_distractors, n_samples):
             categories[idx, concept_pos] = category_ids[concept_i]
             categories[idx, sampled_pos] = category_ids[sampled_ids]
 
-    size = input_features.shape
-    reshaped = input_features.reshape(size[0] * size[1], -1, order='C')
-    _, unique = np.unique(reshaped, axis=0, return_inverse=True)
-    _sorted = np.sort(unique.reshape(size[:2]))
-    print(
-        'Unique concept sets:',
-        np.unique(_sorted, axis=0).shape[0],
-        '/', input_features.shape[0])
     mapping = mapping.astype('U')
     mapping = np.array(
         (mapping,),

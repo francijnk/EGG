@@ -17,7 +17,7 @@ resolution = 128
 current_dir = os.path.dirname(os.path.abspath(__file__))
 
 
-shapes = ['cube', 'sphere', 'cylinder', 'torus', 'ellipsoid', 'octahedron']
+shapes = ['cube', 'sphere', 'cylinder', 'torus', 'ellipsoid', 'cone']
 palette = {
     'white': [1, 1, 1], 'gray': [0.5, 0.5, 0.5], 'red': [1, 0, 0],
     'yellow': [1, 1, 0.1], 'green': [0, 1, 0],
@@ -51,9 +51,7 @@ def render_scene(idx, shape, color, location, rotation):
             rotation = rotation % 2
         return rotation
 
-    location_cat = [int(location[0] + 3) // 6, int(location[1] + 1.5) // 6]
-    # location_cat = [int(location[0] // 2.5), int(location[1] // 2.5)]
-    # location_cat = [(location[0] + 3) // 6, int(location[1] + 1.5) // 3]
+    location_cat = [(location[0] + 3) // 6, int(location[1] + 1.5) // 3]
     rotation_cat = rotation_to_categorical(rotation, shape)
 
     filename = \
@@ -67,7 +65,7 @@ def render_scene(idx, shape, color, location, rotation):
     ]
     size = 2
     radius = size / 2
-    finish = ('ambient', 0.3, 'diffuse', 0.7)
+    finish = ('ambient', 0.4, 'diffuse', 0.6)
     attributes = [
         Texture(Pigment('color', palette[color])),
         Finish(*finish),
@@ -108,15 +106,12 @@ def render_scene(idx, shape, color, location, rotation):
             *attributes
         )
 
-    # camera = Camera('location', [0, 8, -7], 'look_at', [0, 0, 0])
     camera = Camera('location', [0, 8.5, -7], 'look_at', [0, -1, 2])
     light = LightSource([-12, 10, -3], 'color', [1, 1, 1], 'adaptive', 2)
-    # light = LightSource([-12, 10, -8], 'color', [1, 1, 1], 'adaptive', 2)
-    # light = LightSource([0, 10, 1.5], 'color', [1, 1, 1], 'adaptive', 2)
     checker = Texture(
         Pigment('checker', 'color', [.47, .6, .74], 'color', [.34, .48, .6]),
         'scale', 3,
-        'translate', (1.5, 3.5 - 2.5),
+        'translate', (1.5, 1),
     )
     chessboard = Plane([0, 1, 0], 0.0, 'hollow', checker, Finish(*finish))
 
@@ -130,21 +125,15 @@ def render_scene(idx, shape, color, location, rotation):
 def get_object_fname(shape, color, x=None, y=None, idx=None):
     if idx is not None:
         assert shape is not None and color is not None
-        # assert x in (-2.5, 0, 2.5) and y in (-2.5, 0, 2.5)
-        # assert x in (-3, 3) and y in (-1.5, 1.5)
-        assert x in (-3, 3)
-        assert y in (-1.5, 4.5)
+        assert x in (-3, 3) and y in (-1.5, 1.5)
 
-        # x, y = int(x // 2.5), int(y // 2.5)
-        # x, y = (x + 3) // 3, int((y + 1.5) // 3)
-        x, y = (x + 3) // 6, int((y + 1.5) // 6)
+        x, y = (x + 3) // 3, int((y + 1.5) // 3)
         prefix = f'{shape}_{color}_{x}_{y}_{idx}_'
 
         def f(fname):
             return fname.startswith(prefix) and 'pov-state' not in fname
 
     else:
-        # assert x in (-1, 0, 1, None) and y in (-1, 0, 1, None)
         assert x in (0, 1, None) and y in (0, 1, None)
 
         def f(fname):
@@ -171,8 +160,7 @@ def render_scenes(args):
 
     total_steps = len(colors) * (len(shapes)) * 2 * 2 * args.n_images
     pbar = tqdm(total=total_steps)
-    # for shape, color, x, y in product(shapes, colors, [-2.5, 0, 2.5], [-2.5, 0, 2.5]):
-    for shape, color, x, y in product(shapes, colors, [-3, 3], [-1.5, 4.5]):
+    for shape, color, x, y in product(shapes, colors, [-3, 3], [-1.5, 1.5]):
         for idx in range(args.n_images):
             filename = get_object_fname(shape, color, x, y, idx=idx)
             if filename is not None:

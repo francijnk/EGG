@@ -18,25 +18,6 @@ from .render import (
 )
 
 attribute_keys = ('shape', 'color', 'x', 'y')
-sample_mode_probs = {
-    # 'unique_shape_color': 0.5,
-    # 'common_location': 0.25,
-    'common_shape': 0.10,
-    'common_color': 0.10,
-    'common_x': 0.05,
-    'common_y': 0.05,
-    'common_x_color': 0.05,
-    'common_y_color': 0.05,
-    'common_x_shape': 0.05,
-    'common_y_shape': 0.05,
-    'common_location': 0.10,
-    'common_location_color': 0.1,
-    'common_location_shape': 0.1,
-    # 'unique_shape': 0.10,
-    # 'unique_color': 0.10,
-    # 'unique_location': 0.10,
-    'unique_shape_color': 0.10,
-}
 
 
 def path(*paths):
@@ -77,189 +58,28 @@ def load_image(shape, color, x=None, y=None, resolution=128):
 
 
 def get_select_random(args):
-    # print sample mode probs
-    cum = 0.
-    print(f'\n{"MODE":<30} {"%":>5} {"CUM":>5}')
-    for k, p in sample_mode_probs.items():
-        print(f'{k:<30} {100 * p:>5.1f} {100 * p + cum:>5.1f}')
-        cum += 100 * p
-    p, cum = 100 - cum, 100
-    print(f'{"random":<30} {p:>5.1f} {cum:>5.1f}')
-    sample_mode_probs['random'] = p / 100
-
-    def sample_mode():
-        r, q = random.uniform(0, 1), 0
-        for key, prob in sample_mode_probs.items():
-            if prob + q >= r:
-                return key
-            q += prob
-        return 'random'
+    tf = cycle([True, False])
 
     def select_random(used_combos, object_tuples, mode=None):
-        mode = mode if mode is not None else sample_mode()
+        # mode = mode if mode is not None else sample_mode()
+        if mode is None:
+            mode = 'unique_shape_color' if next(tf) else 'random'
 
-        exclude = [tup[:2] for tup in used_combos]
-        t_shape, t_color, t_x, t_y = used_combos[0]
-        if mode == 'common_shape':
-            available = [
-                (*tup, x, y) for tup, x, y
-                # in product(object_tuples, [-1, 0, 1], [-1, 0, 1])
-                in product(object_tuples, [0, 1], [0, 1])
-                if tup[0] == t_shape and (*tup, x, y) not in used_combos
-            ]
-        elif mode == 'common_color':
-            available = [
-                (*tup, x, y) for tup, x, y
-                # in product(object_tuples, [-1, 0, 1], [-1, 0, 1])
-                in product(object_tuples, [0, 1], [0, 1])
-                if tup[1] == t_color  # tup not in exclude
-                and (*tup, x, y) not in used_combos
-            ]
-            if not available:  # and False:
-                available = [
-                    (*tup, x, y) for tup, x, y
-                    # in product(object_tuples, [-1, 0, 1], [-1, 0, 1])
-                    in product(object_tuples, [0, 1], [0, 1])
-                    if (*tup, x, y) not in used_combos
-                ]
-        elif mode == 'common_x':
-            available = [
-                (*tup, t_x, y) for tup, y
-                # in product(object_tuples, [-1, 0, 1]) if tup not in exclude
-                in product(object_tuples, [0, 1]) if tup not in exclude
-            ]
-        elif mode == 'common_y':
-            available = [
-                (*tup, x, t_y) for tup, x
-                # in product(object_tuples, [-1, 0, 1]) if tup not in exclude
-                in product(object_tuples, [0, 1]) if tup not in exclude
-            ]
-        elif mode == 'common_x_shape':
-            available = [
-                (*tup, t_x, y) for tup, y
-                # in product(object_tuples, [-1, 0, 1])
-                in product(object_tuples, [0, 1])
-                if tup[0] == t_shape and (*tup, t_x, y) not in used_combos
-            ]
-            if not available:
-                available = [
-                    (*tup, t_x, y) for tup, y
-                    in product(object_tuples, [0, 1])
-                    # in product(object_tuples, [-1, 0, 1])
-                    if (*tup, t_x, y) not in used_combos
-                ]
-        elif mode == 'common_y_shape':
-            available = [
-                (*tup, x, t_y) for tup, x
-                in product(object_tuples, [0, 1])
-                # in product(object_tuples, [-1, 0, 1])
-                if tup[0] == t_shape and (*tup, x, t_y) not in used_combos
-            ]
-            if not available:
-                available = [
-                    (*tup, x, t_y) for tup, x
-                    in product(object_tuples, [0, 1])
-                    # in product(object_tuples, [-1, 0, 1])
-                    if (*tup, x, t_y) not in used_combos
-                ]
-        elif mode == 'common_x_color':
-            available = [
-                (*tup, t_x, y) for tup, y
-                in product(object_tuples, [0, 1])
-                # in product(object_tuples, [-1, 0, 1])
-                if tup[1] == t_color and (*tup, t_x, y) not in used_combos
-            ]
-            if not available:
-                available = [
-                    (*tup, t_x, y) for tup, y
-                    in product(object_tuples, [0, 1])
-                    # in product(object_tuples, [-1, 0, 1])
-                    if (*tup, t_x, y) not in used_combos
-                ]
-        elif mode == 'common_y_color':
-            available = [
-                (*tup, x, t_y) for tup, x
-                in product(object_tuples, [0, 1])
-                # in product(object_tuples, [-1, 0, 1])
-                if tup[1] == t_color and (*tup, x, t_y) not in used_combos
-            ]
-            if not available:
-                available = [
-                    (*tup, x, t_y) for tup, x
-                    in product(object_tuples, [0, 1])
-                    # in product(object_tuples, [-1, 0, 1])
-                    if (*tup, t_y) not in used_combos
-                ]
-        elif mode == 'common_location':
-            available = [
-                (*tup, t_x, t_y) for tup in object_tuples
-                if tup not in exclude
-            ]
-        elif mode == 'common_location_shape':
-            available = [
-                (*tup, t_x, t_y) for tup in object_tuples if tup not in exclude
-            ]
-            if not available:
-                available = [
-                    (*tup, x, y) for tup, x, y
-                    # in product(object_tuples, [-1, 0, 1], [-1, 0, 1])
-                    in product(object_tuples, [0, 1], [0, 1])
-                    if tup[0] == t_shape and (x == t_x or y == t_y)
-                ]
-        elif mode == 'common_location_color':
-            available = [
-                (*tup, t_x, t_y) for tup in object_tuples if tup not in exclude
-            ]
-            if not available:
-                available = [
-                    (*tup, x, y) for tup, x, y
-                    # in product(object_tuples, [-1, 0, 1], [-1, 0, 1])
-                    in product(object_tuples, [0, 1], [0, 1])
-                    if tup[1] == t_color and (x == t_x or y == t_y)
-                ]
-        elif mode == 'unique_shape':
-            exclude = [tup[0] for tup in used_combos]
-            available = [
-                (*tup, x, y) for tup, x, y
-                # in product(object_tuples, [-1, 0, 1], [-1, 0, 1])
-                in product(object_tuples, [0, 1], [0, 1])
-                if tup[0] not in exclude
-            ]
-        elif mode == 'unique_color':
-            exclude = [tup[1] for tup in used_combos]
-            available = [
-                (*tup, x, y) for tup, x, y
-                in product(object_tuples, [0, 1], [0, 1])
-                # in product(object_tuples, [-1, 0, 1], [-1, 0, 1])
-                if tup[1] not in exclude
-            ]
-        elif mode == 'unique_shape_color':
+        if mode == 'unique_shape_color':
+            # combinations of shape and color are unique in each sample
             exclude = [tup[:2] for tup in used_combos]
             available = [
                 (*tup, x, y) for tup, x, y
-                # in product(object_tuples, [-1, 0, 1], [-1, 0, 1])
                 in product(object_tuples, [0, 1], [0, 1])
                 if tup[:2] not in exclude
-            ]
-        elif mode == 'unique_location':
-            exclude = [tup[-2:] for tup in used_combos]
-            available = [
-                (*tup, x, y) for tup, x, y
-                in product(object_tuples, [0, 1], [0, 1])
-                # in product(object_tuples, [-1, 0, 1], [-1, 0, 1])
-                if tup[-2:] not in exclude
             ]
         else:  # no constraints: shape, color and shade not necessarily unique
             available = [
                 (*tup, x, y) for tup, x, y
-                # in product(object_tuples, [-1, 0, 1], [-1, 0, 1])
                 in product(object_tuples, [0, 1], [0, 1])
                 if (*tup, x, y) not in used_combos
             ]
 
-        if not available:
-            print(mode)
-        assert len(available) > 0
         return random.choice(available), mode
 
     return select_random
@@ -282,7 +102,6 @@ def export_input_data(object_tuples, args, select, n_samples):
     )
 
     mapping = defaultdict(lambda: (lambda x: x))
-    # mapping = defaultdict(lambda: (lambda x: x + 1))
     mapping.update({
         'shape': lambda x: shapes.index(x),
         'color': lambda x: colors.index(x),
@@ -296,8 +115,6 @@ def export_input_data(object_tuples, args, select, n_samples):
                 *t_tuple,
                 random.choice([0, 1]),
                 random.choice([0, 1]),
-                # random.choice([-1, 0, 1]),
-                # random.choice([-1, 0, 1]),
                 resolution=resolution,
             )
 
@@ -351,8 +168,6 @@ def export_input_data(object_tuples, args, select, n_samples):
     maps = (
         np.array(shapes),
         np.array(colors),
-        # np.array([-1, 0, 1], dtype=np.int8),
-        # np.array([-1, 0, 1], dtype=np.int8),
         np.array([0, 1], dtype=np.int8),
         np.array([0, 1], dtype=np.int8),
     )
@@ -425,10 +240,6 @@ if __name__ == '__main__':
         eval_test_attributes=eval_test_attr,
         eval_test_attribute_mapping=eval_test_mapping,
         eval_test_sample_modes=eval_test_sample_modes,
-        sample_mode_probs=np.array(
-            tuple(sample_mode_probs.values()),
-            dtype=[(k, np.float32) for k in sample_mode_probs],
-        ),
         train_objects=np.array(train_objects),
         test_objects=np.array(test_objects),
     )

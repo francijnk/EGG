@@ -22,7 +22,6 @@ from rich.text import Text
 
 from src.eval import (
     message_entropy,
-    # message_entropy_mc,
     relative_message_entropy,
     mutual_info_sent_received,
     compute_mi,
@@ -39,6 +38,9 @@ from typing import Dict, Any
 
 
 class ReceiverResetCallback(Callback):
+    """
+    We do not reset parameters in our experimens.
+    """
     def __init__(self, game, opts):
         self.game = game
         self.reset_epochs = [] if opts.receiver_reset_freq is None \
@@ -483,7 +485,7 @@ class TrainingEvaluationCallback(Callback):
                 else self.trim_samples_strict
             return tensor if len(tensor) <= max_size else tensor[-max_size:]
 
-        mc_samples = 50 if training else 200
+        mc_samples = 20 if training else 100
         if self.image_input:
             mc_samples *= 2
 
@@ -545,7 +547,7 @@ class TrainingEvaluationCallback(Callback):
         logs.aux['entropy_msg'] = entropy
         logs.aux['entropy_max'] = max_entropy_length
 
-        # entropy_benchmark(True)
+        entropy_benchmark(True)
 
         logs.aux['redundancy_act'] = 1 - entropy / max_entropy_length
         logs.aux['redundancy_max'] = 1 - entropy / max_entropy
@@ -597,7 +599,6 @@ class TrainingEvaluationCallback(Callback):
                 entropy_target=mi_target['entropy_attr'],
                 mutual_info_msg_target=mi_target['mutual_info_msg_attr'],
                 proficiency_msg_target=mi_target['proficiency_msg_attr'],
-                redundancy_msg_target=mi_target['redundancy_msg_attr'],
             )
             for i, key in enumerate(logs.aux_input):
                 logs.aux.update({
@@ -609,7 +610,7 @@ class TrainingEvaluationCallback(Callback):
                     k + suffix: None
                     for k in (
                         'entropy_selected', 'mutual_info_msg_selected',
-                        'proficiency_msg_selected', 'redundancy_msg_selected',
+                        'proficiency_msg_selected',  # 'redundancy_msg_selected',
                     ) for suffix in ['', '_shape', '_color', '_x', '_y']
                 })
             else:
@@ -621,7 +622,6 @@ class TrainingEvaluationCallback(Callback):
                     entropy_selected=mi_selected['entropy_attr'],
                     mutual_info_msg_selected=mi_selected['mutual_info_msg_attr'],
                     proficiency_msg_selected=mi_selected['proficiency_msg_attr'],
-                    redundancy_msg_selected=mi_selected['redundancy_msg_attr'],
                 )
                 for i, key in enumerate(logs.aux_input):
                     logs.aux.update({
@@ -650,11 +650,11 @@ class TrainingEvaluationCallback(Callback):
                 k.replace('attr', 'target_category'): v for k, v in
                 compute_mi(trim(logs.logits), trim(attr), **mi_kwargs).items()
             })
-            if False:  # training:
+            if False:  # TODO training:
                 logs.aux.update({
                     k: None for k in (
                         'entropy_selected', 'mutual_info_msg_selected',
-                        'proficiency_msg_selected', 'redundancy_msg_selected',
+                        'proficiency_msg_selected',  # 'redundancy_msg_selected',
                     )
                 })
             else:  # compute MI for the selected objects
@@ -691,7 +691,7 @@ class TrainingEvaluationCallback(Callback):
             logs.aux['entropy_msg_nn'] = entropy_nn
             logs.aux['entropy_max_nn'] = max_entropy_length_nn
 
-            # entropy_benchmark(False)
+            entropy_benchmark(False)
 
             logs.aux['redundancy_act_nn'] = 1 - entropy_nn / max_entropy_length_nn
             logs.aux['redundancy_max_nn'] = 1 - entropy_nn / max_entropy_nn
@@ -724,7 +724,6 @@ class TrainingEvaluationCallback(Callback):
                 logs.aux.update(
                     mutual_info_msg_target_nn=mi_target['mutual_info_msg_attr'],
                     proficiency_msg_target_nn=mi_target['proficiency_msg_attr'],
-                    redundancy_msg_target_nn=mi_target['redundancy_msg_attr'],
                 )
                 for i, key in enumerate(logs.aux_input):
                     logs.aux.update({
@@ -739,7 +738,6 @@ class TrainingEvaluationCallback(Callback):
                         entropy_selected_nn=mi_selected['entropy_attr'],
                         mutual_info_msg_selected_nn=mi_selected['mutual_info_msg_attr'],
                         proficiency_msg_selected_nn=mi_selected['proficiency_msg_attr'],
-                        redundancy_msg_selected_nn=mi_selected['redundancy_msg_attr'],
                     )
                     for i, key in enumerate(logs.aux_input):
                         logs.aux.update({

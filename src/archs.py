@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import numpy as np
 from torch.distributions import RelaxedOneHotCategorical, OneHotCategorical
 from argparse import Namespace
 from collections import defaultdict, OrderedDict
@@ -12,10 +11,7 @@ from src.channels import (
     DeletionChannel,
 )
 from src.interaction import LoggingStrategy
-from typing import List
 
-
-# torch.autograd.set_detect_anomaly(True)
 
 channels = {
     None: NoChannel,
@@ -34,8 +30,8 @@ class SeeingConvNet(nn.Module):
     def __init__(self, input_shape: int, n_hidden: int):
         super(SeeingConvNet, self).__init__()
 
-        # adapted from Denamganaï, Missaoui and Walker, 2023
         n_filters = 32
+        out_features = 1024
         kwargs = dict(
             kernel_size=3,
             stride=2,
@@ -44,11 +40,11 @@ class SeeingConvNet(nn.Module):
             bias=False,
         )
 
-        # Define the sequence of convolutional layers, same as Lazaridou paper 2018
+        # based on Denamganaï, Missaoui and Walker, 2023
         self.convnet = nn.Sequential(OrderedDict([
             ('conv1', nn.Conv2d(3, n_filters, **kwargs)),
             ('norm1', nn.BatchNorm2d(n_filters)),
-            ('relu1',nn.ReLU()),
+            ('relu1', nn.ReLU()),
 
             ('conv2', nn.Conv2d(n_filters, n_filters, **kwargs)),
             ('norm2', nn.BatchNorm2d(n_filters)),
@@ -62,42 +58,8 @@ class SeeingConvNet(nn.Module):
             ('norm4', nn.BatchNorm2d(n_filters * 2)),
             ('relu4', nn.ReLU()),
         ]))
-        # print('n params denobv', sum(p.numel() for p in self.convnet.parameters()))
-
-        # self.convnet = nn.Sequential(
-        #    nn.Conv2d(3, n_filters, **kwargs),
-        #    nn.BatchNorm2d(n_filters),
-        #    nn.ReLU(),
-
-        #    nn.Conv2d(n_filters, n_filters, **kwargs),
-        #    nn.BatchNorm2d(n_filters),
-        #    nn.ReLU(),
-
-        #    nn.Conv2d(n_filters, n_filters, **kwargs),
-        #    nn.BatchNorm2d(n_filters),
-        #    nn.ReLU(),
-
-        #    nn.Conv2d(n_filters, n_filters, **kwargs),
-        #    nn.BatchNorm2d(n_filters),
-        #    nn.ReLU(),
-
-        #    nn.Conv2d(n_filters, n_filters, **kwargs),
-        #    nn.BatchNorm2d(n_filters),
-        #    nn.ReLU(),
-        # )
-        # print('n params obv', sum(p.numel() for p in self.convnet.parameters()))
-        self.out_features = (
-            (
-                input_shape - 1
-                + 2 * kwargs['padding']
-                - kwargs['dilation'] * (kwargs['kernel_size'] - 1)
-            ) // kwargs['stride'] + 1
-        ) ** 2  # // 8
-        # self.out_features = 512
-        # print(self.out_features, print(input_shape))
-
         self.fc = nn.Sequential(
-            nn.Linear(self.out_features, n_hidden),
+            nn.Linear(out_features, n_hidden),
             nn.ReLU(),
         )
 
@@ -138,17 +100,14 @@ class RnnSenderGS(nn.Module):
             raise ValueError(f"Unknown RNN cell: {opts.sender_cell}")
 
         input_encoder = SeeingConvNet if opts.image_input else nn.Linear
-        self.encoder = input_encoder(opts.n_features, opts.hidden_size)
-        self.hidden_to_output = nn.Linear(opts.hidden_size, opts.vocab_size)
-        #self.encoder = input_encoder(opts.n_features, opts.sender_hidden)
-        # self.hidden_to_output = nn.Linear(opts.sender_hidden, opts.vocab_size)
+        self.encoder = input_encoder(opts.n_features, opts.sender_hidden)
+        self.hidden_to_output = nn.Linear(opts.sender_hidden, opts.vocab_size)
         self.embedding = nn.Linear(opts.vocab_size, opts.embedding)
         self.sos_embedding = nn.Parameter(torch.zeros(opts.embedding))
         self.vocab_size = opts.vocab_size
         self.cell = rnn_cells[opts.sender_cell](
             input_size=opts.embedding,
-            hidden_size=opts.hidden_size,
-            # hidden_size=opts.sender_hidden,
+            hidden_size=opts.sender_hidden,
         )
 
         self.reset_parameters()
@@ -208,11 +167,11 @@ class RnnReceiverGS(nn.Module):
 
         self.message_encoder = nn.Linear(vocab_size, opts.embedding)
         self.input_encoder = input_encoder(
-            opts.n_features, opts.hidden_size,  # opts.receiver_hidden,
+            opts.n_features, opts.receiver_hidden,
         )
         self.cell = rnn_cells[opts.receiver_cell](
-            input_size=opts.embedding, hidden_size=opts.hidden_size,
-            # hidden_size=opts.receiver_hidden,
+            input_size=opts.embedding,
+            hidden_size=opts.receiver_hidden,
         )
         self.logsoft = nn.LogSoftmax(dim=1)
 
@@ -268,13 +227,14 @@ class SenderReceiverRnnGS(nn.Module):
                 n_candidates, dtype=torch.long, device=device
             )
             self.loss_weights = n_attributes.log().pow(-1).unsqueeze(-1)
+
+            # adjust loss weights so that the computed loss is equivalent to
+            # label_coeff * H(r_output, labels)
+            # + features_coeff * Sum [H(target_attr, selected_attr)]
             self.loss_weights[:-1] *= opts.features_coeff
             self.loss_weights[-1] *= (
                 opts.label_coeff * (len(self.loss_weights) - 1)
             )
-            # adjust loss weights so that the computed loss is equivalent to
-            # label_coeff * H(r_output, labels)
-            # + features_coeff * Sum [H(target_attr, selected_attr)]
         else:
             self.loss = self.loss_visa
             self.label_coeff = opts.label_coeff
@@ -285,38 +245,13 @@ class SenderReceiverRnnGS(nn.Module):
             store_receiver_input=(not opts.image_input),
         )
         self.logging_strategy_eval = LoggingStrategy()
-
-        # self.kld_coeff = opts.kld_coeff
-        # Kucinski2021, Nguyen Le Hoang1∗ Tadahiro Taniguchi2 Fang Tianwei3 Akira Taniguchi (KLD)
-
-        # self.uniform = (opts.vocab_size - 1) ** -1
-        # self.log_uniform = -np.log(opts.vocab_size - 1)
-        # self.kld_slice = slice(1, -1) \
-        #     if isinstance(self.channel, ErasureChannel) else slice(1, None)
-        # self.receiver_vocab_size = opts.vocab_size \
-        #     if opts.channel != 'erasure' else opts.vocab_size + 1
-        # self.log_uniform = -np.log(self.receiver_vocab_size - 1)
         self.min_real = torch.finfo(torch.get_default_dtype()).min
-        # self.max = torch.finfo(torch.get_default_dtype()).max
-
-    def loss_receiver(self, s_input, r_input, symbol, r_output, labels, aux_input):
-        ce = F.cross_entropy(r_output, labels, reduction='none')
-        accuracy = (r_output.detach().argmax(dim=-1) == labels).float() * 100
-        return ce, {'accuracy': accuracy}
 
     def loss_visa(self, s_input, r_input, symbol, r_output, labels, aux_input):
-        # selected = torch.matmul(r_output.softmax(-1).unsqueeze(1), r_input).squeeze(1)  # .clamp(0, 1) uncommnet?
-        # idx = torch.arange(r_output.size(0)).to(labels.device)
-        # targets = r_input[idx, labels]
-        # ce = F.binary_cross_entropy(selected, targets, reduction='none')
-        # print(r_output.softmax(-1).unsqueeze(1).shape, r_input.unsqueeze(-1).shape)
-
-        loss = 0
-
-        if self.labels_coeff > 0:
-            ce_labels = F.cross_entropy(r_output, labels)
+        loss = torch.zeros_like(symbol[:, 0])
+        if self.label_coeff > 0:
+            ce_labels = F.cross_entropy(r_output, labels, reduction='none')
             loss += self.label_coeff * ce_labels
-
         if self.features_coeff > 0:
             ce_features = F.binary_cross_entropy(
                 torch.matmul(
@@ -326,9 +261,7 @@ class SenderReceiverRnnGS(nn.Module):
                 reduction='none',
             ).sum(-1)
             loss += self.features_coeff * ce_features
-
         accuracy = (r_output.detach().argmax(dim=-1) == labels).float() * 100
-
         return loss, {'accuracy': accuracy}
 
     def loss_obverter(
@@ -347,26 +280,12 @@ class SenderReceiverRnnGS(nn.Module):
             targets,
         )
         one_hots = F.one_hot(features).to(r_output.dtype)
-        # selected = torch.matmul(
-        #     one_hots.transpose(2, 3).unsqueeze(-2),  # (32, 4, 8, 1, 5)
-        #     r_output.exp().view(r_output.size(0), 1, 1, r_output.size(1), 1),  # (32, 1, 1, 5, 1)
-        # ).view(*features.size()[:2], -1)
         selected = (
             r_output.unsqueeze(2).unsqueeze(3) + one_hots.transpose(1, 2).log()
         ).clamp(min=self.min_real).logsumexp(1)
 
         ce = torch.matmul(-selected[idx], self.loss_weights).squeeze()
-        # print('unaggregated0', -selected[idx][0])
-        # print('unweighted', -selected[idx].sum(-1))
-        # print('weighted', ce)
-        # print('weights', self.loss_weights, self.loss_weights.exp())
-        # print('')
         accuracy = (r_output.detach().argmax(dim=-1) == labels).float() * 100
-        if not self.training and torch.any(ce.isnan()):
-            print('XENT')
-            print(ce)
-            print(selected)
-            print('')
         return ce, {'accuracy': accuracy}
 
     def forward(self, sender_input, labels, receiver_input, aux_input):
@@ -391,8 +310,6 @@ class SenderReceiverRnnGS(nn.Module):
             receiver_output = self.receiver(message, receiver_input, aux_input)
             receiver_output_nn = receiver_output.detach()
         else:  # compute receiver outputs also for messages without noise
-            # message_joined = torch.cat([message, message_nn])
-            # receiver_input_joined = torch.cat([receiver_input] * 2)
             aux_input_joined = {
                 key: torch.cat([vals, vals]) for key, vals in aux_input.items()
             }
@@ -407,7 +324,6 @@ class SenderReceiverRnnGS(nn.Module):
             receiver_output_nn = receiver_output_joined[section:].detach()
 
         loss, z, length, length_nn = 0, 0, 0, 0
-        # loss, kld_loss, z, length, length_nn, kld_weight_sum = 0, 0, 0, 0, 0, 0
         not_eosed_before = torch.ones(message.size(0)).to(message.device)
         not_eosed_before_nn = not_eosed_before.clone()
         aux_info = defaultdict(float)
@@ -430,36 +346,8 @@ class SenderReceiverRnnGS(nn.Module):
 
             add_mask = symbol[:, 0] * not_eosed_before
             add_mask_nn = symbol_nn[:, 0].detach() * not_eosed_before_nn.detach()
-
             z += add_mask
             loss += step_loss * add_mask
-
-            # if self.kld_coeff > 0 and step + 1 < message.size(1):
-            #     non_eos = symbol[:, self.kld_slice].clone()
-            #     non_eos /= non_eos.sum(-1, keepdim=True)
-            #     log_uniform = torch.empty_like(non_eos)
-            #     log_uniform[:] = self.log_uniform
-            #     step_kld = F.kl_div(
-            #        log_uniform,
-            #         torch.where(non_eos.isnan(), self.uniform, non_eos),
-            #         log_target=False,
-            #         reduction='none',
-            #     ).sum(-1).clamp(max=self.max)  # KLD = 0 for P(eos) = 1
-            #     nan_mask = step_kld.isnan()
-            #     weight = not_eosed_before * symbol[:, self.kld_slice].sum(-1)
-            #     # weight = not_eosed_before * symbol[:, 1:].sum(-1)
-            #     kld_loss += torch.where(nan_mask, 0, step_kld * weight)
-            #     # kld_weight_sum += torch.where(nan_mask.any(-1), 0, weight)
-            #     kld_weight_sum += (~nan_mask * weight.unsqueeze(-1)).mean(-1)
-            #     assert torch.all(kld_loss >= 0)
-            #     if torch.any(kld_loss.isnan()) or torch.any(kld_loss.isinf()):
-            #         print('KLD', kld_loss)
-            #         print('step kld', step_kld)
-            #         print('probs before', non_eos)
-            #         print('probs after', torch.where(non_eos.isnan(), self.uniform, non_eos))
-            #         print('slice, weight', self.kld_slice, weight)
-            #         print('')
-
             if not warmup:
                 loss += self.length_cost * step * add_mask
 
@@ -483,13 +371,6 @@ class SenderReceiverRnnGS(nn.Module):
         loss += step_loss * not_eosed_before
         if not warmup:
             loss += self.length_cost * step * not_eosed_before
-        # if self.kld_coeff > 0:
-        #     kld_loss = torch.where(kld_weight_sum > 1e-8, kld_loss / kld_weight_sum, 0)
-        #     loss += kld_loss.clamp(max=self.max) * self.kld_coeff
-        #     aux_info['kld_loss'] = kld_loss.detach()
-        #     if torch.any(kld_loss.isnan()) or torch.any(kld_loss.isinf()):
-        #         print(kld_loss, kld_weight_sum)
-        #     assert not torch.any(kld_loss.isnan()) or not torch.any(kld_loss.isinf())  # remove
 
         aux_info['accuracy_nn'] += accuracy_nn[:, step] * not_eosed_before_nn
         for name, value in step_aux.items():
