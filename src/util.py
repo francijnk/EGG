@@ -476,12 +476,10 @@ class Dump:
 
             results[key].update({
                 'redundancy': 1 - entropy / max_entropy,
-                'topsim': compute_topsim(*topsim_args, norm=None),
-                'topsim_norm_max': compute_topsim(*topsim_args, norm='max'),
-                'topsim_norm_mean': compute_topsim(*topsim_args, norm='mean'),
+                'topsim': compute_topsim(*topsim_args, normalize=False),
+                'topsim_norm': compute_topsim(*topsim_args, normalize=True),
                 'topsim_cosine': None,
-                'topsim_cosine_norm_max': None,
-                'topsim_cosine_norm_mean': None,
+                'topsim_cosine_norm': None,
                 'entropy_msg': entropy,
                 'entropy_max': max_entropy,
                 'mutual_info_sent_received': mutual_info_sent_received(
@@ -542,11 +540,9 @@ class Dump:
                     'unique_samples_per_target_cat':
                         n_uniq_samples_cat / n_uniq_cat,
                     'topsim_cosine': compute_topsim(
-                        *topsim_args, meaning_distance='cosine', norm='mean'),
+                        *topsim_args, meaning_distance='cosine', normalize=False),
                     'topsim_cosine_norm_max': compute_topsim(
-                        *topsim_args, meaning_distance='cosine', norm='mean'),
-                    'topsim_cosine_norm_mean': compute_topsim(
-                        *topsim_args, meaning_distance='cosine', norm='mean'),
+                        *topsim_args, meaning_distance='cosine', normalize=True),
                 })
 
                 # assign a different number to every input vector

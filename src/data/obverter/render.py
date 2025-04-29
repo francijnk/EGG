@@ -101,8 +101,6 @@ def render_scene(idx, shape, color, location, rotation):
         obj = Cone(
             [0, 0, 0], radius * 1.2,
             [0, size * 1.4, 0], 0.,
-            'rotate', [180, 0, 0],
-            'translate', [0, size * 1.4, 0],
             *attributes
         )
 
@@ -127,7 +125,7 @@ def get_object_fname(shape, color, x=None, y=None, idx=None):
         assert shape is not None and color is not None
         assert x in (-3, 3) and y in (-1.5, 1.5)
 
-        x, y = (x + 3) // 3, int((y + 1.5) // 3)
+        x, y = (x + 3) // 6, int((y + 1.5) // 3)
         prefix = f'{shape}_{color}_{x}_{y}_{idx}_'
 
         def f(fname):
@@ -148,7 +146,6 @@ def get_object_fname(shape, color, x=None, y=None, idx=None):
     assets_dir = os.path.join(current_dir, f'assets_{resolution}')
     all_images = os.listdir(assets_dir)
     matches = list(filter(f, all_images))
-
     return random.choice(matches) if matches else None
 
 

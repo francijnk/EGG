@@ -580,17 +580,9 @@ class TrainingEvaluationCallback(Callback):
             trim(messages, True),
         )
         logs.aux.update(
-            topsim=compute_topsim(*topsim_args, norm=None),
-            topsim_norm_max=compute_topsim(*topsim_args, norm='max'),
-            topsim_norm_mean=compute_topsim(*topsim_args, norm='mean'),
+            topsim=compute_topsim(*topsim_args, normalize=False),
+            topsim_norm_max=compute_topsim(*topsim_args, normalize=True),
         )
-
-        # for Sweeps
-        # TODO selected MI train doesnt need to be expected
-        if not training:
-            logs.aux['sweep_target'] = logs.aux['accuracy'] ** 2 * logs.aux['topsim'] / 100
-        else:
-            logs.aux['sweep_target'] = None
 
         mi_kwargs['entropy_message'] = entropy
         if self.image_input:
@@ -630,11 +622,9 @@ class TrainingEvaluationCallback(Callback):
                     })
         else:
             logs.aux['topsim_cosine'] = compute_topsim(
-                *topsim_args, meaning_distance='cosine', norm=None)
+                *topsim_args, meaning_distance='cosine', normalize=False)
             logs.aux['topsim_cosine_norm_max'] = compute_topsim(
-                *topsim_args, meaning_distance='cosine', norm='max')
-            logs.aux['topsim_cosine_norm_mean'] = compute_topsim(
-                *topsim_args, meaning_distance='cosine', norm='mean')
+                *topsim_args, meaning_distance='cosine', normalize=True)
 
             # categorize the input vectors
             _, target = torch.unique(
@@ -711,9 +701,8 @@ class TrainingEvaluationCallback(Callback):
                 trim(messages, True),
             )
             logs.aux.update(
-                topsim_nn=compute_topsim(*topsim_args, norm=None),
-                topsim_norm_max_nn=compute_topsim(*topsim_args, norm='max'),
-                topsim_norm_mean_nn=compute_topsim(*topsim_args, norm='mean'),
+                topsim_nn=compute_topsim(*topsim_args, normalize=False),
+                topsim_norm_max_nn=compute_topsim(*topsim_args, normalize=True),
             )
 
             mi_kwargs.update(erasure_channel=False, entropy_message=entropy_nn)
@@ -746,11 +735,9 @@ class TrainingEvaluationCallback(Callback):
                         })
             else:
                 logs.aux['topsim_cosine_nn'] = compute_topsim(
-                    *topsim_args, meaning_distance='cosine', norm='max')
-                logs.aux['topsim_cosine_norm_max_nn'] = compute_topsim(
-                    *topsim_args, meaning_distance='cosine', norm='max')
-                logs.aux['topsim_cosine_norm_mean_nn'] = compute_topsim(
-                    *topsim_args, meaning_distance='cosine', norm='mean')
+                    *topsim_args, meaning_distance='cosine', normalize=False)
+                logs.aux['topsim_cosine_norm_nn'] = compute_topsim(
+                    *topsim_args, meaning_distance='cosine', normalize=True)
 
                 logs.aux.update({
                     k.replace('attr', 'target_nn'): v for k, v in

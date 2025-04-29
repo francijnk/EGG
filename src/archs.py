@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import numpy as np
 from torch.distributions import RelaxedOneHotCategorical, OneHotCategorical
 from argparse import Namespace
 from collections import defaultdict, OrderedDict
@@ -237,8 +238,8 @@ class SenderReceiverRnnGS(nn.Module):
             )
         else:
             self.loss = self.loss_visa
-            self.label_coeff = opts.label_coeff
-            self.features_coeff = opts.features_coeff
+            self.label_weight = opts.label_coeff / np.log(2)
+            self.features_weight = opts.features_coeff / np.log(opts.n_distractors + 1)
 
         self.logging_strategy_train = LoggingStrategy(
             store_sender_input=(not opts.image_input),
@@ -249,10 +250,10 @@ class SenderReceiverRnnGS(nn.Module):
 
     def loss_visa(self, s_input, r_input, symbol, r_output, labels, aux_input):
         loss = torch.zeros_like(symbol[:, 0])
-        if self.label_coeff > 0:
+        if self.label_weight > 0:
             ce_labels = F.cross_entropy(r_output, labels, reduction='none')
-            loss += self.label_coeff * ce_labels
-        if self.features_coeff > 0:
+            loss += self.label_weight * ce_labels
+        if self.features_weight > 0:
             ce_features = F.binary_cross_entropy(
                 torch.matmul(
                     r_output.softmax(-1).unsqueeze(1), r_input
@@ -260,7 +261,7 @@ class SenderReceiverRnnGS(nn.Module):
                 r_input[torch.arange(r_output.size(0)).to(labels.device), labels],
                 reduction='none',
             ).sum(-1)
-            loss += self.features_coeff * ce_features
+            loss += self.features_weight * ce_features
         accuracy = (r_output.detach().argmax(dim=-1) == labels).float() * 100
         return loss, {'accuracy': accuracy}
 

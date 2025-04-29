@@ -155,19 +155,6 @@ def message_entropy(
     return entropy, length_probs
 
 
-def get_alphabets(
-    max_len: int,
-    vocab_size: int,
-    erasure_channel: bool,
-) -> Tuple[np.array, np.array]:
-
-    n_messages_sent = ((vocab_size - 1) ** np.arange(max_len + 1)).sum()
-    n_messages_received = ((vocab_size) ** np.arange(max_len + 1)).sum() \
-        if erasure_channel else n_messages_sent
-
-    return np.arange(n_messages_sent), np.arange(n_messages_received)
-
-
 def relative_message_entropy(
     logits_p: torch.Tensor,
     logits_q: torch.Tensor,
@@ -612,7 +599,7 @@ def compute_topsim(
     messages: torch.Tensor,
     meaning_distance: str = 'hamming',
     message_distance: str = 'levenshtein',
-    norm: Optional[str] = None,
+    normalize: bool = False,
 ) -> float:
     """
     Computes topographic similarity.
@@ -620,7 +607,6 @@ def compute_topsim(
     """
     assert meaning_distance in ('cosine', 'hamming', 'euclidean')
     assert message_distance in ('levenshtein', 'damerau_levenshtein')
-    assert norm in ('mean', 'max', None)
 
     i, j = torch.combinations(
         torch.arange(len(messages), device=messages.device)
@@ -638,7 +624,7 @@ def compute_topsim(
     def hamming_distance(x):
         return (F.pdist(x.double(), p=0) / meanings.size(1)).cpu().numpy()
 
-    meth = attrgetter('normalized_distance' if norm == 'max' else 'distance')
+    meth = attrgetter('normalized_distance' if normalize else 'distance')
     distances = {
         'cosine': cosine_distance,
         'hamming': lambda x: (F.pdist(x.double(), p=0) / len(meanings)).cpu().numpy(),
@@ -648,8 +634,7 @@ def compute_topsim(
     }
 
     meaning_dist_fn = distances[meaning_distance]
-    message_dist_fn = distances[message_distance] if norm != 'mean' else \
-        lambda x, y: distances[message_distance](x, y) / (len(x) + len(y)) / 2
+    message_dist_fn = distances[message_distance]
 
     meaning_dists = meaning_dist_fn(meanings)
     message_dists = [
