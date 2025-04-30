@@ -296,9 +296,8 @@ def mutual_info_sent_received(
     one_hots_sent = one_hots_sent.view(size[0] * n_samples, *size[1:])
 
     one_hots_received, _ = channel.process(
-        one_hots_sent[:, :-1],
-        logits_sent[:, :-1],
-        True)
+        one_hots_sent[:, :-1], logits_sent[:, :-1], True
+    )
     sample_received = one_hots_received.argmax(-1)
 
     _, sent = torch.unique(sample_sent, return_inverse=True, dim=0)

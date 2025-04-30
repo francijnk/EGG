@@ -468,10 +468,7 @@ class Dump:
             mi_kwargs = {
                 'max_len': opts.max_len,
                 'vocab_size': opts.vocab_size,
-                'erasure_channel': (
-                    isinstance(self.channel, ErasureChannel)
-                    and key == 'received'),
-                'n_samples': 400 if opts.image_input else 100,
+                'n_samples': 200 if opts.image_input else 50,
             }
 
             results[key].update({
@@ -487,9 +484,12 @@ class Dump:
                     channel=self.channel,
                     entropy_sent=entropy_sent,
                     entropy_received=entropy_received,
+                    erasure_channel=isinstance(self.channel, ErasureChannel),
                     **mi_kwargs),
             })
             mi_kwargs['entropy_message'] = entropy
+            mi_kwargs['erasure_channel'] = \
+                isinstance(self.channel, ErasureChannel) and key == 'received'
 
             if opts.image_input:
                 for k in list(results[key]):
