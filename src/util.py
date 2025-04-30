@@ -334,7 +334,7 @@ class Dump:
                 self.sender_inputs, self.messages_nn, self.logits_nn,
                 self.lengths_nn, self.message_inputs_nn, self.receiver_inputs,
                 self.receiver_outputs_nn, self.labels,
-                self.target_attributes, self.attribute,
+                self.target_attributes, self.attributes,
                 self.attribute_names
             )
 
