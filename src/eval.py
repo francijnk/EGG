@@ -507,8 +507,6 @@ class MessageDataset(Dataset):
                 if len(disrupted) == len(message):
                     count += torch.any(disrupted != message).int().item()
 
-        print('different message after disruption:', count , '/', len(self.messages), disruption_fn, n_symbols)
-
         self.labels = torch.stack(self.labels)
 
         assert (
@@ -624,17 +622,18 @@ def compute_topsim(
     def hamming_distance(x):
         return (F.pdist(x.double(), p=0) / meanings.size(1)).cpu().numpy()
 
-    meth = attrgetter('normalized_distance' if normalize else 'distance')
+    # meth = attrgetter('normalized_distance' if normalize else 'distance')
     distances = {
         'cosine': cosine_distance,
         'hamming': lambda x: (F.pdist(x.double(), p=0) / len(meanings)).cpu().numpy(),
         'euclidean': lambda x: F.pdist(x.double(), p=2).cpu().numpy(),
-        'levenshtein': meth(Levenshtein),
-        'damerau_levenshtein': meth(DamerauLevenshtein),
+        'levenshtein': Levenshtein.distance,
+        'damerau_levenshtein': DamerauLevenshtein.distance,
     }
 
     meaning_dist_fn = distances[meaning_distance]
-    message_dist_fn = distances[message_distance]
+    message_dist_fn = distances[message_distance] if not normalize else \
+        lambda x, y: distances[message_distance](x, y) / (len(x) + len(y)) / 2
 
     meaning_dists = meaning_dist_fn(meanings)
     message_dists = [

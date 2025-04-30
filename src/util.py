@@ -541,7 +541,7 @@ class Dump:
                         n_uniq_samples_cat / n_uniq_cat,
                     'topsim_cosine': compute_topsim(
                         *topsim_args, meaning_distance='cosine', normalize=False),
-                    'topsim_cosine_norm_max': compute_topsim(
+                    'topsim_cosine_norm': compute_topsim(
                         *topsim_args, meaning_distance='cosine', normalize=True),
                 })
 
