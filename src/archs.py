@@ -203,10 +203,7 @@ class RnnReceiverGS(nn.Module):
 
 
 class SenderReceiverRnnGS(nn.Module):
-    def __init__(
-        self,
-        opts: Namespace,
-    ):
+    def __init__(self, opts: Namespace):
         super(SenderReceiverRnnGS, self).__init__()
 
         self.sender = RnnSenderGS(opts)
@@ -293,8 +290,6 @@ class SenderReceiverRnnGS(nn.Module):
         warmup = next(self.warmup, False)
 
         sender_output = self.sender(sender_input, aux_input)
-
-        # pass messages and symbol log-probs through the channel
         message, logits, message_nn, logits_nn = self.channel(*sender_output)
 
         # append EOS to each message
@@ -350,11 +345,11 @@ class SenderReceiverRnnGS(nn.Module):
             z += add_mask
             loss += step_loss * add_mask
             if not warmup:
-                loss += self.length_cost * step * add_mask
+                loss += self.length_cost * (step + 1) * add_mask
 
             # aggregate aux info
-            length += add_mask.detach() * step
-            length_nn += add_mask_nn * step
+            length += add_mask.detach() * (step + 1)
+            length_nn += add_mask_nn * (step + 1)
 
             for name, value in step_aux.items():
                 aux_info[name] += value * add_mask.detach()
@@ -371,14 +366,14 @@ class SenderReceiverRnnGS(nn.Module):
 
         loss += step_loss * not_eosed_before
         if not warmup:
-            loss += self.length_cost * step * not_eosed_before
+            loss += self.length_cost * (step + 1) * not_eosed_before
 
         aux_info['accuracy_nn'] += accuracy_nn[:, step] * not_eosed_before_nn
         for name, value in step_aux.items():
             aux_info[name] += value * not_eosed_before.detach()
 
-        length += step * not_eosed_before.detach()
-        length_nn += step * not_eosed_before_nn.detach()
+        length += (step + 1) * not_eosed_before.detach()
+        length_nn += (step + 1) * not_eosed_before_nn.detach()
         aux_info['temperature'] = torch.tensor([self.sender.temperature])
         aux_info['length'] = length
         aux_info['length_nn'] = length_nn

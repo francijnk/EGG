@@ -252,7 +252,6 @@ class Dump:
 
         # select receiver output at 1st EOS
         idx = (torch.arange(len(messages), device=opts.device), lengths - 1)
-        # self.receiver_outputs = logs.receiver_output[idx]
         self.receiver_outputs = logs.receiver_output.argmax(-1)[idx]
 
         if opts.channel != 'none':
@@ -263,7 +262,10 @@ class Dump:
             self.logits_nn = logs.logits_nn
             self.lengths_nn = lengths
 
-            idx = (torch.arange(len(messages)), lengths - 1)
+            idx = (
+                torch.arange(len(messages), device=opts.device),
+                lengths - 1,
+            )
             # self.receiver_outputs_nn = logs.receiver_output_nn[idx]
             self.receiver_outputs_nn = logs.receiver_output_nn.argmax(-1)[idx]
         else:

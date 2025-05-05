@@ -12,8 +12,6 @@ import pathlib
 import argparse
 from datetime import timedelta
 
-import torch.utils.data
-
 import egg.core as core
 
 from src.trainers import Trainer

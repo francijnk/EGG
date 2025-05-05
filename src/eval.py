@@ -7,7 +7,6 @@ import torch.nn.functional as F
 from egg.core.util import find_lengths
 from scipy.stats import spearmanr
 from torch.utils.data import Dataset
-from operator import attrgetter
 from itertools import combinations
 from torch.distributions.utils import logits_to_probs
 from torch.distributions.categorical import Categorical
@@ -621,7 +620,6 @@ def compute_topsim(
     def hamming_distance(x):
         return (F.pdist(x.double(), p=0) / meanings.size(1)).cpu().numpy()
 
-    # meth = attrgetter('normalized_distance' if normalize else 'distance')
     distances = {
         'cosine': cosine_distance,
         'hamming': lambda x: (F.pdist(x.double(), p=0) / len(meanings)).cpu().numpy(),
