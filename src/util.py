@@ -2,6 +2,7 @@ import json
 import torch
 import argparse
 import numpy as np
+from scipy.stats import binom
 from tabulate import tabulate, SEPARATING_LINE
 from torch.utils.data import Dataset, DataLoader
 
@@ -407,15 +408,34 @@ class Dump:
         results = {}
         keys = ('baseline',) if opts.channel is None else ('received', 'sent')
 
+        # actual length probs
         entropy_sent, length_probs_sent = message_entropy(self.logits)
-        (entropy_received, length_probs_received) = \
+        (entropy_rec, length_probs_rec) = \
             message_entropy(self.logits_nn) if opts.channel is not None \
             else (entropy_sent, length_probs_sent)
 
-        max_entropy_sent = self.channel.max_message_entropy(
+        # length probs assuming all messages have maximum length
+        length_probs_max_sent = torch.zeros(opts.max_len + 1).to(opts.device)
+        length_probs_max_sent[-1] = 1
+        if opts.channel == 'deletion':
+            length_probs_max_rec = torch.tensor(
+                binom.pmf(
+                    k=np.arange(opts.max_len + 1)[::-1].copy(),
+                    n=opts.max_len,
+                    p=opts.error_prob),
+                device=length_probs_rec.device,
+            )
+        else:
+            length_probs_max_rec = length_probs_max_sent
+
+        max_entropy_len_sent = self.channel.max_message_entropy(
             length_probs_sent, noise=False)
-        max_entropy_received = self.channel.max_message_entropy(
-            length_probs_received, noise=True)
+        max_entropy_len_rec = self.channel.max_message_entropy(
+            length_probs_rec, noise=True)
+        max_entropy_sent = self.channel.max_message_entropy(
+            length_probs_max_sent, noise=False)
+        max_entropy_rec = self.channel.max_message_entropy(
+            length_probs_max_rec, noise=True)
 
         for key in keys:
             (s_inputs, messages, logits, lengths, m_inputs, r_inputs,
@@ -425,8 +445,11 @@ class Dump:
             idx = torch.arange(len(messages), device=messages.device).long()
             s_attributes = attributes[idx, :, r_outputs]
 
-            entropy, max_entropy = (entropy_received, max_entropy_received) \
-                if key != 'sent' else (entropy_sent, max_entropy_sent)
+            entropy, max_entropy, max_entropy_len = \
+                (entropy_rec, max_entropy_rec, max_entropy_len_rec) \
+                if key != 'sent' \
+                else (entropy_sent, max_entropy_sent, max_entropy_len_sent)
+
             if opts.image_input:
                 idx = torch.arange(len(attr_names)).to(t_attributes.device)
                 n_uniq_samples = unique_samples(r_inputs, attributes)
@@ -472,18 +495,20 @@ class Dump:
             }
 
             results[key].update({
-                'redundancy': 1 - entropy / max_entropy,
+                'redundancy_act': 1 - entropy / max_entropy_len,
+                'redundancy_max': 1 - entropy / max_entropy,
                 'topsim': compute_topsim(*topsim_args, normalize=False),
                 'topsim_norm': compute_topsim(*topsim_args, normalize=True),
                 'topsim_cosine': None,
                 'topsim_cosine_norm': None,
                 'entropy_msg': entropy,
-                'entropy_max': max_entropy,
+                'entropy_max_actlen': max_entropy_len,
+                'entropy_max_maxlen': max_entropy,
                 'mutual_info_sent_received': mutual_info_sent_received(
                     logits_sent=self.logits_nn,
                     channel=self.channel,
                     entropy_sent=entropy_sent,
-                    entropy_received=entropy_received,
+                    entropy_received=entropy_rec,
                     erasure_channel=isinstance(self.channel, ErasureChannel),
                     **mi_kwargs),
             })

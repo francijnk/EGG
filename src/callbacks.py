@@ -597,14 +597,6 @@ class TrainingEvaluationCallback(Callback):
                     k.replace('attr_dim', f'target_{key}'): v[i]
                     for k, v in mi_target.items() if 'attr_dim' in k
                 })
-            if False:  # training:
-                logs.aux.update({
-                    k + suffix: None
-                    for k in (
-                        'entropy_selected', 'mutual_info_msg_selected',
-                        'proficiency_msg_selected',  # 'redundancy_msg_selected',
-                    ) for suffix in ['', '_shape', '_color', '_x', '_y']
-                })
             else:
                 mi_selected = compute_mi(
                     trim(logs.logits), trim(s_attr),
@@ -640,24 +632,16 @@ class TrainingEvaluationCallback(Callback):
                 k.replace('attr', 'target_category'): v for k, v in
                 compute_mi(trim(logs.logits), trim(attr), **mi_kwargs).items()
             })
-            if False:  # TODO training:
-                logs.aux.update({
-                    k: None for k in (
-                        'entropy_selected', 'mutual_info_msg_selected',
-                        'proficiency_msg_selected',  # 'redundancy_msg_selected',
-                    )
-                })
-            else:  # compute MI for the selected objects
-                _, selected = torch.unique(
-                    logs.receiver_input[idx, s_objs],
-                    return_inverse=True, dim=0)
-                selected = selected.unsqueeze(-1).to(torch.float)
-                logs.aux.update({
-                    k.replace('attr', 'selected'): v for k, v
-                    in compute_mi(
-                        trim(logs.logits), trim(selected), **mi_kwargs
-                    ).items()
-                })
+            _, selected = torch.unique(
+                logs.receiver_input[idx, s_objs],
+                return_inverse=True, dim=0)
+            selected = selected.unsqueeze(-1).to(torch.float)
+            logs.aux.update({
+                k.replace('attr', 'selected'): v for k, v
+                in compute_mi(
+                    trim(logs.logits), trim(selected), **mi_kwargs
+                ).items()
+            })
 
         # compute measure values for messages before noise is applied
         if not isinstance(self.channel, NoChannel):
@@ -719,20 +703,19 @@ class TrainingEvaluationCallback(Callback):
                         k.replace('attr_dim', f'target_{key}_nn'): v[i]
                         for k, v in mi_target.items() if 'attr_dim' in k
                     })
-                if not training:
-                    mi_selected = compute_mi(
-                        trim(logs.logits_nn), trim(s_attr), **mi_kwargs
-                    )
-                    logs.aux.update(
-                        entropy_selected_nn=mi_selected['entropy_attr'],
-                        mutual_info_msg_selected_nn=mi_selected['mutual_info_msg_attr'],
-                        proficiency_msg_selected_nn=mi_selected['proficiency_msg_attr'],
-                    )
-                    for i, key in enumerate(logs.aux_input):
-                        logs.aux.update({
-                            k.replace('attr_dim', f'selected_{key}_nn'): v[i]
-                            for k, v in mi_selected.items() if 'attr_dim' in k
-                        })
+                mi_selected = compute_mi(
+                    trim(logs.logits_nn), trim(s_attr), **mi_kwargs
+                )
+                logs.aux.update(
+                    entropy_selected_nn=mi_selected['entropy_attr'],
+                    mutual_info_msg_selected_nn=mi_selected['mutual_info_msg_attr'],
+                    proficiency_msg_selected_nn=mi_selected['proficiency_msg_attr'],
+                )
+                for i, key in enumerate(logs.aux_input):
+                    logs.aux.update({
+                        k.replace('attr_dim', f'selected_{key}_nn'): v[i]
+                        for k, v in mi_selected.items() if 'attr_dim' in k
+                    })
             else:
                 logs.aux['topsim_cosine_nn'] = compute_topsim(
                     *topsim_args, meaning_distance='cosine', normalize=False)
@@ -751,10 +734,9 @@ class TrainingEvaluationCallback(Callback):
                         trim(logs.logits_nn), trim(attr), **mi_kwargs
                     ).items() if k != 'entropy_msg'
                 })
-                if not training:
-                    logs.aux.update({
-                        k.replace('attr', 'selected_nn'): v for k, v
-                        in compute_mi(
-                            trim(logs.logits_nn), trim(selected), **mi_kwargs
-                        ).items() if k != 'entropy_msg'
-                    })
+                logs.aux.update({
+                    k.replace('attr', 'selected_nn'): v for k, v
+                    in compute_mi(
+                        trim(logs.logits_nn), trim(selected), **mi_kwargs
+                    ).items() if k != 'entropy_msg'
+                })
