@@ -2,6 +2,18 @@
 
 > Emergence of Linguistic Communication from Referential Games with Symbolic and Pixel Input
 
+## Running with `uv`
+`uv python install 3.8`
+`uv venv --python 3.8`
+`source .venv/bin/activate`
+`uv pip install -r requirements.txt`
+`uv pip install -e .`
+
+## Training
+
+`source .venv/bin/activate`
+`python -m src.train --output_dir runs/ --filename run --data_path src/data/input_data/visa-5-256.npz ...`
+
 ## Contents
 - `ancm/data/` data export module,
 - `ancm/data/input_data` exported intput datasets
