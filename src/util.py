@@ -416,28 +416,10 @@ class Dump:
             message_entropy(self.logits_nn) if opts.channel is not None \
             else (entropy_sent, length_probs_sent)
 
-        # length probs assuming all messages have maximum length
-        length_probs_max_sent = torch.zeros(opts.max_len + 1).to(opts.device)
-        length_probs_max_sent[-1] = 1
-        if opts.channel == 'deletion':
-            length_probs_max_rec = torch.tensor(
-                binom.pmf(
-                    k=np.arange(opts.max_len + 1)[::-1].copy(),
-                    n=opts.max_len,
-                    p=opts.error_prob),
-                device=length_probs_rec.device,
-            )
-        else:
-            length_probs_max_rec = length_probs_max_sent
-
-        max_entropy_len_sent = self.channel.max_message_entropy(
-            length_probs_sent, noise=False)
-        max_entropy_len_rec = self.channel.max_message_entropy(
-            length_probs_rec, noise=True)
         max_entropy_sent = self.channel.max_message_entropy(
-            length_probs_max_sent, noise=False)
+            length_probs_sent, noise=False)
         max_entropy_rec = self.channel.max_message_entropy(
-            length_probs_max_rec, noise=True)
+            length_probs_rec, noise=True)
 
         for key in keys:
             (s_inputs, messages, logits, lengths, m_inputs, r_inputs,
@@ -447,10 +429,8 @@ class Dump:
             idx = torch.arange(len(messages), device=messages.device).long()
             s_attributes = attributes[idx, :, r_outputs]
 
-            entropy, max_entropy, max_entropy_len = \
-                (entropy_rec, max_entropy_rec, max_entropy_len_rec) \
-                if key != 'sent' \
-                else (entropy_sent, max_entropy_sent, max_entropy_len_sent)
+            entropy, max_entropy = (entropy_rec, max_entropy_rec) \
+                if key != 'sent' else (entropy_sent, max_entropy_sent)
 
             if opts.image_input:
                 idx = torch.arange(len(attr_names)).to(t_attributes.device)
@@ -497,15 +477,13 @@ class Dump:
             }
 
             results[key].update({
-                'redundancy_act': 1 - entropy / max_entropy_len,
-                'redundancy_max': 1 - entropy / max_entropy,
+                'redundancy': 1 - entropy / max_entropy,
                 'topsim': compute_topsim(*topsim_args, normalize=False),
                 'topsim_norm': compute_topsim(*topsim_args, normalize=True),
                 'topsim_cosine': None,
                 'topsim_cosine_norm': None,
                 'entropy_msg': entropy,
-                'entropy_max_actlen': max_entropy_len,
-                'entropy_max_maxlen': max_entropy,
+                'entropy_msg_max': max_entropy,
                 'mutual_info_sent_received': mutual_info_sent_received(
                     logits_sent=self.logits_nn,
                     channel=self.channel,
@@ -528,7 +506,6 @@ class Dump:
                     entropy_target=mi_target['entropy_attr'],
                     mutual_info_msg_target=mi_target['mutual_info_msg_attr'],
                     proficiency_msg_target=mi_target['proficiency_msg_attr'],
-                    redundancy_msg_target=mi_target['proficiency_msg_attr'],
                 )
                 for i, name in enumerate(attr_names):
                     results[key].update({
@@ -541,7 +518,6 @@ class Dump:
                     entropy_selected=mi_selected['entropy_attr'],
                     mutual_info_msg_selected=mi_selected['mutual_info_msg_attr'],
                     proficiency_msg_selected=mi_selected['proficiency_msg_attr'],
-                    redundancy_msg_selected=mi_selected['proficiency_msg_attr'],
                 )
                 for i, name in enumerate(attr_names):
                     results[key].update({
