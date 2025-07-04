@@ -1,21 +1,23 @@
 import sys
 from uuid import uuid4
 
-random_seeds = [i + 1 for i in range(5)]
+random_seeds = [i + 1 for i in range(20)]
 error_probs = [0.00, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30]
-channels = 'erasure deletion symmetric'.split()
+channels = 'erasure deletion'.split()
 
-slr = 5e-4
+slr = 5e-3
 rlr = 1e-3
-tlr = 1e-5
 length_cost = 0.01
 vocab_size = 10
 hidden_units = 64
-n_epochs = 15
+n_epochs = 25
 emb = 16
-temperature = 3
-temperature_min = 1
-optimizer = 'rmsprop'
+weight_decay = 0.01
+temperature_start = 1.5
+optimizer = 'adamw'
+warmup = 0
+label_coeff = 0.5
+features_coeff = 1
 
 
 def get_opts(error_prob, channel, max_len, random_seed):
@@ -36,17 +38,19 @@ def get_opts(error_prob, channel, max_len, random_seed):
         f'--random_seed {random_seed}',
         f'--filename {filename}',
         f'--n_epochs {n_epochs}',
-        f'--temperature_lr {tlr}',
-        f'--temperature {temperature}',
-        f'--temperature_minimum {temperature_min}',
+        f'--weight_decay {weight_decay}',
+        f'--label_coeff {label_coeff}',
+        f'--features_coeff {features_coeff}',
         f'--embedding {emb}',
+        f'--temperature_start {temperature_start}',
+        '--temperature_end 1',
         f'--optim {optimizer}',
         '--sender_cell lstm',
         '--receiver_cell lstm',
         '--validation_freq 1',
-        '--wandb_project cezary_snellius ',
-        '--wandb_entity koala-lab',
-        f'--wandb_run_id {max_len}_{_channel}_{random_seed}_{uuid4()}'
+        # '--wandb_project cezary_snellius ',
+        # '--wandb_entity koala-lab',
+        # f'--wandb_run_id {max_len}_{_channel}_{random_seed}_{uuid4()}'
         # '--results_folder runs_01_23/'
     ]
     if channel is not None:
