@@ -225,8 +225,9 @@ class SenderReceiverRnnGS(nn.Module):
                 n_candidates, dtype=torch.long, device=device
             )
             self.loss_weights = n_attributes.log().pow(-1).unsqueeze(-1)
+            self.loss_weights[:] = 1 / len(n_attributes)
 
-            # adjust loss weights so that the computed loss is equivalent to
+            # adjust loss weights so that the computed value equals
             # label_coeff * H(r_output, labels)
             # + features_coeff * Sum [H(target_attr, selected_attr)]
             self.loss_weights[:-1] *= opts.features_coeff

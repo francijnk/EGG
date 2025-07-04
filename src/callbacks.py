@@ -453,20 +453,6 @@ class TrainingEvaluationCallback(Callback):
         self.train_logits = None
         self.train_logits_nn = None
 
-        # for redundancy
-        self.length_probs_max_nn = torch.zeros(opts.max_len + 1).to(opts.device)
-        self.length_probs_max_nn[-1] = 1
-        if opts.channel == 'deletion':
-            self.length_probs_max = torch.tensor(
-                binom.pmf(
-                    k=np.arange(opts.max_len + 1)[::-1].copy(),
-                    n=opts.max_len,
-                    p=opts.error_prob),
-                device=opts.device,
-            )
-        else:
-            self.length_probs_max = self.length_probs_max_nn
-
     def on_epoch_end(self, loss: float, logs: Interaction, epoch: int):
         self.train_logits = logs.logits
         self.train_logits_nn = logs.logits_nn
@@ -538,19 +524,16 @@ class TrainingEvaluationCallback(Callback):
         entropy, length_probs = message_entropy(trim(logs.logits))
         entropy_nn, length_probs_nn = message_entropy(trim(logs.logits_nn))
 
-        max_entropy_length = self.channel.max_message_entropy(
-            length_probs, True)  # given actual message length
         max_entropy = self.channel.max_message_entropy(
-            self.length_probs_max, True)  # assumes max message length
+            length_probs, True)  # given actual message length
         # logs.aux['expected_length'] = torch.sum(
         #     torch.arange(logs.logits.size(1) * length_probs.cpu()), dim=-1)
         logs.aux['entropy_msg'] = entropy
-        logs.aux['entropy_max'] = max_entropy_length
+        logs.aux['entropy_max'] = max_entropy
 
         entropy_benchmark(True)
 
-        logs.aux['redundancy_act'] = 1 - entropy / max_entropy_length
-        logs.aux['redundancy_max'] = 1 - entropy / max_entropy
+        logs.aux['redundancy'] = 1 - entropy / max_entropy
         if not training:
             logs.aux['kld_train_test'] = relative_message_entropy(
                 trim(self.train_logits),
@@ -657,18 +640,15 @@ class TrainingEvaluationCallback(Callback):
             logs.aux['actual_vocab_size_nn'] = torch.unique(messages).numel()
 
             max_entropy_nn = self.channel.max_message_entropy(
-                self.length_probs_max_nn, False)  # assumes max message length
-            max_entropy_length_nn = self.channel.max_message_entropy(
                 length_probs_nn, False)  # length-adjusted
             # logs.aux['expected_length_nn'] = torch.sum(
             #     torch.arange(logs.logits_nn.size(1)) * length_probs.cpu()))
             logs.aux['entropy_msg_nn'] = entropy_nn
-            logs.aux['entropy_max_nn'] = max_entropy_length_nn
+            logs.aux['entropy_max_nn'] = max_entropy_nn
 
             entropy_benchmark(False)
 
-            logs.aux['redundancy_act_nn'] = 1 - entropy_nn / max_entropy_length_nn
-            logs.aux['redundancy_max_nn'] = 1 - entropy_nn / max_entropy_nn
+            logs.aux['redundancy_nn'] = 1 - entropy_nn / max_entropy_nn
             if not training:
                 logs.aux['kld_train_test_nn'] = relative_message_entropy(
                     trim(self.train_logits_nn),
