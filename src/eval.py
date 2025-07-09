@@ -279,18 +279,22 @@ def mutual_info_sent_received(
     estimator: str = 'PERKS',
 ) -> float:
     size = logits_sent.size()
+    logits_sent = logits_sent.to(channel.device)
     n_messages_sent = ((vocab_size - 1) ** np.arange(max_len + 1)).sum()
     n_messages_received = ((vocab_size) ** np.arange(max_len + 1)).sum() \
         if erasure_channel else n_messages_sent
 
     sample_sent = Categorical(logits=logits_sent).sample((n_samples,))
+    sample_sent = sample_sent.to(channel.device)
     sample_sent = crop_messages(
         sample_sent.reshape(size[0] * n_samples, size[1])
     )
 
     one_hots_sent = torch.zeros(
-        size[0] * n_samples, *size[1:]
-    ).to(logits_sent).view(-1, size[2])
+        size[0] * n_samples, *size[1:],
+        dtype=logits_sent.dtype,
+        device=channel.device,
+    ).view(-1, size[2])
     one_hots_sent.scatter_(1, sample_sent.view(-1, 1), 1)
     one_hots_sent = one_hots_sent.view(size[0] * n_samples, *size[1:])
 
