@@ -219,25 +219,23 @@ class SenderReceiverRnnGS(nn.Module):
         if opts.image_input:
             device = torch.device("cuda" if opts.cuda else "cpu")
             n_candidates = opts.n_distractors + 1
-            n_attributes = torch.tensor(opts.n_attributes + [n_candidates]).to(device)
+            n_attributes = len(opts.n_attributes)
             self.loss = self.loss_obverter
             self.positions = torch.arange(
                 n_candidates, dtype=torch.long, device=device
             )
-            self.loss_weights = n_attributes.log().pow(-1).unsqueeze(-1)
-            self.loss_weights[:] = 1 / len(n_attributes)
 
-            # adjust loss weights so that the computed value equals
+            # define loss weights so that the computed value equals
             # label_coeff * H(r_output, labels)
             # + features_coeff * Sum [H(target_attr, selected_attr)]
+            self.loss_weights = torch.empty(n_attributes + 1, device=device)
+            self.loss_weights[:] = 1 / (n_attributes + 1)
             self.loss_weights[:-1] *= opts.features_coeff
-            self.loss_weights[-1] *= (
-                opts.label_coeff * (len(self.loss_weights) - 1)
-            )
+            self.loss_weights[-1] *= opts.label_coeff * n_attributes
         else:
             self.loss = self.loss_visa
-            self.label_weight = opts.label_coeff / np.log(2)
-            self.features_weight = opts.features_coeff / np.log(opts.n_distractors + 1)
+            self.label_weight = opts.label_coeff
+            self.features_weight = opts.features_coeff
 
         self.logging_strategy_train = LoggingStrategy(
             store_sender_input=(not opts.image_input),
