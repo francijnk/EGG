@@ -274,7 +274,8 @@ class CustomProgressBarLogger(Callback):
             row.add_column(
                 print_name,
                 justify='right',
-                ratio=1)
+                ratio=1,
+            )
         if not header:
             row.add_row(*row_values, style=self.style[od['phase']])
         return row
@@ -424,11 +425,16 @@ class CustomProgressBarLogger(Callback):
             for history_dict in self.history.values():
                 if 'loss_nn' in history_dict:
                     del history_dict['loss_nn']
+                n_entries = max(len(col) for col in history_dict.values())
+                to_delete = [key for key, col in history_dict.items() if len(col) != n_entries]
+                for key in to_delete:
+                    del history_dict[key]
+
             df = pd.concat([
                 pd.DataFrame(history_dict)
                 for history_dict in self.history.values()
             ])
-            cols = ['epoch', 'phase', 'messages']
+            cols = ['epoch', 'phase']
             df = df[cols + [c for c in df.columns if c not in cols]]
             filename = f'{self.filename}-training-history.csv'
             dump_path = self.results_folder / filename
