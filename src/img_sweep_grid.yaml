@@ -1,10 +1,10 @@
 # wandb sweep --project cezary_test IMG_SWEEP.YAML
 program: train.py
 name: img_loss_sweep
-method: bayes
+method: grid
 metric:
   goal: maximize
-  name: test/sweep_target
+  name: train/accuracy
 parameters:
   label_coeff:
     values: [0, 0.50]

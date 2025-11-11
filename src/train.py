@@ -248,7 +248,7 @@ def main(params):
     training_time = timedelta(seconds=t_end - t_start)
     evaluation_time = timedelta(seconds=time.monotonic() - t_end)
 
-    sec_per_epoch = training_time.seconds / opts.n_epochs
+    sec_per_epoch = training_time.seconds / opts.n_epochs  # should be total seconds
     minutes, seconds = divmod(sec_per_epoch, 60)
 
     training_time = str(training_time).split('.', maxsplit=1)[0]
